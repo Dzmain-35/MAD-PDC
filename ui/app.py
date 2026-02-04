@@ -39,6 +39,9 @@ from ui.tabs import (
 )
 from ui.dialogs import ProgressDialog, YaraAddDialog, YaraEditDialog, YaraViewDialog
 
+# Import handlers
+from handlers import CaseHandlers, ProcessHandlers, NetworkHandlers, FileHandlers
+
 
 class ForensicAnalysisGUI:
     """
@@ -67,6 +70,9 @@ class ForensicAnalysisGUI:
 
         # Initialize state
         self._init_state()
+
+        # Initialize handlers
+        self._init_handlers()
 
         # Create UI
         self._create_ui()
@@ -147,6 +153,13 @@ class ForensicAnalysisGUI:
 
         # Live events toggle callback
         self.live_events_toggle_monitoring = None
+
+    def _init_handlers(self):
+        """Initialize business logic handlers"""
+        self.case_handlers = CaseHandlers(self)
+        self.process_handlers = ProcessHandlers(self)
+        self.network_handlers = NetworkHandlers(self)
+        self.file_handlers = FileHandlers(self)
 
     def _create_ui(self):
         """Build the main user interface"""
@@ -327,126 +340,215 @@ class ForensicAnalysisGUI:
             if tab_name in self.tab_objects:
                 self.tab_objects[tab_name].on_show()
 
-    # ==================== DELEGATED METHODS ====================
-    # These methods are called by tab components and handle business logic.
-    # They maintain backward compatibility with the original MAD.py structure.
-
-    # Import remaining methods from original MAD.py
-    # This allows gradual migration while maintaining functionality
-
-    from MAD import (
-        ForensicAnalysisGUI as _OriginalGUI
-    )
-
-    # Copy specific methods we need (this is a transitional approach)
-    # In a full refactor, these would be moved to dedicated handler classes
+    # ==================== APPLICATION LIFECYCLE ====================
 
     def run(self):
         """Start the application"""
         # Auto-start process monitoring
         if not self.process_monitor_active:
-            self.process_monitor.start_monitoring()
+            self.process_monitor.start_monitoring(callback=self.on_new_process_detected)
             self.process_monitor_active = True
             if hasattr(self, 'btn_toggle_process_monitor'):
-                self.btn_toggle_process_monitor.configure(text="⏸ Stop Monitoring")
+                self.btn_toggle_process_monitor.configure(text="Stop Monitoring")
             self.start_auto_refresh()
 
         self.root.mainloop()
 
-    # Placeholder methods that tabs call - these need the full implementation
-    # from MAD.py to work. For now, they're stubs that can be filled in.
+    def switch_tab(self, tab_name: str):
+        """Alias for show_tab for compatibility"""
+        self.show_tab(tab_name)
 
-    def handle_new_case_upload(self):
-        """Handle file upload for new case - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
+    # ==================== CASE HANDLERS (delegated) ====================
 
-    def handle_add_files(self):
-        """Handle adding files to case - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
+    def handle_new_case_upload(self, case_name, analyst_name, report_url, files, progress_callback=None):
+        """Handle file upload for new case"""
+        return self.case_handlers.handle_new_case_upload(
+            case_name, analyst_name, report_url, files, progress_callback
+        )
+
+    def handle_add_files(self, files, progress_callback=None):
+        """Handle adding files to case"""
+        return self.case_handlers.handle_add_files(files, progress_callback)
 
     def handle_add_ioc(self):
-        """Handle adding IOC - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
+        """Handle adding IOC"""
+        self.case_handlers.show_add_ioc_dialog()
 
     def handle_save_notes(self):
-        """Handle saving notes - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
+        """Handle saving notes"""
+        self.case_handlers.handle_save_notes()
 
     def update_current_case_display(self):
-        """Update current case display - placeholder"""
-        pass
+        """Update current case display"""
+        if "current_case" in self.tab_objects:
+            self.tab_objects["current_case"].refresh_display()
+
+    def refresh_iocs_display(self):
+        """Refresh IOCs display"""
+        self.case_handlers.refresh_iocs_display()
+
+    def delete_file_from_case(self, file_info, card_frame):
+        """Delete file from case"""
+        return self.case_handlers.delete_file_from_case(file_info, card_frame)
+
+    def export_case(self, export_format="json"):
+        """Export current case"""
+        return self.case_handlers.export_case(export_format)
+
+    # ==================== PROCESS HANDLERS (delegated) ====================
 
     def toggle_process_monitoring(self):
-        """Toggle process monitoring - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
-
-    def toggle_network_monitoring(self):
-        """Toggle network monitoring - placeholder"""
-        messagebox.showinfo("Info", "This method needs to be migrated from MAD.py")
+        """Toggle process monitoring"""
+        self.process_handlers.toggle_process_monitoring()
 
     def refresh_process_list(self):
-        """Refresh process list - placeholder"""
-        pass
-
-    def refresh_network_list(self):
-        """Refresh network list - placeholder"""
-        pass
+        """Refresh process list"""
+        self.process_handlers.refresh_process_list()
 
     def filter_processes(self):
-        """Filter processes - placeholder"""
-        pass
+        """Filter processes"""
+        self.process_handlers.filter_processes()
 
     def clear_process_search(self):
-        """Clear process search - placeholder"""
-        pass
+        """Clear process search"""
+        self.process_handlers.clear_process_search()
 
     def scan_selected_process(self):
-        """Scan selected process - placeholder"""
-        pass
+        """Scan selected process with YARA"""
+        self.process_handlers.scan_selected_process()
 
     def scan_all_processes(self):
-        """Scan all processes - placeholder"""
-        pass
-
-    def view_process_details_and_strings(self):
-        """View process details - placeholder"""
-        pass
-
-    def open_folder_location(self):
-        """Open folder location - placeholder"""
-        pass
+        """Scan all processes with YARA"""
+        self.process_handlers.scan_all_processes()
 
     def kill_selected_process(self):
-        """Kill selected process - placeholder"""
-        pass
+        """Kill selected process"""
+        self.process_handlers.kill_selected_process()
+
+    def suspend_selected_process(self):
+        """Suspend selected process"""
+        self.process_handlers.suspend_selected_process()
+
+    def resume_selected_process(self):
+        """Resume selected process"""
+        self.process_handlers.resume_selected_process()
+
+    def open_folder_location(self):
+        """Open folder location of selected process"""
+        self.process_handlers.open_folder_location()
+
+    def view_process_details_and_strings(self):
+        """View process details and strings"""
+        selection = self.process_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a process")
+            return
+        item = self.process_tree.item(selection[0])
+        pid = int(item['values'][0])
+        name = item['values'][1]
+        self.file_handlers.view_process_strings(pid, name)
 
     def show_process_context_menu(self, event):
-        """Show process context menu - placeholder"""
-        pass
+        """Show process context menu"""
+        try:
+            self.process_context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.process_context_menu.grab_release()
 
-    def show_network_context_menu(self, event):
-        """Show network context menu - placeholder"""
-        pass
+    def on_new_process_detected(self, proc_info):
+        """Callback for new process detection"""
+        if proc_info and proc_info.get('threat_detected'):
+            self.total_yara_matches += 1
+            self.root.after(0, self.update_yara_match_badge)
 
-    def copy_network_cell(self, column_index):
-        """Copy network cell - placeholder"""
-        pass
+    def start_auto_refresh(self):
+        """Start auto-refreshing process and network lists"""
+        if self.auto_refresh_enabled and self.process_monitor_active:
+            self.refresh_process_list()
+            self.auto_refresh_job = self.root.after(
+                self.auto_refresh_interval,
+                self.start_auto_refresh
+            )
 
-    def copy_network_row(self):
-        """Copy network row - placeholder"""
-        pass
+    def stop_auto_refresh(self):
+        """Stop auto-refresh"""
+        if self.auto_refresh_job:
+            self.root.after_cancel(self.auto_refresh_job)
+            self.auto_refresh_job = None
 
-    def add_network_ioc_to_case(self, field_type):
-        """Add network IOC to case - placeholder"""
-        pass
-
-    def add_live_event_iocs_to_case(self, events_tree):
-        """Add live event IOCs to case - placeholder"""
-        pass
+    def update_yara_match_badge(self):
+        """Update YARA match badge in Analysis button"""
+        if self.total_yara_matches > 0:
+            self.btn_analysis.configure(text=f"Analysis ({self.total_yara_matches})")
+        else:
+            self.btn_analysis.configure(text="Analysis")
 
     def get_child_pids_recursive(self, parent_pid):
-        """Get child PIDs recursively - placeholder"""
-        return set()
+        """Get all child PIDs recursively"""
+        child_pids = set()
+        try:
+            import psutil
+            parent = psutil.Process(parent_pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                child_pids.add(child.pid)
+        except:
+            pass
+        return child_pids
+
+    # ==================== NETWORK HANDLERS (delegated) ====================
+
+    def toggle_network_monitoring(self):
+        """Toggle network monitoring"""
+        self.network_handlers.toggle_network_monitoring()
+
+    def refresh_network_list(self):
+        """Refresh network list"""
+        self.network_handlers.refresh_network_list()
+
+    def show_network_context_menu(self, event):
+        """Show network context menu"""
+        self.network_handlers.show_network_context_menu(event)
+
+    def copy_network_cell(self, column_index):
+        """Copy network cell"""
+        self.network_handlers.copy_network_cell(column_index)
+
+    def copy_network_row(self):
+        """Copy network row"""
+        self.network_handlers.copy_network_row()
+
+    def add_network_ioc_to_case(self, field_type):
+        """Add network IOC to case"""
+        self.network_handlers.add_network_ioc_to_case(field_type)
+
+    def add_live_event_iocs_to_case(self, events_tree):
+        """Add live event IOCs to case"""
+        self.network_handlers.add_live_event_iocs_to_case(events_tree)
+
+    def on_new_connection_detected(self, conn_info):
+        """Callback for new connection detection"""
+        self.network_handlers.on_new_connection_detected(conn_info)
+
+    # ==================== FILE HANDLERS (delegated) ====================
+
+    def view_file_strings(self, file_path, file_name):
+        """View file strings"""
+        self.file_handlers.view_file_strings(file_path, file_name)
+
+    def view_file_hex(self, file_path, file_name):
+        """View file in hex format"""
+        self.file_handlers.view_file_hex(file_path, file_name)
+
+    def view_file_text(self, file_path, file_name):
+        """View file as text"""
+        self.file_handlers.view_file_text(file_path, file_name)
+
+    def execute_file(self, file_path, file_name, suspended=False):
+        """Execute file"""
+        self.file_handlers.execute_file(file_path, file_name, suspended)
+
+    # ==================== YARA RULE HANDLERS ====================
 
     def refresh_yara_rules_list(self):
         """Refresh YARA rules list"""
@@ -458,8 +560,21 @@ class ForensicAnalysisGUI:
         YaraAddDialog(self)
 
     def import_yara_rule_file(self):
-        """Import YARA rule from file - placeholder"""
-        pass
+        """Import YARA rule from file"""
+        file_path = filedialog.askopenfilename(
+            title="Import YARA Rule",
+            filetypes=[("YARA files", "*.yar *.yara"), ("All files", "*.*")]
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    content = f.read()
+                rule_name = os.path.basename(file_path)
+                self.yara_rule_manager.save_rule(rule_name, content)
+                self.refresh_yara_rules_list()
+                messagebox.showinfo("Success", f"Rule '{rule_name}' imported successfully")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to import rule: {str(e)}")
 
     def view_yara_rule(self, rule):
         """View YARA rule"""
@@ -470,29 +585,37 @@ class ForensicAnalysisGUI:
         YaraEditDialog(self, rule)
 
     def delete_yara_rule(self, rule):
-        """Delete YARA rule - placeholder"""
-        pass
+        """Delete YARA rule"""
+        if messagebox.askyesno("Confirm Delete", f"Delete rule '{rule['name']}'?"):
+            try:
+                self.yara_rule_manager.delete_rule(rule['name'])
+                self.refresh_yara_rules_list()
+                messagebox.showinfo("Success", "Rule deleted successfully")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete rule: {str(e)}")
 
-    def on_new_process_detected(self, proc_info):
-        """Callback for new process detection - placeholder"""
-        pass
+    # ==================== PROGRESS WINDOW ====================
 
-    def on_new_connection_detected(self, conn_info):
-        """Callback for new connection detection - placeholder"""
-        pass
+    def show_progress_window(self, title="Processing"):
+        """Show progress window"""
+        self.progress_window = ProgressDialog(self, title)
+        return self.progress_window
 
-    def start_auto_refresh(self):
-        """Start auto refresh - placeholder"""
-        pass
+    def update_progress(self, current, total, message=""):
+        """Update progress window"""
+        if self.progress_window:
+            self.progress_window.update_progress(current, total, message)
 
-    def stop_auto_refresh(self):
-        """Stop auto refresh - placeholder"""
-        pass
+    def close_progress_window(self):
+        """Close progress window"""
+        if self.progress_window:
+            self.progress_window.close()
+            self.progress_window = None
 
-    def update_yara_match_badge(self):
-        """Update YARA match badge - placeholder"""
-        pass
 
-    def refresh_iocs_display(self):
-        """Refresh IOCs display - placeholder"""
-        pass
+# Entry point for running the modular version
+if __name__ == "__main__":
+    print("Starting MAD (Modular Architecture)...")
+    print("Note: Original MAD.py is still available as fallback")
+    app = ForensicAnalysisGUI()
+    app.run()
