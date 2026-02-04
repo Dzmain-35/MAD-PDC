@@ -11,12 +11,18 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from datetime import datetime
 import os
+import sys
 import threading
 import subprocess
 import platform
 import webbrowser
 
 from PIL import Image
+
+# Add parent directory to path for imports when running from ui/
+_parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
 # Import managers
 from case_manager import CaseManager
