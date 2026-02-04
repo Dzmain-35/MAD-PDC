@@ -1,0 +1,58 @@
+{
+  "_metadata": {
+    "last_modified": "2026-01-26T07:50:05.093598",
+    "version": "1.0.0"
+  },
+  "application": {
+    "version": "1.0.0",
+    "theme": "dark",
+    "auto_refresh_interval": 2000,
+    "max_popups_per_rule": 3
+  },
+  "paths": {
+    "case_storage": "",
+    "yara_rules": "",
+    "whitelist": ""
+  },
+  "api_keys": {
+    "virustotal": "",
+    "threathq_user": "",
+    "threathq_pass": ""
+  },
+  "analysis": {
+    "enable_process_monitoring": true,
+    "enable_network_monitoring": true,
+    "enable_yara_scanning": true,
+    "auto_scan_new_processes": true,
+    "enable_realtime_alerts": true
+  },
+  "yara": {
+    "create_backups_on_delete": true,
+    "create_backups_on_update": true,
+    "backup_directory": "_backups"
+  },
+  "case_management": {
+    "auto_save_interval": 30,
+    "max_recent_cases": 10,
+    "case_id_format": "CASE-%Y%m%d%H%M%S"
+  },
+  "ui": {
+    "show_welcome_screen": true,
+    "confirm_before_delete": true,
+    "enable_tooltips": true
+  },
+  "export": {
+    "default_export_format": "json",
+    "include_metadata": true,
+    "include_hashes": true
+  },
+  "security": {
+    "require_admin_for_monitoring": true,
+    "sanitize_paths_in_reports": false
+  },
+  "advanced": {
+    "debug_mode": false,
+    "log_file": "mad.log",
+    "max_log_size_mb": 50
+  }
+}
