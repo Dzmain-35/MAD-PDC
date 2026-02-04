@@ -304,8 +304,56 @@ class CurrentCaseTab(BaseTab):
 
     def on_show(self):
         """Called when tab is shown - refresh the display"""
-        self.app.update_current_case_display()
+        self.refresh()
 
     def refresh(self):
-        """Refresh the tab content"""
-        self.app.update_current_case_display()
+        """Refresh the tab content with current case data"""
+        current_case = self.app.current_case
+
+        if not current_case:
+            self.case_status_label.configure(text="No Case")
+            # Clear case info
+            for widget in self.case_info_frame.winfo_children():
+                widget.destroy()
+            no_case_label = ctk.CTkLabel(
+                self.case_info_frame,
+                text="No case loaded. Create a new case to get started.",
+                font=Fonts.body,
+                text_color="gray60"
+            )
+            no_case_label.pack(pady=20)
+            return
+
+        # Update status
+        self.case_status_label.configure(text="Active")
+
+        # Update case info
+        for widget in self.case_info_frame.winfo_children():
+            widget.destroy()
+
+        info_items = [
+            ("Case Name:", current_case.get("name", "N/A")),
+            ("Analyst:", current_case.get("analyst_name", "N/A")),
+            ("Created:", current_case.get("created", "N/A")[:10] if current_case.get("created") else "N/A"),
+            ("Files:", str(len(current_case.get("files", [])))),
+            ("Threats:", str(current_case.get("total_threats", 0))),
+        ]
+
+        for label_text, value in info_items:
+            row = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+
+            label = ctk.CTkLabel(row, text=label_text, font=Fonts.body_bold, text_color="gray60", width=100, anchor="w")
+            label.pack(side="left")
+
+            value_label = ctk.CTkLabel(row, text=value, font=Fonts.body, text_color="white", anchor="w")
+            value_label.pack(side="left", padx=10)
+
+        # Refresh IOCs display
+        self.app.case_handlers.refresh_iocs_display()
+
+        # Load notes if available
+        notes = current_case.get("notes", "")
+        self.notes_textbox.delete("1.0", "end")
+        if notes:
+            self.notes_textbox.insert("1.0", notes)

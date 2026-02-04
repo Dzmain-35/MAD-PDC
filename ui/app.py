@@ -388,7 +388,7 @@ class ForensicAnalysisGUI:
     def update_current_case_display(self):
         """Update current case display"""
         if "current_case" in self.tab_objects:
-            self.tab_objects["current_case"].refresh_display()
+            self.tab_objects["current_case"].refresh()
 
     def refresh_iocs_display(self):
         """Refresh IOCs display"""
