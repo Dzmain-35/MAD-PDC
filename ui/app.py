@@ -351,8 +351,9 @@ class ForensicAnalysisGUI:
     def run(self):
         """Start the application"""
         # Auto-start process monitoring
+        # Note: callback is already registered in _init_analysis_modules()
         if not self.process_monitor_active:
-            self.process_monitor.start_monitoring(callback=self.on_new_process_detected)
+            self.process_monitor.start_monitoring()
             self.process_monitor_active = True
             if hasattr(self, 'btn_toggle_process_monitor'):
                 self.btn_toggle_process_monitor.configure(text="Stop Monitoring")
