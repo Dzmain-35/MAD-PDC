@@ -387,28 +387,75 @@ class ForensicAnalysisGUI:
         # URL input area (initially hidden)
         self.url_input_frame = ctk.CTkFrame(center_container, fg_color=self.colors["navy"], corner_radius=8)
 
-        url_input_label = ctk.CTkLabel(
-            self.url_input_frame,
-            text="Enter URLs (one per line):",
-            font=Fonts.body_bold,
-            text_color="white",
-            anchor="w"
-        )
-        url_input_label.pack(anchor="w", padx=15, pady=(15, 5))
+        # URL input row (similar to Report URL style)
+        url_entry_frame = ctk.CTkFrame(self.url_input_frame, fg_color="transparent")
+        url_entry_frame.pack(fill="x", padx=15, pady=(15, 10))
 
-        self.url_input_textbox = tk.Text(
-            self.url_input_frame,
-            wrap="none",
-            bg="#1a1a1a",
-            fg="#ffffff",
-            font=Fonts.text_input(),
-            relief="flat",
-            padx=10,
-            pady=10,
-            height=6,
-            width=48
+        url_input_label = ctk.CTkLabel(
+            url_entry_frame,
+            text="URL:",
+            font=Fonts.label_large,
+            text_color="white",
+            width=80
         )
-        self.url_input_textbox.pack(padx=15, pady=(0, 15))
+        url_input_label.pack(side="left")
+
+        self.url_entry = ctk.CTkEntry(
+            url_entry_frame,
+            placeholder_text="Enter URL to download...",
+            height=40,
+            font=Fonts.body_large,
+            fg_color="gray20",
+            border_color=self.colors["red"],
+            border_width=2
+        )
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
+        self.url_entry.bind("<Return>", lambda e: self.add_url_to_list())
+
+        btn_add_url = ctk.CTkButton(
+            url_entry_frame,
+            text="+ Add",
+            command=self.add_url_to_list,
+            height=40,
+            width=80,
+            font=Fonts.button_large,
+            fg_color=self.colors["red"],
+            hover_color=self.colors["red_dark"]
+        )
+        btn_add_url.pack(side="left")
+
+        # URL list display
+        url_list_frame = ctk.CTkFrame(self.url_input_frame, fg_color="gray20", corner_radius=6)
+        url_list_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        url_list_header = ctk.CTkFrame(url_list_frame, fg_color="transparent")
+        url_list_header.pack(fill="x", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(
+            url_list_header,
+            text="URLs to Download:",
+            font=Fonts.body_bold,
+            text_color="white"
+        ).pack(side="left")
+
+        btn_clear_urls = ctk.CTkButton(
+            url_list_header,
+            text="Clear All",
+            command=self.clear_url_list,
+            height=28,
+            width=80,
+            font=Fonts.body,
+            fg_color="gray30",
+            hover_color="gray40"
+        )
+        btn_clear_urls.pack(side="right")
+
+        # Scrollable URL list
+        self.url_listbox_frame = ctk.CTkScrollableFrame(url_list_frame, fg_color="transparent", height=100)
+        self.url_listbox_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Store URLs in a list
+        self.pending_urls = []
 
         # Upload button
         btn_upload = ctk.CTkButton(
@@ -2054,6 +2101,80 @@ class ForensicAnalysisGUI:
             self.url_input_frame.pack_forget()
             self.btn_new_case_upload.configure(text="Upload File to Start Case")
 
+    def add_url_to_list(self):
+        """Add URL from entry to the pending URLs list"""
+        url = self.url_entry.get().strip()
+        if not url:
+            return
+
+        # Basic URL validation
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        if url in self.pending_urls:
+            messagebox.showinfo("Duplicate", "This URL is already in the list")
+            return
+
+        self.pending_urls.append(url)
+        self.refresh_url_list_display()
+        self.url_entry.delete(0, tk.END)
+
+    def remove_url_from_list(self, url):
+        """Remove a URL from the pending list"""
+        if url in self.pending_urls:
+            self.pending_urls.remove(url)
+            self.refresh_url_list_display()
+
+    def clear_url_list(self):
+        """Clear all pending URLs"""
+        self.pending_urls = []
+        self.refresh_url_list_display()
+
+    def refresh_url_list_display(self):
+        """Refresh the URL list display"""
+        # Clear existing items
+        for widget in self.url_listbox_frame.winfo_children():
+            widget.destroy()
+
+        if not self.pending_urls:
+            empty_label = ctk.CTkLabel(
+                self.url_listbox_frame,
+                text="No URLs added yet",
+                font=Fonts.body,
+                text_color="gray"
+            )
+            empty_label.pack(pady=10)
+            return
+
+        # Add each URL with a remove button
+        for i, url in enumerate(self.pending_urls):
+            row = ctk.CTkFrame(self.url_listbox_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+
+            # Truncate long URLs for display
+            display_url = url if len(url) <= 60 else url[:57] + "..."
+
+            url_label = ctk.CTkLabel(
+                row,
+                text=f"{i+1}. {display_url}",
+                font=Fonts.body,
+                text_color="white",
+                anchor="w"
+            )
+            url_label.pack(side="left", fill="x", expand=True)
+
+            btn_remove = ctk.CTkButton(
+                row,
+                text="×",
+                command=lambda u=url: self.remove_url_from_list(u),
+                width=28,
+                height=28,
+                font=Fonts.body_bold,
+                fg_color="gray30",
+                hover_color=self.colors["red"]
+            )
+            btn_remove.pack(side="right", padx=5)
+
     def handle_new_case_upload(self):
         """Handle file upload or URL download for new case"""
         if self.scan_in_progress:
@@ -2078,20 +2199,13 @@ class ForensicAnalysisGUI:
         method = self.upload_method.get()
 
         if method == "url":
-            # Get URLs from text box
-            url_text = self.url_input_textbox.get("1.0", "end-1c").strip()
-            if not url_text:
-                messagebox.showwarning("Missing URLs", "Please enter at least one URL")
-                self.url_input_textbox.focus()
+            # Get URLs from pending list
+            if not self.pending_urls:
+                messagebox.showwarning("Missing URLs", "Please add at least one URL to download")
+                self.url_entry.focus()
                 return
 
-            # Parse URLs (one per line)
-            urls = [url.strip() for url in url_text.split('\n') if url.strip()]
-            if not urls:
-                messagebox.showwarning("Missing URLs", "Please enter at least one valid URL")
-                return
-
-            self.process_new_case_urls(urls, analyst_name, report_url)
+            self.process_new_case_urls(list(self.pending_urls), analyst_name, report_url)
         else:
             # File upload mode
             files = filedialog.askopenfilenames(title="Select files to analyze")
@@ -3272,15 +3386,11 @@ File Size: {file_info['file_size']} bytes"""
 
         self.yara_rules_tree.pack(fill="both", expand=True)
 
-        # Context menu for rule actions
+        # Context menu for rule actions (Edit option added dynamically based on settings)
         self.yara_context_menu = tk.Menu(self.root, tearoff=0, bg="#0d1520", fg="white",
                                          activebackground="#991b1b", activeforeground="white")
-        self.yara_context_menu.add_command(label="View Rule", command=self.view_selected_yara_rule)
-        self.yara_context_menu.add_command(label="Edit Rule", command=self.edit_selected_yara_rule)
-        self.yara_context_menu.add_separator()
-        self.yara_context_menu.add_command(label="Delete Rule", command=self.delete_selected_yara_rule)
 
-        # Bind right-click
+        # Bind right-click to show context menu (built dynamically)
         self.yara_rules_tree.bind("<Button-3>", self.show_yara_context_menu)
 
         # Bind double-click to view
@@ -3298,13 +3408,15 @@ File Size: {file_info['file_size']} bytes"""
                                 width=100)
         btn_view.pack(side="left", padx=5)
 
-        btn_edit = ctk.CTkButton(action_frame, text="Edit",
+        self.btn_edit_yara_rule = ctk.CTkButton(action_frame, text="Edit",
                                 command=self.edit_selected_yara_rule,
                                 fg_color=self.colors["navy"],
                                 hover_color=self.colors["dark_blue"],
                                 font=Fonts.label_large,
                                 width=100)
-        btn_edit.pack(side="left", padx=5)
+        # Only show Edit button if rule creation is enabled
+        if self.settings_manager.get("yara.enable_rule_creation", True):
+            self.btn_edit_yara_rule.pack(side="left", padx=5)
 
         btn_delete = ctk.CTkButton(action_frame, text="Delete",
                                   command=self.delete_selected_yara_rule,
@@ -3394,11 +3506,18 @@ File Size: {file_info['file_size']} bytes"""
             )
 
     def show_yara_context_menu(self, event):
-        """Show context menu on right-click"""
+        """Show context menu on right-click (built dynamically based on settings)"""
         # Select the item under cursor
         item = self.yara_rules_tree.identify_row(event.y)
         if item:
             self.yara_rules_tree.selection_set(item)
+            # Rebuild menu dynamically based on settings
+            self.yara_context_menu.delete(0, tk.END)
+            self.yara_context_menu.add_command(label="View Rule", command=self.view_selected_yara_rule)
+            if self.settings_manager.get("yara.enable_rule_creation", True):
+                self.yara_context_menu.add_command(label="Edit Rule", command=self.edit_selected_yara_rule)
+            self.yara_context_menu.add_separator()
+            self.yara_context_menu.add_command(label="Delete Rule", command=self.delete_selected_yara_rule)
             self.yara_context_menu.post(event.x_root, event.y_root)
 
     def get_selected_yara_rule(self):
@@ -3907,12 +4026,18 @@ File Size: {file_info['file_size']} bytes"""
         if threathq_pass:
             self.case_manager.threathq_pass = threathq_pass
 
-        # Apply YARA rule creation setting
+        # Apply YARA rule creation setting (affects Add and Edit buttons)
+        yara_creation_enabled = self.settings_manager.get("yara.enable_rule_creation", True)
         if hasattr(self, 'btn_add_yara_rule'):
-            if self.settings_manager.get("yara.enable_rule_creation", True):
+            if yara_creation_enabled:
                 self.btn_add_yara_rule.pack(side="left", padx=5)
             else:
                 self.btn_add_yara_rule.pack_forget()
+        if hasattr(self, 'btn_edit_yara_rule'):
+            if yara_creation_enabled:
+                self.btn_edit_yara_rule.pack(side="left", padx=5)
+            else:
+                self.btn_edit_yara_rule.pack_forget()
 
         print("Settings applied successfully")
 

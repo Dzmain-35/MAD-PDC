@@ -817,7 +817,7 @@ class CaseManager:
 
     def download_file_from_url(self, url: str, timeout: int = 30) -> Tuple[bool, str, str]:
         """
-        Download a file from a URL to a temporary location
+        Download a file from a URL to a temporary location (browser-like behavior)
 
         Args:
             url: URL to download from
@@ -841,13 +841,35 @@ class CaseManager:
             temp_dir = tempfile.gettempdir()
             temp_path = os.path.join(temp_dir, filename)
 
-            # Download file with streaming
+            # Browser-like headers to mimic real browser requests
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0',
             }
 
-            response = requests.get(url, headers=headers, timeout=timeout, stream=True)
+            # Create a session for cookie handling (like a browser)
+            session = requests.Session()
+            response = session.get(url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
             response.raise_for_status()
+
+            # Try to get filename from Content-Disposition header (like browsers do)
+            content_disp = response.headers.get('Content-Disposition', '')
+            if 'filename=' in content_disp:
+                # Extract filename from header
+                import re
+                fname_match = re.search(r'filename[*]?=["\']?([^"\';\n]+)', content_disp)
+                if fname_match:
+                    filename = fname_match.group(1).strip()
+                    temp_path = os.path.join(temp_dir, filename)
 
             # Write to temporary file
             with open(temp_path, 'wb') as f:
