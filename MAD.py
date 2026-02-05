@@ -2289,31 +2289,49 @@ class ForensicAnalysisGUI:
 
                 if success:
                     downloaded_files.append(file_path)
+                    files_to_process = [file_path]
 
-                    # Update progress - scanning
-                    filename = os.path.basename(file_path)
-                    self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
+                    # Check if downloaded file is an archive - auto-extract
+                    if self.case_manager._is_archive(file_path):
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
+                        extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
+                        if extract_success and extracted_files:
+                            print(f"Auto-extracted {len(extracted_files)} files from archive")
+                            files_to_process = extracted_files
+                            # Clean up the archive after extraction
+                            try:
+                                os.remove(file_path)
+                            except:
+                                pass
+                        elif extract_error:
+                            print(f"Archive extraction warning: {extract_error}")
+                            # Fall back to processing the archive itself
 
-                    # Process file
-                    file_info = self.case_manager.process_file(file_path, files_dir, case_id)
-                    file_info["source_url"] = url  # Track source URL
-                    case_data["files"].append(file_info)
+                    # Process each file (either the downloaded file or extracted files)
+                    for j, process_file_path in enumerate(files_to_process):
+                        filename = os.path.basename(process_file_path)
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
 
-                    # Update case statistics
-                    has_yara = len(file_info["yara_matches"]) > 0
-                    has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
-                    has_vt = file_info["vt_hits"] > 0
+                        # Process file
+                        file_info = self.case_manager.process_file(process_file_path, files_dir, case_id)
+                        file_info["source_url"] = url  # Track source URL
+                        case_data["files"].append(file_info)
 
-                    if has_yara or has_thq or has_vt:
-                        case_data["total_threats"] += 1
-                    case_data["total_vt_hits"] += file_info["vt_hits"]
+                        # Update case statistics
+                        has_yara = len(file_info["yara_matches"]) > 0
+                        has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
+                        has_vt = file_info["vt_hits"] > 0
 
-                    # Clean up temporary file
-                    try:
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                    except:
-                        pass
+                        if has_yara or has_thq or has_vt:
+                            case_data["total_threats"] += 1
+                        case_data["total_vt_hits"] += file_info["vt_hits"]
+
+                        # Clean up temporary file
+                        try:
+                            if os.path.exists(process_file_path):
+                                os.remove(process_file_path)
+                        except:
+                            pass
                 else:
                     failed_downloads.append(f"{url}: {error}")
 
@@ -2325,10 +2343,11 @@ class ForensicAnalysisGUI:
             # Close progress and show success
             self.root.after(0, self.close_progress_window)
 
+            files_processed = len(case_data["files"])
             success_msg = f"New case created: {case_data['id']}\n"
             success_msg += f"Analyst: {analyst_name}\n"
             success_msg += f"URLs processed: {len(urls)}\n"
-            success_msg += f"Files downloaded: {len(downloaded_files)}\n"
+            success_msg += f"Files analyzed: {files_processed}\n"
             success_msg += f"Threats detected: {case_data['total_threats']}"
 
             if failed_downloads:
@@ -2338,14 +2357,14 @@ class ForensicAnalysisGUI:
                     success_msg += f"\n... and {len(failed_downloads) - 5} more"
 
             self.root.after(0, lambda: self.new_case_status.configure(
-                text=f"✓ Case created: {case_data['id']} | Files: {len(downloaded_files)} | Threats: {case_data['total_threats']}"
+                text=f"✓ Case created: {case_data['id']} | Files: {files_processed} | Threats: {case_data['total_threats']}"
             ))
             self.root.after(0, lambda: messagebox.showinfo("Success", success_msg))
 
             # Clear form and switch tabs
             self.root.after(0, lambda: self.analyst_name_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.report_url_entry.delete(0, 'end'))
-            self.root.after(0, lambda: self.url_input_textbox.delete("1.0", "end"))
+            self.root.after(0, lambda: self.url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.show_tab("current_case"))
 
         except Exception as e:
