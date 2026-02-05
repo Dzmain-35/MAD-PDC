@@ -509,8 +509,8 @@ class ForensicAnalysisGUI:
         files_header_inner = ctk.CTkFrame(files_header, fg_color="transparent", cursor="hand2")
         files_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for files
-        self.files_expand_indicator = ctk.CTkLabel(files_header_inner, text="▼",
+        # Expand indicator for files (starts collapsed)
+        self.files_expand_indicator = ctk.CTkLabel(files_header_inner, text="▶",
                                                    font=Fonts.body_large,
                                                    text_color="gray60",
                                                    cursor="hand2")
@@ -530,19 +530,19 @@ class ForensicAnalysisGUI:
                                      font=Fonts.label)
         btn_add_files.pack(side="right")
 
-        # Files list container (collapsible)
+        # Files list container (collapsible) - starts hidden
         self.files_list_frame = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="transparent")
-        self.files_list_frame.pack(fill="x", pady=(0, 10))
+        # Don't pack initially - will be shown when files are added
 
         # IOCs section header - Clickable
-        iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
-        iocs_header.pack(fill="x", pady=(10, 5))
+        self.iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.iocs_header.pack(fill="x", pady=(10, 5))
 
-        iocs_header_inner = ctk.CTkFrame(iocs_header, fg_color="transparent", cursor="hand2")
+        iocs_header_inner = ctk.CTkFrame(self.iocs_header, fg_color="transparent", cursor="hand2")
         iocs_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for IOCs
-        self.iocs_expand_indicator = ctk.CTkLabel(iocs_header_inner, text="▼",
+        # Expand indicator for IOCs (starts collapsed)
+        self.iocs_expand_indicator = ctk.CTkLabel(iocs_header_inner, text="▶",
                                                   font=Fonts.body_large,
                                                   text_color="gray60",
                                                   cursor="hand2")
@@ -562,23 +562,23 @@ class ForensicAnalysisGUI:
                                     font=Fonts.label)
         btn_add_ioc.pack(side="right")
 
-        # IOCs container (collapsible)
-        iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        iocs_container.pack(fill="x", pady=(0, 10))
+        # IOCs container (collapsible) - starts hidden
+        self.iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        # Don't pack initially - will be shown when IOCs are added
 
         # IOCs content frame
-        self.iocs_content_frame = ctk.CTkFrame(iocs_container, fg_color="transparent")
+        self.iocs_content_frame = ctk.CTkFrame(self.iocs_container, fg_color="transparent")
         self.iocs_content_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
         # Notes section header - Clickable
-        notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
-        notes_header.pack(fill="x", pady=(10, 5))
+        self.notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.notes_header.pack(fill="x", pady=(10, 5))
 
-        notes_header_inner = ctk.CTkFrame(notes_header, fg_color="transparent", cursor="hand2")
+        notes_header_inner = ctk.CTkFrame(self.notes_header, fg_color="transparent", cursor="hand2")
         notes_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for Notes
-        self.notes_expand_indicator = ctk.CTkLabel(notes_header_inner, text="▼",
+        # Expand indicator for Notes (starts collapsed)
+        self.notes_expand_indicator = ctk.CTkLabel(notes_header_inner, text="▶",
                                                    font=Fonts.body_large,
                                                    text_color="gray60",
                                                    cursor="hand2")
@@ -599,14 +599,14 @@ class ForensicAnalysisGUI:
                                       font=Fonts.label)
         btn_save_notes.pack(side="right")
 
-        # Notes text area (collapsible)
-        notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        notes_container.pack(fill="both", expand=True, pady=(0, 10))
+        # Notes text area (collapsible) - starts hidden
+        self.notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        # Don't pack initially - will be shown when notes are added
 
-        # Track visibility states
-        self.files_section_visible = [True]
-        self.iocs_section_visible = [True]
-        self.notes_section_visible = [True]
+        # Track visibility states - all start collapsed (False)
+        self.files_section_visible = [False]
+        self.iocs_section_visible = [False]
+        self.notes_section_visible = [False]
 
         # Toggle function for files section
         def toggle_files_section(event=None):
@@ -624,7 +624,7 @@ class ForensicAnalysisGUI:
                 self.files_section_visible[0] = False
             else:
                 # Re-pack before the IOCs header to maintain position
-                self.files_list_frame.pack(fill="x", pady=(0, 10), before=iocs_header)
+                self.files_list_frame.pack(fill="x", pady=(0, 10), before=self.iocs_header)
                 self.files_expand_indicator.configure(text="▼")
                 self.files_section_visible[0] = True
 
@@ -639,12 +639,12 @@ class ForensicAnalysisGUI:
                     pass
 
             if self.iocs_section_visible[0]:
-                iocs_container.pack_forget()
+                self.iocs_container.pack_forget()
                 self.iocs_expand_indicator.configure(text="▶")
                 self.iocs_section_visible[0] = False
             else:
                 # Re-pack before the Notes header to maintain position
-                iocs_container.pack(fill="x", pady=(0, 10), before=notes_header)
+                self.iocs_container.pack(fill="x", pady=(0, 10), before=self.notes_header)
                 self.iocs_expand_indicator.configure(text="▼")
                 self.iocs_section_visible[0] = True
 
@@ -659,12 +659,12 @@ class ForensicAnalysisGUI:
                     pass
 
             if self.notes_section_visible[0]:
-                notes_container.pack_forget()
+                self.notes_container.pack_forget()
                 self.notes_expand_indicator.configure(text="▶")
                 self.notes_section_visible[0] = False
             else:
-                # Re-pack at end
-                notes_container.pack(fill="both", expand=True, pady=(0, 10))
+                # Re-pack before screenshots header
+                self.notes_container.pack(fill="both", expand=True, pady=(0, 10), before=self.screenshots_header)
                 self.notes_expand_indicator.configure(text="▼")
                 self.notes_section_visible[0] = True
 
@@ -675,13 +675,13 @@ class ForensicAnalysisGUI:
         self.files_expand_indicator.bind("<Button-1>", toggle_files_section)
 
         # Bind click events for IOCs section
-        iocs_header.bind("<Button-1>", toggle_iocs_section)
+        self.iocs_header.bind("<Button-1>", toggle_iocs_section)
         iocs_header_inner.bind("<Button-1>", toggle_iocs_section)
         iocs_title.bind("<Button-1>", toggle_iocs_section)
         self.iocs_expand_indicator.bind("<Button-1>", toggle_iocs_section)
 
         # Bind click events for Notes section
-        notes_header.bind("<Button-1>", toggle_notes_section)
+        self.notes_header.bind("<Button-1>", toggle_notes_section)
         notes_header_inner.bind("<Button-1>", toggle_notes_section)
         notes_title.bind("<Button-1>", toggle_notes_section)
         self.notes_expand_indicator.bind("<Button-1>", toggle_notes_section)
@@ -725,7 +725,7 @@ class ForensicAnalysisGUI:
 
         # Notes text widget
         self.notes_textbox = tk.Text(
-            notes_container,
+            self.notes_container,
             wrap="word",
             bg="#1a1a1a",
             fg="#ffffff",
@@ -738,14 +738,14 @@ class ForensicAnalysisGUI:
         self.notes_textbox.pack(fill="both", expand=True, padx=2, pady=2)
 
         # Screenshots section header - Clickable
-        screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
-        screenshots_header.pack(fill="x", pady=(10, 5))
+        self.screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.screenshots_header.pack(fill="x", pady=(10, 5))
 
-        screenshots_header_inner = ctk.CTkFrame(screenshots_header, fg_color="transparent", cursor="hand2")
+        screenshots_header_inner = ctk.CTkFrame(self.screenshots_header, fg_color="transparent", cursor="hand2")
         screenshots_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for Screenshots
-        self.screenshots_expand_indicator = ctk.CTkLabel(screenshots_header_inner, text="▼",
+        # Expand indicator for Screenshots (starts collapsed)
+        self.screenshots_expand_indicator = ctk.CTkLabel(screenshots_header_inner, text="▶",
                                                          font=Fonts.body_large,
                                                          text_color="gray60",
                                                          cursor="hand2")
@@ -766,9 +766,9 @@ class ForensicAnalysisGUI:
                                               font=Fonts.label)
         btn_attach_screenshot.pack(side="right")
 
-        # Screenshots container (collapsible)
+        # Screenshots container (collapsible) - starts hidden
         self.screenshots_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        self.screenshots_container.pack(fill="x", pady=(0, 10))
+        # Don't pack initially - will be shown when screenshots are added
 
         # Screenshots display frame (scrollable)
         self.screenshots_display_frame = ctk.CTkScrollableFrame(self.screenshots_container,
@@ -783,8 +783,8 @@ class ForensicAnalysisGUI:
                                                     text_color="gray")
         self.screenshots_placeholder.pack(pady=20)
 
-        # Track screenshots visibility
-        self.screenshots_section_visible = [True]
+        # Track screenshots visibility (starts collapsed)
+        self.screenshots_section_visible = [False]
 
         # Toggle function for Screenshots section
         def toggle_screenshots_section(event=None):
@@ -805,7 +805,7 @@ class ForensicAnalysisGUI:
                 self.screenshots_section_visible[0] = True
 
         # Bind click events for Screenshots section
-        screenshots_header.bind("<Button-1>", toggle_screenshots_section)
+        self.screenshots_header.bind("<Button-1>", toggle_screenshots_section)
         screenshots_header_inner.bind("<Button-1>", toggle_screenshots_section)
         screenshots_title.bind("<Button-1>", toggle_screenshots_section)
         self.screenshots_expand_indicator.bind("<Button-1>", toggle_screenshots_section)
@@ -2737,6 +2737,9 @@ class ForensicAnalysisGUI:
         self.iocs_ips_list.delete("1.0", "end")
         self.iocs_domains_list.delete("1.0", "end")
 
+        # Check if there are any IOCs
+        has_iocs = bool(iocs.get("urls") or iocs.get("ips") or iocs.get("domains"))
+
         # Display IOCs
         if iocs.get("urls"):
             self.iocs_urls_list.insert("1.0", "\n".join(iocs["urls"]))
@@ -2752,6 +2755,12 @@ class ForensicAnalysisGUI:
             self.iocs_domains_list.insert("1.0", "\n".join(iocs["domains"]))
         else:
             self.iocs_domains_list.insert("1.0", "No domains recorded")
+
+        # Auto-expand IOCs section if there are IOCs
+        if has_iocs and not self.iocs_section_visible[0]:
+            self.iocs_container.pack(fill="x", pady=(0, 10), before=self.notes_header)
+            self.iocs_expand_indicator.configure(text="▼")
+            self.iocs_section_visible[0] = True
 
     def handle_save_notes(self):
         """Save notes to the current case"""
@@ -2895,6 +2904,12 @@ class ForensicAnalysisGUI:
             )
             placeholder.pack(pady=20)
             return
+
+        # Auto-expand Screenshots section if there are screenshots
+        if not self.screenshots_section_visible[0]:
+            self.screenshots_container.pack(fill="x", pady=(0, 10))
+            self.screenshots_expand_indicator.configure(text="▼")
+            self.screenshots_section_visible[0] = True
 
         # Create horizontal container for thumbnails
         gallery_frame = ctk.CTkFrame(self.screenshots_display_frame, fg_color="transparent")
@@ -3049,19 +3064,30 @@ class ForensicAnalysisGUI:
         # Clear and rebuild files list
         for widget in self.files_list_frame.winfo_children():
             widget.destroy()
-        
+
         for file_info in self.current_case["files"]:
             self.create_file_card(file_info)
-        
-        # Load existing notes if available
-        if "notes" in self.current_case:
-            self.notes_textbox.delete("1.0", "end")
-            self.notes_textbox.insert("1.0", self.current_case["notes"])
 
-        # Refresh IOCs display
+        # Auto-expand Files section if there are files
+        if self.current_case["files"] and not self.files_section_visible[0]:
+            self.files_list_frame.pack(fill="x", pady=(0, 10), before=self.iocs_header)
+            self.files_expand_indicator.configure(text="▼")
+            self.files_section_visible[0] = True
+
+        # Load existing notes if available
+        self.notes_textbox.delete("1.0", "end")
+        if "notes" in self.current_case and self.current_case["notes"]:
+            self.notes_textbox.insert("1.0", self.current_case["notes"])
+            # Auto-expand Notes section if there are notes
+            if not self.notes_section_visible[0]:
+                self.notes_container.pack(fill="both", expand=True, pady=(0, 10), before=self.screenshots_header)
+                self.notes_expand_indicator.configure(text="▼")
+                self.notes_section_visible[0] = True
+
+        # Refresh IOCs display (will auto-expand if IOCs exist)
         self.refresh_iocs_display()
 
-        # Refresh screenshots display
+        # Refresh screenshots display (will auto-expand if screenshots exist)
         self.refresh_screenshots_display()
 
     def create_file_card(self, file_info):
