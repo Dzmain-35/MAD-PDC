@@ -2896,25 +2896,35 @@ class ForensicAnalysisGUI:
             placeholder.pack(pady=20)
             return
 
-        # Display each screenshot as a thumbnail
+        # Create horizontal container for thumbnails
+        gallery_frame = ctk.CTkFrame(self.screenshots_display_frame, fg_color="transparent")
+        gallery_frame.pack(fill="x", padx=5, pady=10)
+
+        # Display each screenshot as a thumbnail horizontally
         for i, screenshot_info in enumerate(self.current_case["screenshots"]):
             screenshot_path = screenshot_info.get("path", "")
 
             if not os.path.exists(screenshot_path):
                 continue
 
-            # Create frame for each screenshot
-            screenshot_frame = ctk.CTkFrame(self.screenshots_display_frame, fg_color="#1a1a1a", corner_radius=8)
-            screenshot_frame.pack(fill="x", pady=5, padx=5)
+            # Create frame for each screenshot (vertical: thumbnail + delete button)
+            screenshot_frame = ctk.CTkFrame(gallery_frame, fg_color="#1a1a1a", corner_radius=8)
+            screenshot_frame.pack(side="left", padx=5, pady=5)
 
             # Load and create thumbnail
             try:
                 pil_image = Image.open(screenshot_path)
 
-                # Create thumbnail (max 150px height)
-                max_height = 150
+                # Create thumbnail (max 120px height for compact gallery view)
+                max_height = 120
                 ratio = max_height / pil_image.height
                 new_width = int(pil_image.width * ratio)
+                # Cap width to prevent very wide thumbnails
+                if new_width > 200:
+                    new_width = 200
+                    ratio = new_width / pil_image.width
+                    max_height = int(pil_image.height * ratio)
+
                 thumbnail = pil_image.copy()
                 thumbnail.thumbnail((new_width, max_height), Image.Resampling.LANCZOS)
 
@@ -2928,53 +2938,17 @@ class ForensicAnalysisGUI:
                 # Image label (clickable to open full size)
                 img_label = ctk.CTkLabel(screenshot_frame, image=ctk_image, text="",
                                          cursor="hand2")
-                img_label.pack(side="left", padx=10, pady=10)
+                img_label.pack(padx=8, pady=(8, 4))
                 img_label.bind("<Button-1>", lambda e, path=screenshot_path: self.open_screenshot(path))
 
-                # Info frame
-                info_frame = ctk.CTkFrame(screenshot_frame, fg_color="transparent")
-                info_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-
-                # Filename
-                name_label = ctk.CTkLabel(info_frame, text=screenshot_info.get("filename", "Unknown"),
-                                          font=Fonts.body_bold, text_color="white", anchor="w")
-                name_label.pack(anchor="w")
-
-                # Size info
-                size_text = f"{screenshot_info.get('width', '?')} x {screenshot_info.get('height', '?')} px"
-                size_label = ctk.CTkLabel(info_frame, text=size_text,
-                                          font=Fonts.body, text_color="gray", anchor="w")
-                size_label.pack(anchor="w")
-
-                # Timestamp
-                timestamp = screenshot_info.get("timestamp", "")
-                if timestamp:
-                    try:
-                        dt = datetime.fromisoformat(timestamp)
-                        time_text = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        time_text = timestamp
-                    time_label = ctk.CTkLabel(info_frame, text=time_text,
-                                              font=Fonts.body, text_color="gray", anchor="w")
-                    time_label.pack(anchor="w")
-
-                # Delete button
-                btn_delete = ctk.CTkButton(screenshot_frame, text="🗑️",
+                # Delete button below thumbnail
+                btn_delete = ctk.CTkButton(screenshot_frame, text="Delete",
                                            command=lambda idx=i: self.delete_screenshot(idx),
-                                           width=40, height=40,
+                                           width=70, height=25,
                                            fg_color=self.colors["red"],
                                            hover_color=self.colors["red_dark"],
-                                           font=Fonts.body_large)
-                btn_delete.pack(side="right", padx=10, pady=10)
-
-                # Open button
-                btn_open = ctk.CTkButton(screenshot_frame, text="📂 Open",
-                                         command=lambda path=screenshot_path: self.open_screenshot(path),
-                                         width=80, height=40,
-                                         fg_color=self.colors["navy"],
-                                         hover_color=self.colors["dark_blue"],
-                                         font=Fonts.body)
-                btn_open.pack(side="right", padx=5, pady=10)
+                                           font=Fonts.body)
+                btn_delete.pack(pady=(0, 8))
 
             except Exception as e:
                 print(f"Error loading screenshot {screenshot_path}: {e}")
