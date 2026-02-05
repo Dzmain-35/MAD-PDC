@@ -5,7 +5,7 @@ Tab for viewing and managing the current malware analysis case.
 
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import os
 import webbrowser
 from typing import TYPE_CHECKING, Optional, Dict, Any
@@ -39,6 +39,37 @@ class CurrentCaseTab(BaseTab):
         self.files_section_visible = [True]
         self.iocs_section_visible = [True]
         self.notes_section_visible = [True]
+
+    def _handle_add_files(self):
+        """Handle adding files to the current case via file dialog"""
+        if not self.app.current_case:
+            messagebox.showwarning("No Case", "No active case. Please create a new case first.")
+            return
+
+        # Open file dialog
+        files = filedialog.askopenfilenames(
+            title="Select files to add to case",
+            filetypes=[
+                ("All files", "*.*"),
+                ("Executables", "*.exe *.dll *.sys"),
+                ("Scripts", "*.ps1 *.bat *.vbs *.js"),
+                ("Documents", "*.doc *.docx *.xls *.xlsx *.pdf"),
+                ("Archives", "*.zip *.rar *.7z")
+            ]
+        )
+
+        if not files:
+            return  # User cancelled
+
+        files = list(files)
+
+        # Show progress window and add files
+        self.app.show_progress_window("Adding Files")
+
+        def progress_callback(current, total, filename):
+            self.app.update_progress(current, total, f"Processing: {filename}")
+
+        self.app.handle_add_files(files, progress_callback)
 
     def create(self) -> ctk.CTkFrame:
         """Create the Current Case tab interface"""
@@ -91,7 +122,7 @@ class CurrentCaseTab(BaseTab):
         files_header, self.files_list_frame, self.files_expand_indicator = \
             self._create_collapsible_section(
                 scroll_frame, "Uploaded Files", "➕ Add Files",
-                self.app.handle_add_files, self.files_section_visible
+                self._handle_add_files, self.files_section_visible
             )
 
         # IOCs section

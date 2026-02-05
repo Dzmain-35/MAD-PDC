@@ -5,6 +5,7 @@ Tab for creating new malware analysis cases.
 
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog
 from PIL import Image
 import os
 from typing import TYPE_CHECKING
@@ -306,8 +307,81 @@ class NewCaseTab(BaseTab):
 
     def _handle_upload(self):
         """Handle file upload or URL download for new case"""
-        # Delegate to app's handler for now (can be moved later)
-        self.app.handle_new_case_upload()
+        method = self.upload_method.get()
+        analyst_name = self.get_analyst_name()
+        report_url = self.get_report_url()
+
+        if method == "file":
+            # Open file dialog to select files
+            files = filedialog.askopenfilenames(
+                title="Select files for analysis",
+                filetypes=[
+                    ("All files", "*.*"),
+                    ("Executables", "*.exe *.dll *.sys"),
+                    ("Scripts", "*.ps1 *.bat *.vbs *.js"),
+                    ("Documents", "*.doc *.docx *.xls *.xlsx *.pdf"),
+                    ("Archives", "*.zip *.rar *.7z")
+                ]
+            )
+
+            if not files:
+                return  # User cancelled
+
+            files = list(files)
+
+            # Generate case name from first file or prompt user
+            default_name = os.path.splitext(os.path.basename(files[0]))[0] if files else "New_Case"
+            case_name = simpledialog.askstring(
+                "Case Name",
+                "Enter a name for this case:",
+                initialvalue=default_name,
+                parent=self.app.root
+            )
+
+            if not case_name:
+                return  # User cancelled
+
+        elif method == "url":
+            # Get URLs from text input
+            urls = self.get_urls()
+            if not urls:
+                messagebox.showwarning("No URLs", "Please enter at least one URL to download")
+                return
+
+            # For URL downloads, use first URL as case name basis
+            case_name = simpledialog.askstring(
+                "Case Name",
+                "Enter a name for this case:",
+                initialvalue="URL_Download_Case",
+                parent=self.app.root
+            )
+
+            if not case_name:
+                return
+
+            # TODO: Implement URL download logic
+            # For now, show a message that URL download needs implementation
+            messagebox.showinfo("Info", "URL download feature - files will be downloaded and processed")
+            files = []  # Would be populated by download logic
+            return  # Skip for now until URL download is implemented
+
+        else:
+            return
+
+        # Show progress and delegate to app handler
+        def progress_callback(current, total, filename):
+            self.set_status(f"Processing {current}/{total}: {filename}")
+
+        self.set_status("Starting case creation...")
+
+        # Call app's handler with all parameters
+        self.app.handle_new_case_upload(
+            case_name=case_name,
+            analyst_name=analyst_name,
+            report_url=report_url,
+            files=files,
+            progress_callback=progress_callback
+        )
 
     def get_analyst_name(self) -> str:
         """Get the analyst name from the form"""
