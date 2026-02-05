@@ -2298,6 +2298,22 @@ class ForensicAnalysisGUI:
                         if extract_success and extracted_files:
                             print(f"Auto-extracted {len(extracted_files)} files from archive")
                             files_to_process = extracted_files
+
+                            # Copy extracted files to Desktop folder for analyst access
+                            try:
+                                desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+                                archive_name = os.path.splitext(os.path.basename(file_path))[0]
+                                desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
+                                os.makedirs(desktop_extract_folder, exist_ok=True)
+
+                                for extracted_file in extracted_files:
+                                    dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
+                                    shutil.copy2(extracted_file, dest_path)
+
+                                print(f"Copied extracted files to: {desktop_extract_folder}")
+                            except Exception as e:
+                                print(f"Warning: Could not copy to desktop: {e}")
+
                             # Clean up the archive after extraction
                             try:
                                 os.remove(file_path)
