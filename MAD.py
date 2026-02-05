@@ -384,78 +384,28 @@ class ForensicAnalysisGUI:
         )
         self.radio_url.pack(side="left", padx=20)
 
-        # URL input area (initially hidden)
-        self.url_input_frame = ctk.CTkFrame(center_container, fg_color=self.colors["navy"], corner_radius=8)
+        # URL input area (initially hidden) - simple single entry field like Report URL
+        self.url_input_frame = ctk.CTkFrame(center_container, fg_color="transparent")
 
-        # URL input row (similar to Report URL style)
-        url_entry_frame = ctk.CTkFrame(self.url_input_frame, fg_color="transparent")
-        url_entry_frame.pack(fill="x", padx=15, pady=(15, 10))
-
-        url_input_label = ctk.CTkLabel(
-            url_entry_frame,
-            text="URL:",
+        url_label = ctk.CTkLabel(
+            self.url_input_frame,
+            text="Download URL",
             font=Fonts.label_large,
-            text_color="white",
-            width=80
+            text_color="white"
         )
-        url_input_label.pack(side="left")
+        url_label.pack(anchor="w", pady=(0, 5))
 
         self.url_entry = ctk.CTkEntry(
-            url_entry_frame,
-            placeholder_text="Enter URL to download...",
-            height=40,
+            self.url_input_frame,
+            placeholder_text="Enter URL to download file from...",
+            height=45,
+            width=500,
             font=Fonts.body_large,
             fg_color="gray20",
             border_color=self.colors["red"],
             border_width=2
         )
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
-        self.url_entry.bind("<Return>", lambda e: self.add_url_to_list())
-
-        btn_add_url = ctk.CTkButton(
-            url_entry_frame,
-            text="+ Add",
-            command=self.add_url_to_list,
-            height=40,
-            width=80,
-            font=Fonts.button_large,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"]
-        )
-        btn_add_url.pack(side="left")
-
-        # URL list display
-        url_list_frame = ctk.CTkFrame(self.url_input_frame, fg_color="gray20", corner_radius=6)
-        url_list_frame.pack(fill="x", padx=15, pady=(0, 15))
-
-        url_list_header = ctk.CTkFrame(url_list_frame, fg_color="transparent")
-        url_list_header.pack(fill="x", padx=10, pady=(10, 5))
-
-        ctk.CTkLabel(
-            url_list_header,
-            text="URLs to Download:",
-            font=Fonts.body_bold,
-            text_color="white"
-        ).pack(side="left")
-
-        btn_clear_urls = ctk.CTkButton(
-            url_list_header,
-            text="Clear All",
-            command=self.clear_url_list,
-            height=28,
-            width=80,
-            font=Fonts.body,
-            fg_color="gray30",
-            hover_color="gray40"
-        )
-        btn_clear_urls.pack(side="right")
-
-        # Scrollable URL list
-        self.url_listbox_frame = ctk.CTkScrollableFrame(url_list_frame, fg_color="transparent", height=100)
-        self.url_listbox_frame.pack(fill="x", padx=10, pady=(0, 10))
-
-        # Store URLs in a list
-        self.pending_urls = []
+        self.url_entry.pack(fill="x")
 
         # Upload button
         btn_upload = ctk.CTkButton(
@@ -2101,80 +2051,6 @@ class ForensicAnalysisGUI:
             self.url_input_frame.pack_forget()
             self.btn_new_case_upload.configure(text="Upload File to Start Case")
 
-    def add_url_to_list(self):
-        """Add URL from entry to the pending URLs list"""
-        url = self.url_entry.get().strip()
-        if not url:
-            return
-
-        # Basic URL validation
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-
-        if url in self.pending_urls:
-            messagebox.showinfo("Duplicate", "This URL is already in the list")
-            return
-
-        self.pending_urls.append(url)
-        self.refresh_url_list_display()
-        self.url_entry.delete(0, tk.END)
-
-    def remove_url_from_list(self, url):
-        """Remove a URL from the pending list"""
-        if url in self.pending_urls:
-            self.pending_urls.remove(url)
-            self.refresh_url_list_display()
-
-    def clear_url_list(self):
-        """Clear all pending URLs"""
-        self.pending_urls = []
-        self.refresh_url_list_display()
-
-    def refresh_url_list_display(self):
-        """Refresh the URL list display"""
-        # Clear existing items
-        for widget in self.url_listbox_frame.winfo_children():
-            widget.destroy()
-
-        if not self.pending_urls:
-            empty_label = ctk.CTkLabel(
-                self.url_listbox_frame,
-                text="No URLs added yet",
-                font=Fonts.body,
-                text_color="gray"
-            )
-            empty_label.pack(pady=10)
-            return
-
-        # Add each URL with a remove button
-        for i, url in enumerate(self.pending_urls):
-            row = ctk.CTkFrame(self.url_listbox_frame, fg_color="transparent")
-            row.pack(fill="x", pady=2)
-
-            # Truncate long URLs for display
-            display_url = url if len(url) <= 60 else url[:57] + "..."
-
-            url_label = ctk.CTkLabel(
-                row,
-                text=f"{i+1}. {display_url}",
-                font=Fonts.body,
-                text_color="white",
-                anchor="w"
-            )
-            url_label.pack(side="left", fill="x", expand=True)
-
-            btn_remove = ctk.CTkButton(
-                row,
-                text="×",
-                command=lambda u=url: self.remove_url_from_list(u),
-                width=28,
-                height=28,
-                font=Fonts.body_bold,
-                fg_color="gray30",
-                hover_color=self.colors["red"]
-            )
-            btn_remove.pack(side="right", padx=5)
-
     def handle_new_case_upload(self):
         """Handle file upload or URL download for new case"""
         if self.scan_in_progress:
@@ -2199,13 +2075,18 @@ class ForensicAnalysisGUI:
         method = self.upload_method.get()
 
         if method == "url":
-            # Get URLs from pending list
-            if not self.pending_urls:
-                messagebox.showwarning("Missing URLs", "Please add at least one URL to download")
+            # Get URL from entry field
+            download_url = self.url_entry.get().strip()
+            if not download_url:
+                messagebox.showwarning("Missing URL", "Please enter a URL to download")
                 self.url_entry.focus()
                 return
 
-            self.process_new_case_urls(list(self.pending_urls), analyst_name, report_url)
+            # Basic URL validation - add https if missing
+            if not download_url.startswith(('http://', 'https://')):
+                download_url = 'https://' + download_url
+
+            self.process_new_case_urls([download_url], analyst_name, report_url)
         else:
             # File upload mode
             files = filedialog.askopenfilenames(title="Select files to analyze")

@@ -815,6 +815,49 @@ class CaseManager:
             return "Low"
         return "Clean"
 
+    def _convert_to_direct_download_url(self, url: str) -> str:
+        """
+        Convert sharing URLs to direct download URLs for various services.
+
+        Supports:
+        - Dropbox: www.dropbox.com -> dl.dropboxusercontent.com
+        - Google Drive: Convert to direct download format
+        """
+        parsed = urlparse(url)
+
+        # Dropbox conversion
+        if 'dropbox.com' in parsed.netloc:
+            # Convert www.dropbox.com to dl.dropboxusercontent.com for direct download
+            # Remove query params except for the file path
+            if 'www.dropbox.com' in parsed.netloc or 'dropbox.com' == parsed.netloc:
+                new_url = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+                new_url = new_url.replace('dropbox.com', 'dl.dropboxusercontent.com')
+                # Remove dl parameter as it's not needed for dl.dropboxusercontent.com
+                if '?' in new_url:
+                    base, params = new_url.split('?', 1)
+                    # Keep only essential params, remove dl=0/1
+                    param_pairs = params.split('&')
+                    filtered_params = [p for p in param_pairs if not p.startswith('dl=')]
+                    if filtered_params:
+                        new_url = base + '?' + '&'.join(filtered_params)
+                    else:
+                        new_url = base
+                print(f"Converted Dropbox URL to direct download: {new_url}")
+                return new_url
+
+        # Google Drive conversion
+        if 'drive.google.com' in parsed.netloc:
+            # Convert /file/d/FILE_ID/view to direct download
+            import re
+            match = re.search(r'/file/d/([^/]+)', url)
+            if match:
+                file_id = match.group(1)
+                new_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                print(f"Converted Google Drive URL to direct download: {new_url}")
+                return new_url
+
+        return url
+
     def download_file_from_url(self, url: str, timeout: int = 30) -> Tuple[bool, str, str]:
         """
         Download a file from a URL to a temporary location (browser-like behavior)
@@ -827,10 +870,13 @@ class CaseManager:
             Tuple of (success, file_path, error_message)
         """
         try:
+            # Convert sharing URLs to direct download URLs
+            original_url = url
+            url = self._convert_to_direct_download_url(url)
             print(f"Downloading file from URL: {url}")
 
             # Parse URL to get filename
-            parsed_url = urlparse(url)
+            parsed_url = urlparse(original_url)  # Use original URL for filename extraction
             filename = os.path.basename(parsed_url.path)
 
             # If no filename in URL, generate one
