@@ -3,7 +3,6 @@ rule Mal_Ratty_RAT
 meta:
 	description = "Identifies RATTY malware"
 strings: 
-	$str1 = "ratty" nocase
 	$str2 = "com/proj/client/logger/Logger"
 	$str3 = "com.proj.client.Client"
 	$str4 = "com\\proj\\client\\Client.class"
@@ -13,4 +12,5 @@ strings:
 condition:
   any of them
 	
+
 }
