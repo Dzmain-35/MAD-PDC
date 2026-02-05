@@ -736,7 +736,83 @@ class ForensicAnalysisGUI:
             height=8
         )
         self.notes_textbox.pack(fill="both", expand=True, padx=2, pady=2)
-        
+
+        # Screenshots section header - Clickable
+        screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        screenshots_header.pack(fill="x", pady=(10, 5))
+
+        screenshots_header_inner = ctk.CTkFrame(screenshots_header, fg_color="transparent", cursor="hand2")
+        screenshots_header_inner.pack(fill="x", padx=15, pady=10)
+
+        # Expand indicator for Screenshots
+        self.screenshots_expand_indicator = ctk.CTkLabel(screenshots_header_inner, text="▼",
+                                                         font=Fonts.body_large,
+                                                         text_color="gray60",
+                                                         cursor="hand2")
+        self.screenshots_expand_indicator.pack(side="left", padx=(0, 10))
+
+        screenshots_title = ctk.CTkLabel(screenshots_header_inner, text="Screenshots",
+                                         font=Fonts.title_medium,
+                                         text_color="white",
+                                         cursor="hand2")
+        screenshots_title.pack(side="left")
+
+        # Attach from clipboard button
+        btn_attach_screenshot = ctk.CTkButton(screenshots_header_inner, text="📋 Paste from Clipboard",
+                                              command=self.attach_screenshot_from_clipboard,
+                                              height=30, width=160,
+                                              fg_color=self.colors["red"],
+                                              hover_color=self.colors["red_dark"],
+                                              font=Fonts.label)
+        btn_attach_screenshot.pack(side="right")
+
+        # Screenshots container (collapsible)
+        self.screenshots_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        self.screenshots_container.pack(fill="x", pady=(0, 10))
+
+        # Screenshots display frame (scrollable)
+        self.screenshots_display_frame = ctk.CTkScrollableFrame(self.screenshots_container,
+                                                                 fg_color="transparent",
+                                                                 height=200)
+        self.screenshots_display_frame.pack(fill="x", padx=10, pady=10)
+
+        # Placeholder text when no screenshots
+        self.screenshots_placeholder = ctk.CTkLabel(self.screenshots_display_frame,
+                                                    text="No screenshots attached. Use 'Paste from Clipboard' to add screenshots.",
+                                                    font=Fonts.body,
+                                                    text_color="gray")
+        self.screenshots_placeholder.pack(pady=20)
+
+        # Track screenshots visibility
+        self.screenshots_section_visible = [True]
+
+        # Toggle function for Screenshots section
+        def toggle_screenshots_section(event=None):
+            if event and hasattr(event.widget, 'cget'):
+                try:
+                    if "Clipboard" in str(event.widget.cget('text')):
+                        return
+                except:
+                    pass
+
+            if self.screenshots_section_visible[0]:
+                self.screenshots_container.pack_forget()
+                self.screenshots_expand_indicator.configure(text="▶")
+                self.screenshots_section_visible[0] = False
+            else:
+                self.screenshots_container.pack(fill="x", pady=(0, 10))
+                self.screenshots_expand_indicator.configure(text="▼")
+                self.screenshots_section_visible[0] = True
+
+        # Bind click events for Screenshots section
+        screenshots_header.bind("<Button-1>", toggle_screenshots_section)
+        screenshots_header_inner.bind("<Button-1>", toggle_screenshots_section)
+        screenshots_title.bind("<Button-1>", toggle_screenshots_section)
+        self.screenshots_expand_indicator.bind("<Button-1>", toggle_screenshots_section)
+
+        # Store screenshot references for display
+        self.screenshot_images = []
+
         self.tabs["current_case"] = frame
         
     # ==================== ANALYSIS TAB ====================
@@ -2714,7 +2790,250 @@ class ForensicAnalysisGUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save notes: {str(e)}")
-    
+
+    def attach_screenshot_from_clipboard(self):
+        """Attach a screenshot from the clipboard to the current case"""
+        if not self.current_case:
+            messagebox.showwarning("No Case", "No active case to attach screenshot to")
+            return
+
+        try:
+            # Try to get image from clipboard using PIL
+            from PIL import ImageGrab
+
+            # Capture image from clipboard
+            clipboard_image = ImageGrab.grabclipboard()
+
+            if clipboard_image is None:
+                messagebox.showwarning(
+                    "No Image",
+                    "No image found in clipboard.\n\n"
+                    "Use the Snipping Tool (Win+Shift+S) to capture a screenshot, "
+                    "then click 'Paste from Clipboard'."
+                )
+                return
+
+            # Check if it's actually an image
+            if not isinstance(clipboard_image, Image.Image):
+                # Sometimes clipboard returns a list of file paths
+                if isinstance(clipboard_image, list) and len(clipboard_image) > 0:
+                    # Try to open the first file as an image
+                    try:
+                        clipboard_image = Image.open(clipboard_image[0])
+                    except:
+                        messagebox.showwarning("Invalid Image", "Clipboard does not contain a valid image")
+                        return
+                else:
+                    messagebox.showwarning("Invalid Image", "Clipboard does not contain a valid image")
+                    return
+
+            # Create screenshots directory in case folder
+            case_dir = os.path.join(self.case_manager.case_storage_path, self.current_case["id"])
+            screenshots_dir = os.path.join(case_dir, "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_filename = f"screenshot_{timestamp}.png"
+            screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+
+            # Save the image
+            clipboard_image.save(screenshot_path, "PNG")
+
+            # Add to case metadata
+            if "screenshots" not in self.current_case:
+                self.current_case["screenshots"] = []
+
+            self.current_case["screenshots"].append({
+                "filename": screenshot_filename,
+                "path": screenshot_path,
+                "timestamp": datetime.now().isoformat(),
+                "width": clipboard_image.width,
+                "height": clipboard_image.height
+            })
+
+            # Save updated case metadata
+            self.case_manager.save_case_metadata(case_dir, self.current_case)
+
+            # Refresh the screenshots display
+            self.refresh_screenshots_display()
+
+            messagebox.showinfo(
+                "Screenshot Attached",
+                f"Screenshot saved successfully!\n\n"
+                f"Size: {clipboard_image.width} x {clipboard_image.height}\n"
+                f"File: {screenshot_filename}"
+            )
+
+        except ImportError:
+            messagebox.showerror(
+                "Missing Dependency",
+                "PIL/Pillow is required for clipboard image capture.\n"
+                "Install with: pip install Pillow"
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to attach screenshot: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def refresh_screenshots_display(self):
+        """Refresh the screenshots display in the Current Case tab"""
+        # Clear existing screenshots display
+        for widget in self.screenshots_display_frame.winfo_children():
+            widget.destroy()
+
+        # Clear stored image references
+        self.screenshot_images = []
+
+        if not self.current_case or "screenshots" not in self.current_case or not self.current_case["screenshots"]:
+            # Show placeholder
+            placeholder = ctk.CTkLabel(
+                self.screenshots_display_frame,
+                text="No screenshots attached. Use 'Paste from Clipboard' to add screenshots.",
+                font=Fonts.body,
+                text_color="gray"
+            )
+            placeholder.pack(pady=20)
+            return
+
+        # Display each screenshot as a thumbnail
+        for i, screenshot_info in enumerate(self.current_case["screenshots"]):
+            screenshot_path = screenshot_info.get("path", "")
+
+            if not os.path.exists(screenshot_path):
+                continue
+
+            # Create frame for each screenshot
+            screenshot_frame = ctk.CTkFrame(self.screenshots_display_frame, fg_color="#1a1a1a", corner_radius=8)
+            screenshot_frame.pack(fill="x", pady=5, padx=5)
+
+            # Load and create thumbnail
+            try:
+                pil_image = Image.open(screenshot_path)
+
+                # Create thumbnail (max 150px height)
+                max_height = 150
+                ratio = max_height / pil_image.height
+                new_width = int(pil_image.width * ratio)
+                thumbnail = pil_image.copy()
+                thumbnail.thumbnail((new_width, max_height), Image.Resampling.LANCZOS)
+
+                # Convert to CTkImage
+                ctk_image = ctk.CTkImage(light_image=thumbnail, dark_image=thumbnail,
+                                         size=(thumbnail.width, thumbnail.height))
+
+                # Store reference to prevent garbage collection
+                self.screenshot_images.append(ctk_image)
+
+                # Image label (clickable to open full size)
+                img_label = ctk.CTkLabel(screenshot_frame, image=ctk_image, text="",
+                                         cursor="hand2")
+                img_label.pack(side="left", padx=10, pady=10)
+                img_label.bind("<Button-1>", lambda e, path=screenshot_path: self.open_screenshot(path))
+
+                # Info frame
+                info_frame = ctk.CTkFrame(screenshot_frame, fg_color="transparent")
+                info_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+
+                # Filename
+                name_label = ctk.CTkLabel(info_frame, text=screenshot_info.get("filename", "Unknown"),
+                                          font=Fonts.body_bold, text_color="white", anchor="w")
+                name_label.pack(anchor="w")
+
+                # Size info
+                size_text = f"{screenshot_info.get('width', '?')} x {screenshot_info.get('height', '?')} px"
+                size_label = ctk.CTkLabel(info_frame, text=size_text,
+                                          font=Fonts.body, text_color="gray", anchor="w")
+                size_label.pack(anchor="w")
+
+                # Timestamp
+                timestamp = screenshot_info.get("timestamp", "")
+                if timestamp:
+                    try:
+                        dt = datetime.fromisoformat(timestamp)
+                        time_text = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        time_text = timestamp
+                    time_label = ctk.CTkLabel(info_frame, text=time_text,
+                                              font=Fonts.body, text_color="gray", anchor="w")
+                    time_label.pack(anchor="w")
+
+                # Delete button
+                btn_delete = ctk.CTkButton(screenshot_frame, text="🗑️",
+                                           command=lambda idx=i: self.delete_screenshot(idx),
+                                           width=40, height=40,
+                                           fg_color=self.colors["red"],
+                                           hover_color=self.colors["red_dark"],
+                                           font=Fonts.body_large)
+                btn_delete.pack(side="right", padx=10, pady=10)
+
+                # Open button
+                btn_open = ctk.CTkButton(screenshot_frame, text="📂 Open",
+                                         command=lambda path=screenshot_path: self.open_screenshot(path),
+                                         width=80, height=40,
+                                         fg_color=self.colors["navy"],
+                                         hover_color=self.colors["dark_blue"],
+                                         font=Fonts.body)
+                btn_open.pack(side="right", padx=5, pady=10)
+
+            except Exception as e:
+                print(f"Error loading screenshot {screenshot_path}: {e}")
+                error_label = ctk.CTkLabel(screenshot_frame, text=f"Error loading: {screenshot_info.get('filename', 'Unknown')}",
+                                           font=Fonts.body, text_color="red")
+                error_label.pack(pady=10)
+
+    def open_screenshot(self, path):
+        """Open a screenshot with the default image viewer"""
+        try:
+            if platform.system() == "Windows":
+                os.startfile(path)
+            elif platform.system() == "Darwin":
+                subprocess.run(["open", path])
+            else:
+                subprocess.run(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open screenshot: {str(e)}")
+
+    def delete_screenshot(self, index):
+        """Delete a screenshot from the case"""
+        if not self.current_case or "screenshots" not in self.current_case:
+            return
+
+        if index >= len(self.current_case["screenshots"]):
+            return
+
+        screenshot_info = self.current_case["screenshots"][index]
+        filename = screenshot_info.get("filename", "this screenshot")
+
+        result = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete {filename}?"
+        )
+
+        if not result:
+            return
+
+        try:
+            # Remove the file
+            screenshot_path = screenshot_info.get("path", "")
+            if os.path.exists(screenshot_path):
+                os.remove(screenshot_path)
+
+            # Remove from case metadata
+            self.current_case["screenshots"].pop(index)
+
+            # Save updated case metadata
+            case_dir = os.path.join(self.case_manager.case_storage_path, self.current_case["id"])
+            self.case_manager.save_case_metadata(case_dir, self.current_case)
+
+            # Refresh display
+            self.refresh_screenshots_display()
+
+            messagebox.showinfo("Deleted", f"Screenshot '{filename}' deleted successfully")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete screenshot: {str(e)}")
+
     # ==================== DISPLAY UPDATES ====================
     def update_current_case_display(self):
         """Update the current case tab display"""
@@ -2767,6 +3086,9 @@ class ForensicAnalysisGUI:
 
         # Refresh IOCs display
         self.refresh_iocs_display()
+
+        # Refresh screenshots display
+        self.refresh_screenshots_display()
 
     def create_file_card(self, file_info):
         """Create an expandable card for displaying file information"""
