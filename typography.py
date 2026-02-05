@@ -10,15 +10,16 @@ import customtkinter as ctk
 
 # Font Size Scale
 # Using a standardized scale for consistent visual hierarchy
+# Sizes increased for better readability across UI
 FONT_SIZES = {
-    "xs": 20,      # Helper text, footnotes, status indicators
-    "sm": 15,      # Secondary text, smaller labels
-    "base": 16,    # Primary body text, input fields
-    "md": 18,      # Section labels, form labels
-    "lg": 20,      # Subsection headers, subtab titles
-    "xl": 22,      # Section headers
-    "2xl": 24,     # Tab titles, important headers
-    "3xl": 28,     # Main page headers
+    "xs": 13,      # Helper text, footnotes, status indicators
+    "sm": 16,      # Secondary text, smaller labels
+    "base": 18,    # Primary body text, input fields
+    "md": 20,      # Section labels, form labels
+    "lg": 22,      # Subsection headers, subtab titles
+    "xl": 24,      # Section headers
+    "2xl": 26,     # Tab titles, important headers
+    "3xl": 30,     # Main page headers
     "logo": 72,    # Logo text size
 }
 
@@ -106,12 +107,12 @@ class Fonts:
     @staticmethod
     def text_input(size=None):
         """Font for text input areas (uses Segoe UI)"""
-        return (FONT_FAMILIES["ui"], size or FONT_SIZES["xs"])
+        return (FONT_FAMILIES["ui"], size or FONT_SIZES["sm"])
 
     @staticmethod
     def monospace(size=None):
         """Font for code, logs, and technical data (uses Courier)"""
-        return (FONT_FAMILIES["mono"], size or 10)
+        return (FONT_FAMILIES["mono"], size or 12)
 
 
 # Legacy mapping for gradual migration

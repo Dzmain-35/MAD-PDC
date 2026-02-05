@@ -37,6 +37,7 @@ class SettingsManager:
             "enable_realtime_alerts": True,
         },
         "yara": {
+            "enable_rule_creation": True,
             "create_backups_on_delete": True,
             "create_backups_on_update": True,
             "backup_directory": "_backups",
@@ -324,6 +325,7 @@ class SettingsManager:
             "analysis.enable_yara_scanning": "Enable YARA rule scanning",
             "analysis.auto_scan_new_processes": "Automatically scan new processes with YARA",
             "analysis.enable_realtime_alerts": "Show real-time threat alerts",
+            "yara.enable_rule_creation": "Enable ability to create new YARA rules",
             "yara.create_backups_on_delete": "Create backup when deleting YARA rules",
             "yara.create_backups_on_update": "Create backup when updating YARA rules",
             "yara.backup_directory": "Directory name for YARA rule backups",
@@ -407,7 +409,7 @@ class SettingsManager:
 
     def get_network_case_folder_path(self, report_url: str, analyst_name: str = None) -> Optional[str]:
         """
-        Get full network path for a case folder
+        Get full network path for a case folder, organized by date
 
         Args:
             report_url: Report URL to parse
@@ -415,6 +417,7 @@ class SettingsManager:
 
         Returns:
             Full network path or None if network folder is disabled or unable to generate
+            Path format: base_path/M_DD_YYYY/case_folder_name
         """
         if not self.get("network.enable_network_case_folder", False):
             return None
@@ -428,4 +431,6 @@ class SettingsManager:
             return None
 
         import os
-        return os.path.join(base_path, folder_name)
+        # Add date-based subfolder (format: M_DD_YYYY, e.g., 2_05_2026)
+        date_folder = datetime.now().strftime("%-m_%d_%Y") if os.name != 'nt' else datetime.now().strftime("%#m_%d_%Y")
+        return os.path.join(base_path, date_folder, folder_name)

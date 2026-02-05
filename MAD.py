@@ -902,7 +902,7 @@ class ForensicAnalysisGUI:
         self.yara_match_badge = ctk.CTkLabel(
             search_frame,
             text="⚠️ YARA: 0",
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 15, "bold"),
             text_color="#fbbf24",  # Amber color
             fg_color="#78350f",     # Dark amber background
             corner_radius=6,
@@ -925,19 +925,22 @@ class ForensicAnalysisGUI:
         style = ttk.Style()
         style.theme_use('default')
         
-        # Configure Treeview colors
+        # Configure Treeview colors with larger font
         style.configure("Process.Treeview",
                        background="#1a1a1a",
                        foreground="white",
                        fieldbackground="#1a1a1a",
                        borderwidth=0,
-                       relief="flat")
-        
+                       relief="flat",
+                       font=('Segoe UI', 13),
+                       rowheight=28)
+
         style.configure("Process.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=1,
-                       relief="flat")
+                       relief="flat",
+                       font=('Segoe UI', 14, 'bold'))
         
         style.map("Process.Treeview",
                  background=[('selected', '#dc2626')],
@@ -3167,12 +3170,14 @@ File Size: {file_info['file_size']} bytes"""
         btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         btn_frame.pack(side="right")
 
-        btn_add_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
+        self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
                                      command=self.add_yara_rule_dialog,
                                      fg_color=self.colors["red"],
                                      hover_color=self.colors["red_dark"],
                                      font=Fonts.label_large)
-        btn_add_rule.pack(side="left", padx=5)
+        # Only show Add Rule button if rule creation is enabled in settings
+        if self.settings_manager.get("yara.enable_rule_creation", True):
+            self.btn_add_yara_rule.pack(side="left", padx=5)
 
         btn_import_rule = ctk.CTkButton(btn_frame, text="Import from File",
                                        command=self.import_yara_rule_file,
@@ -3218,12 +3223,13 @@ File Size: {file_info['file_size']} bytes"""
                        foreground="white",
                        fieldbackground="#1a2332",
                        borderwidth=0,
-                       font=('Segoe UI', 11))
+                       font=('Segoe UI', 13),
+                       rowheight=28)
         style.configure("Yara.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=0,
-                       font=('Segoe UI', 12, 'bold'))
+                       font=('Segoe UI', 14, 'bold'))
         style.map('Yara.Treeview',
                  background=[('selected', '#991b1b')])
 
@@ -3750,21 +3756,12 @@ File Size: {file_info['file_size']} bytes"""
         # Store entry widgets for later access
         self.settings_widgets = {}
 
-        # API Keys Section
-        self.create_settings_section(settings_scroll, "API Keys", [
-            ("api_keys.virustotal", "VirusTotal API Key", "entry"),
-            ("api_keys.threathq_user", "ThreatHQ Username", "entry"),
-            ("api_keys.threathq_pass", "ThreatHQ Password", "entry"),
-        ])
-
-        # Analysis Settings
-        self.create_settings_section(settings_scroll, "Analysis Settings", [
-            ("analysis.enable_process_monitoring", "Enable Process Monitoring", "switch"),
-            ("analysis.enable_network_monitoring", "Enable Network Monitoring", "switch"),
-            ("analysis.enable_yara_scanning", "Enable YARA Scanning", "switch"),
-            ("analysis.auto_scan_new_processes", "Auto-scan New Processes", "switch"),
-            ("analysis.enable_realtime_alerts", "Enable Real-time Alerts", "switch"),
-        ])
+        # API Keys Section (commented out for now)
+        # self.create_settings_section(settings_scroll, "API Keys", [
+        #     ("api_keys.virustotal", "VirusTotal API Key", "entry"),
+        #     ("api_keys.threathq_user", "ThreatHQ Username", "entry"),
+        #     ("api_keys.threathq_pass", "ThreatHQ Password", "entry"),
+        # ])
 
         # UI Settings
         self.create_settings_section(settings_scroll, "User Interface", [
@@ -3778,22 +3775,9 @@ File Size: {file_info['file_size']} bytes"""
 
         # YARA Settings
         self.create_settings_section(settings_scroll, "YARA Settings", [
+            ("yara.enable_rule_creation", "Enable YARA Rule Creation", "switch"),
             ("yara.create_backups_on_delete", "Create Backups on Delete", "switch"),
             ("yara.create_backups_on_update", "Create Backups on Update", "switch"),
-        ])
-
-        # Export Settings
-        self.create_settings_section(settings_scroll, "Export Settings", [
-            ("export.default_export_format", "Default Export Format", "option", ["json", "csv"]),
-            ("export.include_metadata", "Include Metadata", "switch"),
-            ("export.include_hashes", "Include File Hashes", "switch"),
-        ])
-
-        # Advanced Settings
-        self.create_settings_section(settings_scroll, "Advanced", [
-            ("advanced.debug_mode", "Debug Mode", "switch"),
-            ("advanced.log_file", "Log Filename", "entry"),
-            ("advanced.max_log_size_mb", "Max Log Size (MB)", "entry"),
         ])
 
         # Network Settings
@@ -3922,6 +3906,13 @@ File Size: {file_info['file_size']} bytes"""
             self.case_manager.threathq_user = threathq_user
         if threathq_pass:
             self.case_manager.threathq_pass = threathq_pass
+
+        # Apply YARA rule creation setting
+        if hasattr(self, 'btn_add_yara_rule'):
+            if self.settings_manager.get("yara.enable_rule_creation", True):
+                self.btn_add_yara_rule.pack(side="left", padx=5)
+            else:
+                self.btn_add_yara_rule.pack_forget()
 
         print("Settings applied successfully")
 
