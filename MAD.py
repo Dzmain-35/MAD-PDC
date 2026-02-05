@@ -2425,7 +2425,82 @@ class ForensicAnalysisGUI:
                         except:
                             pass
                 else:
+                    # Download failed - prompt user for action
                     failed_downloads.append(f"{url}: {error}")
+
+                    # Show error dialog with retry/upload options (on main thread)
+                    retry_result = [None]  # Use list to capture result from lambda
+
+                    def show_download_error():
+                        result = messagebox.askretrycancel(
+                            "Download Failed",
+                            f"Failed to download file from URL:\n{url[:80]}...\n\n"
+                            f"Error: {error}\n\n"
+                            "Click 'Retry' to try again, or 'Cancel' to skip this file.\n"
+                            "You can also upload files manually from the 'New Case' tab."
+                        )
+                        retry_result[0] = result
+
+                    # Show dialog on main thread and wait for response
+                    self.root.after(0, show_download_error)
+
+                    # Wait for user response (poll until result is set)
+                    import time
+                    while retry_result[0] is None:
+                        time.sleep(0.1)
+
+                    if retry_result[0]:  # User clicked Retry
+                        # Remove from failed list and retry
+                        failed_downloads.pop()
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Retrying: {url[:50]}...")
+                        success, file_path, error = self.case_manager.download_file_from_url(url)
+
+                        if success:
+                            downloaded_files.append(file_path)
+                            files_to_process = [file_path]
+
+                            # Check if downloaded file is an archive - auto-extract
+                            if self.case_manager._is_archive(file_path):
+                                self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
+                                extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
+                                if extract_success and extracted_files:
+                                    files_to_process = extracted_files
+                                    try:
+                                        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+                                        archive_name = os.path.splitext(os.path.basename(file_path))[0]
+                                        desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
+                                        os.makedirs(desktop_extract_folder, exist_ok=True)
+                                        for extracted_file in extracted_files:
+                                            dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
+                                            shutil.copy2(extracted_file, dest_path)
+                                    except Exception as e:
+                                        print(f"Warning: Could not copy to desktop: {e}")
+                                    try:
+                                        os.remove(file_path)
+                                    except:
+                                        pass
+
+                            # Process files from retry
+                            for j, process_file_path in enumerate(files_to_process):
+                                filename = os.path.basename(process_file_path)
+                                self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
+                                file_info = self.case_manager.process_file(process_file_path, files_dir, case_id)
+                                file_info["source_url"] = url
+                                case_data["files"].append(file_info)
+                                has_yara = len(file_info["yara_matches"]) > 0
+                                has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
+                                has_vt = file_info["vt_hits"] > 0
+                                if has_yara or has_thq or has_vt:
+                                    case_data["total_threats"] += 1
+                                case_data["total_vt_hits"] += file_info["vt_hits"]
+                                try:
+                                    if os.path.exists(process_file_path):
+                                        os.remove(process_file_path)
+                                except:
+                                    pass
+                        else:
+                            # Retry also failed
+                            failed_downloads.append(f"{url}: {error} (retry failed)")
 
             # Save case metadata
             self.case_manager.save_case_metadata(case_dir, case_data)
@@ -5839,6 +5914,17 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                         process_name=name
                     )
                     if success:
+                        # Also copy to network case folder if enabled
+                        network_copy_msg = ""
+                        if self.current_case and self.current_case.get("network_case_path"):
+                            try:
+                                network_path = self.current_case["network_case_path"]
+                                network_strings_path = os.path.join(network_path, os.path.basename(file_path))
+                                shutil.copy2(file_path, network_strings_path)
+                                network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
+                            except Exception as e:
+                                print(f"Warning: Could not copy strings to network folder: {e}")
+
                         # Show summary including metadata
                         mem_regions = len(extraction_result.get('memory_regions', []))
                         bytes_scanned = extraction_result.get('total_bytes_scanned', 0)
@@ -5846,6 +5932,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                         summary += f"Memory Regions Scanned: {mem_regions}\n"
                         summary += f"Total Bytes Scanned: {bytes_scanned:,}\n"
                         summary += f"Extraction Method: {extraction_result.get('extraction_method', 'unknown')}"
+                        summary += network_copy_msg
                         messagebox.showinfo("Export Complete", summary)
                     else:
                         messagebox.showerror("Export Failed", "Failed to export strings")
@@ -6479,7 +6566,18 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                 )
 
                 if success:
-                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}")
+                    # Also copy to network case folder if enabled
+                    network_copy_msg = ""
+                    if self.current_case and self.current_case.get("network_case_path"):
+                        try:
+                            network_path = self.current_case["network_case_path"]
+                            network_strings_path = os.path.join(network_path, os.path.basename(save_path))
+                            shutil.copy2(save_path, network_strings_path)
+                            network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
+                        except Exception as e:
+                            print(f"Warning: Could not copy strings to network folder: {e}")
+
+                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}{network_copy_msg}")
                 else:
                     messagebox.showerror("Export Failed", "Failed to export strings")
 
