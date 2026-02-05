@@ -384,31 +384,28 @@ class ForensicAnalysisGUI:
         )
         self.radio_url.pack(side="left", padx=20)
 
-        # URL input area (initially hidden)
-        self.url_input_frame = ctk.CTkFrame(center_container, fg_color=self.colors["navy"], corner_radius=8)
+        # URL input area (initially hidden) - simple single entry field like Report URL
+        self.url_input_frame = ctk.CTkFrame(center_container, fg_color="transparent")
 
-        url_input_label = ctk.CTkLabel(
+        url_label = ctk.CTkLabel(
             self.url_input_frame,
-            text="Enter URLs (one per line):",
-            font=Fonts.body_bold,
-            text_color="white",
-            anchor="w"
+            text="Download URL",
+            font=Fonts.label_large,
+            text_color="white"
         )
-        url_input_label.pack(anchor="w", padx=15, pady=(15, 5))
+        url_label.pack(anchor="w", pady=(0, 5))
 
-        self.url_input_textbox = tk.Text(
+        self.url_entry = ctk.CTkEntry(
             self.url_input_frame,
-            wrap="none",
-            bg="#1a1a1a",
-            fg="#ffffff",
-            font=Fonts.text_input(),
-            relief="flat",
-            padx=10,
-            pady=10,
-            height=6,
-            width=48
+            placeholder_text="Enter URL to download file from...",
+            height=45,
+            width=500,
+            font=Fonts.body_large,
+            fg_color="gray20",
+            border_color=self.colors["red"],
+            border_width=2
         )
-        self.url_input_textbox.pack(padx=15, pady=(0, 15))
+        self.url_entry.pack(fill="x")
 
         # Upload button
         btn_upload = ctk.CTkButton(
@@ -902,7 +899,7 @@ class ForensicAnalysisGUI:
         self.yara_match_badge = ctk.CTkLabel(
             search_frame,
             text="⚠️ YARA: 0",
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 15, "bold"),
             text_color="#fbbf24",  # Amber color
             fg_color="#78350f",     # Dark amber background
             corner_radius=6,
@@ -925,19 +922,22 @@ class ForensicAnalysisGUI:
         style = ttk.Style()
         style.theme_use('default')
         
-        # Configure Treeview colors
+        # Configure Treeview colors with larger font
         style.configure("Process.Treeview",
                        background="#1a1a1a",
                        foreground="white",
                        fieldbackground="#1a1a1a",
                        borderwidth=0,
-                       relief="flat")
-        
+                       relief="flat",
+                       font=('Segoe UI', 13),
+                       rowheight=28)
+
         style.configure("Process.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=1,
-                       relief="flat")
+                       relief="flat",
+                       font=('Segoe UI', 14, 'bold'))
         
         style.map("Process.Treeview",
                  background=[('selected', '#dc2626')],
@@ -2075,20 +2075,18 @@ class ForensicAnalysisGUI:
         method = self.upload_method.get()
 
         if method == "url":
-            # Get URLs from text box
-            url_text = self.url_input_textbox.get("1.0", "end-1c").strip()
-            if not url_text:
-                messagebox.showwarning("Missing URLs", "Please enter at least one URL")
-                self.url_input_textbox.focus()
+            # Get URL from entry field
+            download_url = self.url_entry.get().strip()
+            if not download_url:
+                messagebox.showwarning("Missing URL", "Please enter a URL to download")
+                self.url_entry.focus()
                 return
 
-            # Parse URLs (one per line)
-            urls = [url.strip() for url in url_text.split('\n') if url.strip()]
-            if not urls:
-                messagebox.showwarning("Missing URLs", "Please enter at least one valid URL")
-                return
+            # Basic URL validation - add https if missing
+            if not download_url.startswith(('http://', 'https://')):
+                download_url = 'https://' + download_url
 
-            self.process_new_case_urls(urls, analyst_name, report_url)
+            self.process_new_case_urls([download_url], analyst_name, report_url)
         else:
             # File upload mode
             files = filedialog.askopenfilenames(title="Select files to analyze")
@@ -2291,31 +2289,65 @@ class ForensicAnalysisGUI:
 
                 if success:
                     downloaded_files.append(file_path)
+                    files_to_process = [file_path]
 
-                    # Update progress - scanning
-                    filename = os.path.basename(file_path)
-                    self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
+                    # Check if downloaded file is an archive - auto-extract
+                    if self.case_manager._is_archive(file_path):
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
+                        extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
+                        if extract_success and extracted_files:
+                            print(f"Auto-extracted {len(extracted_files)} files from archive")
+                            files_to_process = extracted_files
 
-                    # Process file
-                    file_info = self.case_manager.process_file(file_path, files_dir, case_id)
-                    file_info["source_url"] = url  # Track source URL
-                    case_data["files"].append(file_info)
+                            # Copy extracted files to Desktop folder for analyst access
+                            try:
+                                desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+                                archive_name = os.path.splitext(os.path.basename(file_path))[0]
+                                desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
+                                os.makedirs(desktop_extract_folder, exist_ok=True)
 
-                    # Update case statistics
-                    has_yara = len(file_info["yara_matches"]) > 0
-                    has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
-                    has_vt = file_info["vt_hits"] > 0
+                                for extracted_file in extracted_files:
+                                    dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
+                                    shutil.copy2(extracted_file, dest_path)
 
-                    if has_yara or has_thq or has_vt:
-                        case_data["total_threats"] += 1
-                    case_data["total_vt_hits"] += file_info["vt_hits"]
+                                print(f"Copied extracted files to: {desktop_extract_folder}")
+                            except Exception as e:
+                                print(f"Warning: Could not copy to desktop: {e}")
 
-                    # Clean up temporary file
-                    try:
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                    except:
-                        pass
+                            # Clean up the archive after extraction
+                            try:
+                                os.remove(file_path)
+                            except:
+                                pass
+                        elif extract_error:
+                            print(f"Archive extraction warning: {extract_error}")
+                            # Fall back to processing the archive itself
+
+                    # Process each file (either the downloaded file or extracted files)
+                    for j, process_file_path in enumerate(files_to_process):
+                        filename = os.path.basename(process_file_path)
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
+
+                        # Process file
+                        file_info = self.case_manager.process_file(process_file_path, files_dir, case_id)
+                        file_info["source_url"] = url  # Track source URL
+                        case_data["files"].append(file_info)
+
+                        # Update case statistics
+                        has_yara = len(file_info["yara_matches"]) > 0
+                        has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
+                        has_vt = file_info["vt_hits"] > 0
+
+                        if has_yara or has_thq or has_vt:
+                            case_data["total_threats"] += 1
+                        case_data["total_vt_hits"] += file_info["vt_hits"]
+
+                        # Clean up temporary file
+                        try:
+                            if os.path.exists(process_file_path):
+                                os.remove(process_file_path)
+                        except:
+                            pass
                 else:
                     failed_downloads.append(f"{url}: {error}")
 
@@ -2327,10 +2359,11 @@ class ForensicAnalysisGUI:
             # Close progress and show success
             self.root.after(0, self.close_progress_window)
 
+            files_processed = len(case_data["files"])
             success_msg = f"New case created: {case_data['id']}\n"
             success_msg += f"Analyst: {analyst_name}\n"
             success_msg += f"URLs processed: {len(urls)}\n"
-            success_msg += f"Files downloaded: {len(downloaded_files)}\n"
+            success_msg += f"Files analyzed: {files_processed}\n"
             success_msg += f"Threats detected: {case_data['total_threats']}"
 
             if failed_downloads:
@@ -2340,14 +2373,14 @@ class ForensicAnalysisGUI:
                     success_msg += f"\n... and {len(failed_downloads) - 5} more"
 
             self.root.after(0, lambda: self.new_case_status.configure(
-                text=f"✓ Case created: {case_data['id']} | Files: {len(downloaded_files)} | Threats: {case_data['total_threats']}"
+                text=f"✓ Case created: {case_data['id']} | Files: {files_processed} | Threats: {case_data['total_threats']}"
             ))
             self.root.after(0, lambda: messagebox.showinfo("Success", success_msg))
 
             # Clear form and switch tabs
             self.root.after(0, lambda: self.analyst_name_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.report_url_entry.delete(0, 'end'))
-            self.root.after(0, lambda: self.url_input_textbox.delete("1.0", "end"))
+            self.root.after(0, lambda: self.url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.show_tab("current_case"))
 
         except Exception as e:
@@ -3167,12 +3200,14 @@ File Size: {file_info['file_size']} bytes"""
         btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         btn_frame.pack(side="right")
 
-        btn_add_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
+        self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
                                      command=self.add_yara_rule_dialog,
                                      fg_color=self.colors["red"],
                                      hover_color=self.colors["red_dark"],
                                      font=Fonts.label_large)
-        btn_add_rule.pack(side="left", padx=5)
+        # Only show Add Rule button if rule creation is enabled in settings
+        if self.settings_manager.get("yara.enable_rule_creation", True):
+            self.btn_add_yara_rule.pack(side="left", padx=5)
 
         btn_import_rule = ctk.CTkButton(btn_frame, text="Import from File",
                                        command=self.import_yara_rule_file,
@@ -3218,12 +3253,13 @@ File Size: {file_info['file_size']} bytes"""
                        foreground="white",
                        fieldbackground="#1a2332",
                        borderwidth=0,
-                       font=('Segoe UI', 11))
+                       font=('Segoe UI', 13),
+                       rowheight=28)
         style.configure("Yara.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=0,
-                       font=('Segoe UI', 12, 'bold'))
+                       font=('Segoe UI', 14, 'bold'))
         style.map('Yara.Treeview',
                  background=[('selected', '#991b1b')])
 
@@ -3266,15 +3302,11 @@ File Size: {file_info['file_size']} bytes"""
 
         self.yara_rules_tree.pack(fill="both", expand=True)
 
-        # Context menu for rule actions
+        # Context menu for rule actions (Edit option added dynamically based on settings)
         self.yara_context_menu = tk.Menu(self.root, tearoff=0, bg="#0d1520", fg="white",
                                          activebackground="#991b1b", activeforeground="white")
-        self.yara_context_menu.add_command(label="View Rule", command=self.view_selected_yara_rule)
-        self.yara_context_menu.add_command(label="Edit Rule", command=self.edit_selected_yara_rule)
-        self.yara_context_menu.add_separator()
-        self.yara_context_menu.add_command(label="Delete Rule", command=self.delete_selected_yara_rule)
 
-        # Bind right-click
+        # Bind right-click to show context menu (built dynamically)
         self.yara_rules_tree.bind("<Button-3>", self.show_yara_context_menu)
 
         # Bind double-click to view
@@ -3292,13 +3324,15 @@ File Size: {file_info['file_size']} bytes"""
                                 width=100)
         btn_view.pack(side="left", padx=5)
 
-        btn_edit = ctk.CTkButton(action_frame, text="Edit",
+        self.btn_edit_yara_rule = ctk.CTkButton(action_frame, text="Edit",
                                 command=self.edit_selected_yara_rule,
                                 fg_color=self.colors["navy"],
                                 hover_color=self.colors["dark_blue"],
                                 font=Fonts.label_large,
                                 width=100)
-        btn_edit.pack(side="left", padx=5)
+        # Only show Edit button if rule creation is enabled
+        if self.settings_manager.get("yara.enable_rule_creation", True):
+            self.btn_edit_yara_rule.pack(side="left", padx=5)
 
         btn_delete = ctk.CTkButton(action_frame, text="Delete",
                                   command=self.delete_selected_yara_rule,
@@ -3388,11 +3422,18 @@ File Size: {file_info['file_size']} bytes"""
             )
 
     def show_yara_context_menu(self, event):
-        """Show context menu on right-click"""
+        """Show context menu on right-click (built dynamically based on settings)"""
         # Select the item under cursor
         item = self.yara_rules_tree.identify_row(event.y)
         if item:
             self.yara_rules_tree.selection_set(item)
+            # Rebuild menu dynamically based on settings
+            self.yara_context_menu.delete(0, tk.END)
+            self.yara_context_menu.add_command(label="View Rule", command=self.view_selected_yara_rule)
+            if self.settings_manager.get("yara.enable_rule_creation", True):
+                self.yara_context_menu.add_command(label="Edit Rule", command=self.edit_selected_yara_rule)
+            self.yara_context_menu.add_separator()
+            self.yara_context_menu.add_command(label="Delete Rule", command=self.delete_selected_yara_rule)
             self.yara_context_menu.post(event.x_root, event.y_root)
 
     def get_selected_yara_rule(self):
@@ -3750,21 +3791,12 @@ File Size: {file_info['file_size']} bytes"""
         # Store entry widgets for later access
         self.settings_widgets = {}
 
-        # API Keys Section
-        self.create_settings_section(settings_scroll, "API Keys", [
-            ("api_keys.virustotal", "VirusTotal API Key", "entry"),
-            ("api_keys.threathq_user", "ThreatHQ Username", "entry"),
-            ("api_keys.threathq_pass", "ThreatHQ Password", "entry"),
-        ])
-
-        # Analysis Settings
-        self.create_settings_section(settings_scroll, "Analysis Settings", [
-            ("analysis.enable_process_monitoring", "Enable Process Monitoring", "switch"),
-            ("analysis.enable_network_monitoring", "Enable Network Monitoring", "switch"),
-            ("analysis.enable_yara_scanning", "Enable YARA Scanning", "switch"),
-            ("analysis.auto_scan_new_processes", "Auto-scan New Processes", "switch"),
-            ("analysis.enable_realtime_alerts", "Enable Real-time Alerts", "switch"),
-        ])
+        # API Keys Section (commented out for now)
+        # self.create_settings_section(settings_scroll, "API Keys", [
+        #     ("api_keys.virustotal", "VirusTotal API Key", "entry"),
+        #     ("api_keys.threathq_user", "ThreatHQ Username", "entry"),
+        #     ("api_keys.threathq_pass", "ThreatHQ Password", "entry"),
+        # ])
 
         # UI Settings
         self.create_settings_section(settings_scroll, "User Interface", [
@@ -3778,22 +3810,9 @@ File Size: {file_info['file_size']} bytes"""
 
         # YARA Settings
         self.create_settings_section(settings_scroll, "YARA Settings", [
+            ("yara.enable_rule_creation", "Enable YARA Rule Creation", "switch"),
             ("yara.create_backups_on_delete", "Create Backups on Delete", "switch"),
             ("yara.create_backups_on_update", "Create Backups on Update", "switch"),
-        ])
-
-        # Export Settings
-        self.create_settings_section(settings_scroll, "Export Settings", [
-            ("export.default_export_format", "Default Export Format", "option", ["json", "csv"]),
-            ("export.include_metadata", "Include Metadata", "switch"),
-            ("export.include_hashes", "Include File Hashes", "switch"),
-        ])
-
-        # Advanced Settings
-        self.create_settings_section(settings_scroll, "Advanced", [
-            ("advanced.debug_mode", "Debug Mode", "switch"),
-            ("advanced.log_file", "Log Filename", "entry"),
-            ("advanced.max_log_size_mb", "Max Log Size (MB)", "entry"),
         ])
 
         # Network Settings
@@ -3922,6 +3941,19 @@ File Size: {file_info['file_size']} bytes"""
             self.case_manager.threathq_user = threathq_user
         if threathq_pass:
             self.case_manager.threathq_pass = threathq_pass
+
+        # Apply YARA rule creation setting (affects Add and Edit buttons)
+        yara_creation_enabled = self.settings_manager.get("yara.enable_rule_creation", True)
+        if hasattr(self, 'btn_add_yara_rule'):
+            if yara_creation_enabled:
+                self.btn_add_yara_rule.pack(side="left", padx=5)
+            else:
+                self.btn_add_yara_rule.pack_forget()
+        if hasattr(self, 'btn_edit_yara_rule'):
+            if yara_creation_enabled:
+                self.btn_edit_yara_rule.pack(side="left", padx=5)
+            else:
+                self.btn_edit_yara_rule.pack_forget()
 
         print("Settings applied successfully")
 

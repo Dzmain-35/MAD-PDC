@@ -10,6 +10,8 @@ import os
 import json
 import hashlib
 import shutil
+import zipfile
+import tarfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
@@ -815,9 +817,131 @@ class CaseManager:
             return "Low"
         return "Clean"
 
+    def _convert_to_direct_download_url(self, url: str) -> str:
+        """
+        Convert sharing URLs to direct download URLs for various services.
+
+        Supports:
+        - Dropbox: www.dropbox.com -> dl.dropboxusercontent.com
+        - Google Drive: Convert to direct download format
+        """
+        parsed = urlparse(url)
+
+        # Dropbox conversion
+        if 'dropbox.com' in parsed.netloc:
+            # Convert www.dropbox.com to dl.dropboxusercontent.com for direct download
+            # Remove query params except for the file path
+            if 'www.dropbox.com' in parsed.netloc or 'dropbox.com' == parsed.netloc:
+                new_url = url.replace('www.dropbox.com', 'dl.dropboxusercontent.com')
+                new_url = new_url.replace('dropbox.com', 'dl.dropboxusercontent.com')
+                # Remove dl parameter as it's not needed for dl.dropboxusercontent.com
+                if '?' in new_url:
+                    base, params = new_url.split('?', 1)
+                    # Keep only essential params, remove dl=0/1
+                    param_pairs = params.split('&')
+                    filtered_params = [p for p in param_pairs if not p.startswith('dl=')]
+                    if filtered_params:
+                        new_url = base + '?' + '&'.join(filtered_params)
+                    else:
+                        new_url = base
+                print(f"Converted Dropbox URL to direct download: {new_url}")
+                return new_url
+
+        # Google Drive conversion
+        if 'drive.google.com' in parsed.netloc:
+            # Convert /file/d/FILE_ID/view to direct download
+            import re
+            match = re.search(r'/file/d/([^/]+)', url)
+            if match:
+                file_id = match.group(1)
+                new_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                print(f"Converted Google Drive URL to direct download: {new_url}")
+                return new_url
+
+        return url
+
+    def _extract_archive(self, archive_path: str) -> Tuple[bool, List[str], str]:
+        """
+        Extract files from an archive (zip, tar, tar.gz, etc.)
+
+        Args:
+            archive_path: Path to the archive file
+
+        Returns:
+            Tuple of (success, list of extracted file paths, error_message)
+        """
+        extracted_files = []
+        extract_dir = os.path.join(tempfile.gettempdir(), f"extracted_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+
+        try:
+            os.makedirs(extract_dir, exist_ok=True)
+            lower_path = archive_path.lower()
+
+            if lower_path.endswith('.zip'):
+                print(f"Extracting ZIP archive: {archive_path}")
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    # Extract all files
+                    zf.extractall(extract_dir)
+                    for name in zf.namelist():
+                        if not name.endswith('/'):  # Skip directories
+                            extracted_files.append(os.path.join(extract_dir, name))
+
+            elif lower_path.endswith(('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2')):
+                print(f"Extracting TAR archive: {archive_path}")
+                with tarfile.open(archive_path, 'r:*') as tf:
+                    tf.extractall(extract_dir)
+                    for member in tf.getmembers():
+                        if member.isfile():
+                            extracted_files.append(os.path.join(extract_dir, member.name))
+
+            elif lower_path.endswith('.7z'):
+                # Try to use py7zr if available
+                try:
+                    import py7zr
+                    print(f"Extracting 7Z archive: {archive_path}")
+                    with py7zr.SevenZipFile(archive_path, mode='r') as z:
+                        z.extractall(extract_dir)
+                        for name in z.getnames():
+                            full_path = os.path.join(extract_dir, name)
+                            if os.path.isfile(full_path):
+                                extracted_files.append(full_path)
+                except ImportError:
+                    return False, [], "7z extraction requires py7zr package (pip install py7zr)"
+
+            elif lower_path.endswith('.rar'):
+                # Try to use rarfile if available
+                try:
+                    import rarfile
+                    print(f"Extracting RAR archive: {archive_path}")
+                    with rarfile.RarFile(archive_path, 'r') as rf:
+                        rf.extractall(extract_dir)
+                        for name in rf.namelist():
+                            if not name.endswith('/'):
+                                extracted_files.append(os.path.join(extract_dir, name))
+                except ImportError:
+                    return False, [], "RAR extraction requires rarfile package (pip install rarfile)"
+
+            else:
+                return False, [], f"Unsupported archive format: {archive_path}"
+
+            print(f"Extracted {len(extracted_files)} files from archive")
+            return True, extracted_files, ""
+
+        except zipfile.BadZipFile:
+            return False, [], f"Invalid or corrupted ZIP file: {archive_path}"
+        except tarfile.TarError as e:
+            return False, [], f"Error extracting TAR archive: {str(e)}"
+        except Exception as e:
+            return False, [], f"Error extracting archive: {str(e)}"
+
+    def _is_archive(self, filename: str) -> bool:
+        """Check if a file is an archive based on extension"""
+        archive_extensions = ('.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.7z', '.rar')
+        return filename.lower().endswith(archive_extensions)
+
     def download_file_from_url(self, url: str, timeout: int = 30) -> Tuple[bool, str, str]:
         """
-        Download a file from a URL to a temporary location
+        Download a file from a URL to a temporary location (browser-like behavior)
 
         Args:
             url: URL to download from
@@ -827,10 +951,13 @@ class CaseManager:
             Tuple of (success, file_path, error_message)
         """
         try:
+            # Convert sharing URLs to direct download URLs
+            original_url = url
+            url = self._convert_to_direct_download_url(url)
             print(f"Downloading file from URL: {url}")
 
             # Parse URL to get filename
-            parsed_url = urlparse(url)
+            parsed_url = urlparse(original_url)  # Use original URL for filename extraction
             filename = os.path.basename(parsed_url.path)
 
             # If no filename in URL, generate one
@@ -841,13 +968,35 @@ class CaseManager:
             temp_dir = tempfile.gettempdir()
             temp_path = os.path.join(temp_dir, filename)
 
-            # Download file with streaming
+            # Browser-like headers to mimic real browser requests
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Cache-Control': 'max-age=0',
             }
 
-            response = requests.get(url, headers=headers, timeout=timeout, stream=True)
+            # Create a session for cookie handling (like a browser)
+            session = requests.Session()
+            response = session.get(url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
             response.raise_for_status()
+
+            # Try to get filename from Content-Disposition header (like browsers do)
+            content_disp = response.headers.get('Content-Disposition', '')
+            if 'filename=' in content_disp:
+                # Extract filename from header
+                import re
+                fname_match = re.search(r'filename[*]?=["\']?([^"\';\n]+)', content_disp)
+                if fname_match:
+                    filename = fname_match.group(1).strip()
+                    temp_path = os.path.join(temp_dir, filename)
 
             # Write to temporary file
             with open(temp_path, 'wb') as f:
