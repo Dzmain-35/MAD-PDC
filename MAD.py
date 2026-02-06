@@ -2939,6 +2939,19 @@ class ForensicAnalysisGUI:
             # Save updated case metadata
             self.case_manager.save_case_metadata(case_dir, self.current_case)
 
+            # Copy screenshot to network case folder if enabled
+            network_copy_msg = ""
+            if self.current_case.get("network_case_path"):
+                try:
+                    network_path = self.current_case["network_case_path"]
+                    network_screenshots_dir = os.path.join(network_path, "screenshots")
+                    os.makedirs(network_screenshots_dir, exist_ok=True)
+                    network_screenshot_path = os.path.join(network_screenshots_dir, screenshot_filename)
+                    shutil.copy2(screenshot_path, network_screenshot_path)
+                    network_copy_msg = f"\n\nAlso copied to network folder."
+                except Exception as e:
+                    print(f"Warning: Could not copy screenshot to network folder: {e}")
+
             # Refresh the screenshots display
             self.refresh_screenshots_display()
 
@@ -2946,7 +2959,7 @@ class ForensicAnalysisGUI:
                 "Screenshot Attached",
                 f"Screenshot saved successfully!\n\n"
                 f"Size: {clipboard_image.width} x {clipboard_image.height}\n"
-                f"File: {screenshot_filename}"
+                f"File: {screenshot_filename}{network_copy_msg}"
             )
 
         except ImportError:
