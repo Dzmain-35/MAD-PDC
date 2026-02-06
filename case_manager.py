@@ -817,6 +817,22 @@ class CaseManager:
             return "Low"
         return "Clean"
 
+    def _check_unsupported_url(self, url: str) -> Tuple[bool, str]:
+        """
+        Check if URL is from a service that doesn't support direct downloads.
+
+        Returns:
+            Tuple of (is_unsupported, error_message)
+        """
+        parsed = urlparse(url)
+
+        # Proton Drive - uses end-to-end encryption, requires JavaScript decryption
+        if 'drive.proton.me' in parsed.netloc:
+            return (True, "Proton Drive uses end-to-end encryption and cannot be downloaded directly. "
+                         "Please download the file manually from your browser and upload it using the file picker.")
+
+        return (False, "")
+
     def _convert_to_direct_download_url(self, url: str) -> str:
         """
         Convert sharing URLs to direct download URLs for various services.
@@ -951,6 +967,12 @@ class CaseManager:
             Tuple of (success, file_path, error_message)
         """
         try:
+            # Check if URL is from an unsupported service
+            is_unsupported, unsupported_msg = self._check_unsupported_url(url)
+            if is_unsupported:
+                print(f"Unsupported URL service: {url}")
+                return False, "", unsupported_msg
+
             # Convert sharing URLs to direct download URLs
             original_url = url
             url = self._convert_to_direct_download_url(url)
