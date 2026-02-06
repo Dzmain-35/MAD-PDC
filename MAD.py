@@ -6536,6 +6536,25 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                 extraction_data["strings"] = all_strings
                 extraction_data["extraction_result"] = result
 
+                # Auto-save strings to network folder if enabled
+                if self.current_case and self.current_case.get("network_case_path"):
+                    try:
+                        import shutil
+                        network_path = self.current_case["network_case_path"]
+                        strings_filename = f"{os.path.splitext(file_name)[0]}_strings.txt"
+                        network_strings_path = os.path.join(network_path, strings_filename)
+
+                        # Export strings to network folder
+                        success = extractor.export_to_txt(
+                            result,
+                            network_strings_path,
+                            include_metadata=True
+                        )
+                        if success:
+                            print(f"Strings auto-saved to network folder: {network_strings_path}")
+                    except Exception as e:
+                        print(f"Warning: Could not auto-save strings to network folder: {e}")
+
                 # Update UI
                 self.root.after(0, lambda: status_label.configure(
                     text=f"Complete: {len(all_strings)} strings extracted in {result.get('extraction_time', 0):.2f}s"
