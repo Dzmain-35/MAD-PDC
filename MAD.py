@@ -5630,17 +5630,24 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         def search_strings(event=None):
             """Search and highlight strings with length filtering"""
+            # Check if window still exists before accessing widgets
+            try:
+                if not strings_window.winfo_exists():
+                    return
+            except:
+                return
+
             search_term = search_entry.get().strip().lower()
 
             # Get length filter values
             try:
                 min_len = int(min_length_entry.get()) if min_length_entry.get() else 0
-            except ValueError:
+            except (ValueError, tk.TclError):
                 min_len = 0
 
             try:
                 max_len = int(max_length_entry.get()) if max_length_entry.get() else float('inf')
-            except ValueError:
+            except (ValueError, tk.TclError):
                 max_len = float('inf')
 
             strings_text.configure(state="normal")
