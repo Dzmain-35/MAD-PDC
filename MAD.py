@@ -50,7 +50,7 @@ class ForensicAnalysisGUI:
         self.screen_width = screen_w
         self.screen_height = screen_h
         self._is_large_screen = screen_w >= 1920
-        self._sidebar_width = 220 if self._is_large_screen else 180
+        self._sidebar_width = 220 if self._is_large_screen else 160
 
         # Color scheme
         self.colors = {
@@ -226,9 +226,9 @@ class ForensicAnalysisGUI:
         nav_frame.pack(fill="both", expand=True, padx=10, pady=20)
         
         # Navigation buttons with updated styling
-        nav_btn_height = 50 if self._is_large_screen else 40
+        nav_btn_height = 50 if self._is_large_screen else 36
         nav_btn_font = Fonts.label_large if self._is_large_screen else Fonts.label
-        nav_btn_pady = 6 if self._is_large_screen else 4
+        nav_btn_pady = 6 if self._is_large_screen else 3
 
         self.btn_new_case = ctk.CTkButton(
             nav_frame, text="New Case",
@@ -292,8 +292,8 @@ class ForensicAnalysisGUI:
     def create_new_case_tab(self):
         """Create the New Case tab interface with M.A.D. branding"""
         # Scale form widths based on screen size
-        form_entry_width = 500 if self._is_large_screen else 350
-        form_btn_width = 500 if self._is_large_screen else 350
+        form_entry_width = 500 if self._is_large_screen else 320
+        form_btn_width = 500 if self._is_large_screen else 320
 
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
         
@@ -328,7 +328,7 @@ class ForensicAnalysisGUI:
                 pil_image = Image.open(logo_path)
 
                 # Scale logo based on screen size
-                max_size = 350 if self._is_large_screen else 220
+                max_size = 350 if self._is_large_screen else 190
                 pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                 
                 logo_image = ctk.CTkImage(
@@ -1007,7 +1007,7 @@ class ForensicAnalysisGUI:
             search_frame,
             placeholder_text="Enter PID or Process Name...",
             height=35,
-            width=350 if self._is_large_screen else 200,
+            width=350 if self._is_large_screen else 180,
             fg_color="gray20",
             border_color=self.colors["navy"],
             border_width=2
@@ -1038,7 +1038,7 @@ class ForensicAnalysisGUI:
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
-            width=200 if self._is_large_screen else 160,
+            width=200 if self._is_large_screen else 145,
             fg_color="gray20",
             border_color=self.colors["navy"],
             button_color=self.colors["navy"],
@@ -1074,9 +1074,9 @@ class ForensicAnalysisGUI:
         style.theme_use('default')
 
         # Scale treeview font and row height to screen
-        _tree_font_size = 14 if self._is_large_screen else 12
-        _tree_heading_size = 15 if self._is_large_screen else 13
-        _tree_row_height = 32 if self._is_large_screen else 26
+        _tree_font_size = 14 if self._is_large_screen else 11
+        _tree_heading_size = 15 if self._is_large_screen else 12
+        _tree_row_height = 32 if self._is_large_screen else 24
 
         # Configure Treeview colors with responsive font
         style.configure("Process.Treeview",
@@ -3740,9 +3740,9 @@ File Size: {file_info['file_size']} bytes"""
         # Style configuration for dark theme
         style = ttk.Style()
         style.theme_use('default')
-        _yara_font_size = 14 if self._is_large_screen else 12
-        _yara_heading_size = 15 if self._is_large_screen else 13
-        _yara_row_height = 32 if self._is_large_screen else 26
+        _yara_font_size = 14 if self._is_large_screen else 11
+        _yara_heading_size = 15 if self._is_large_screen else 12
+        _yara_row_height = 32 if self._is_large_screen else 24
 
         style.configure("Yara.Treeview",
                        background="#1a2332",
@@ -4351,8 +4351,8 @@ File Size: {file_info['file_size']} bytes"""
         item_frame.pack(fill="x", padx=20, pady=5)
 
         # Scale label and widget widths to screen
-        label_w = 320 if self._is_large_screen else 240
-        entry_w = 350 if self._is_large_screen else 250
+        label_w = 320 if self._is_large_screen else 220
+        entry_w = 350 if self._is_large_screen else 230
 
         # Label
         label = ctk.CTkLabel(item_frame, text=label_text,
