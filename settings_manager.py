@@ -358,6 +358,7 @@ class SettingsManager:
         Supports formats like:
         - https://xpo-mpdr.managedphishme.com/reports/306892
         - https://exxonmobil.managedphishme.com/reports/123456
+        - https://customer.phishmecloud.com/reports/922941
 
         Args:
             url: Report URL string
@@ -378,6 +379,19 @@ class SettingsManager:
         if match:
             platform = match.group(1).lower()
             report_id = match.group(2)
+            return {
+                "platform": platform,
+                "report_id": report_id
+            }
+
+        # Pattern to match phishmecloud.com report URLs
+        # e.g. https://customer.phishmecloud.com/reports/922941
+        pattern2 = r'https?://([^.]+)\.phishmecloud\.com/reports/(\d+)'
+        match2 = re.match(pattern2, url.strip())
+
+        if match2:
+            platform = match2.group(1).lower()
+            report_id = match2.group(2)
             return {
                 "platform": platform,
                 "report_id": report_id
