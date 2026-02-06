@@ -5645,7 +5645,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             """Search and highlight strings with length filtering"""
             # Check if window still exists before accessing widgets
             try:
-                if not strings_window.winfo_exists():
+                if not details_window.winfo_exists():
                     return
             except:
                 return
