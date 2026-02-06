@@ -509,8 +509,8 @@ class ForensicAnalysisGUI:
         files_header_inner = ctk.CTkFrame(files_header, fg_color="transparent", cursor="hand2")
         files_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for files
-        self.files_expand_indicator = ctk.CTkLabel(files_header_inner, text="▼",
+        # Expand indicator for files (starts collapsed)
+        self.files_expand_indicator = ctk.CTkLabel(files_header_inner, text="▶",
                                                    font=Fonts.body_large,
                                                    text_color="gray60",
                                                    cursor="hand2")
@@ -530,19 +530,19 @@ class ForensicAnalysisGUI:
                                      font=Fonts.label)
         btn_add_files.pack(side="right")
 
-        # Files list container (collapsible)
+        # Files list container (collapsible) - starts hidden
         self.files_list_frame = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="transparent")
-        self.files_list_frame.pack(fill="x", pady=(0, 10))
+        # Don't pack initially - will be shown when files are added
 
         # IOCs section header - Clickable
-        iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
-        iocs_header.pack(fill="x", pady=(10, 5))
+        self.iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.iocs_header.pack(fill="x", pady=(10, 5))
 
-        iocs_header_inner = ctk.CTkFrame(iocs_header, fg_color="transparent", cursor="hand2")
+        iocs_header_inner = ctk.CTkFrame(self.iocs_header, fg_color="transparent", cursor="hand2")
         iocs_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for IOCs
-        self.iocs_expand_indicator = ctk.CTkLabel(iocs_header_inner, text="▼",
+        # Expand indicator for IOCs (starts collapsed)
+        self.iocs_expand_indicator = ctk.CTkLabel(iocs_header_inner, text="▶",
                                                   font=Fonts.body_large,
                                                   text_color="gray60",
                                                   cursor="hand2")
@@ -562,23 +562,23 @@ class ForensicAnalysisGUI:
                                     font=Fonts.label)
         btn_add_ioc.pack(side="right")
 
-        # IOCs container (collapsible)
-        iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        iocs_container.pack(fill="x", pady=(0, 10))
+        # IOCs container (collapsible) - starts hidden
+        self.iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        # Don't pack initially - will be shown when IOCs are added
 
         # IOCs content frame
-        self.iocs_content_frame = ctk.CTkFrame(iocs_container, fg_color="transparent")
+        self.iocs_content_frame = ctk.CTkFrame(self.iocs_container, fg_color="transparent")
         self.iocs_content_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
         # Notes section header - Clickable
-        notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
-        notes_header.pack(fill="x", pady=(10, 5))
+        self.notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.notes_header.pack(fill="x", pady=(10, 5))
 
-        notes_header_inner = ctk.CTkFrame(notes_header, fg_color="transparent", cursor="hand2")
+        notes_header_inner = ctk.CTkFrame(self.notes_header, fg_color="transparent", cursor="hand2")
         notes_header_inner.pack(fill="x", padx=15, pady=10)
 
-        # Expand indicator for Notes
-        self.notes_expand_indicator = ctk.CTkLabel(notes_header_inner, text="▼",
+        # Expand indicator for Notes (starts collapsed)
+        self.notes_expand_indicator = ctk.CTkLabel(notes_header_inner, text="▶",
                                                    font=Fonts.body_large,
                                                    text_color="gray60",
                                                    cursor="hand2")
@@ -599,14 +599,14 @@ class ForensicAnalysisGUI:
                                       font=Fonts.label)
         btn_save_notes.pack(side="right")
 
-        # Notes text area (collapsible)
-        notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        notes_container.pack(fill="both", expand=True, pady=(0, 10))
+        # Notes text area (collapsible) - starts hidden
+        self.notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        # Don't pack initially - will be shown when notes are added
 
-        # Track visibility states
-        self.files_section_visible = [True]
-        self.iocs_section_visible = [True]
-        self.notes_section_visible = [True]
+        # Track visibility states - all start collapsed (False)
+        self.files_section_visible = [False]
+        self.iocs_section_visible = [False]
+        self.notes_section_visible = [False]
 
         # Toggle function for files section
         def toggle_files_section(event=None):
@@ -624,7 +624,7 @@ class ForensicAnalysisGUI:
                 self.files_section_visible[0] = False
             else:
                 # Re-pack before the IOCs header to maintain position
-                self.files_list_frame.pack(fill="x", pady=(0, 10), before=iocs_header)
+                self.files_list_frame.pack(fill="x", pady=(0, 10), before=self.iocs_header)
                 self.files_expand_indicator.configure(text="▼")
                 self.files_section_visible[0] = True
 
@@ -639,12 +639,12 @@ class ForensicAnalysisGUI:
                     pass
 
             if self.iocs_section_visible[0]:
-                iocs_container.pack_forget()
+                self.iocs_container.pack_forget()
                 self.iocs_expand_indicator.configure(text="▶")
                 self.iocs_section_visible[0] = False
             else:
                 # Re-pack before the Notes header to maintain position
-                iocs_container.pack(fill="x", pady=(0, 10), before=notes_header)
+                self.iocs_container.pack(fill="x", pady=(0, 10), before=self.notes_header)
                 self.iocs_expand_indicator.configure(text="▼")
                 self.iocs_section_visible[0] = True
 
@@ -659,12 +659,12 @@ class ForensicAnalysisGUI:
                     pass
 
             if self.notes_section_visible[0]:
-                notes_container.pack_forget()
+                self.notes_container.pack_forget()
                 self.notes_expand_indicator.configure(text="▶")
                 self.notes_section_visible[0] = False
             else:
-                # Re-pack at end
-                notes_container.pack(fill="both", expand=True, pady=(0, 10))
+                # Re-pack before screenshots header
+                self.notes_container.pack(fill="both", expand=True, pady=(0, 10), before=self.screenshots_header)
                 self.notes_expand_indicator.configure(text="▼")
                 self.notes_section_visible[0] = True
 
@@ -675,13 +675,13 @@ class ForensicAnalysisGUI:
         self.files_expand_indicator.bind("<Button-1>", toggle_files_section)
 
         # Bind click events for IOCs section
-        iocs_header.bind("<Button-1>", toggle_iocs_section)
+        self.iocs_header.bind("<Button-1>", toggle_iocs_section)
         iocs_header_inner.bind("<Button-1>", toggle_iocs_section)
         iocs_title.bind("<Button-1>", toggle_iocs_section)
         self.iocs_expand_indicator.bind("<Button-1>", toggle_iocs_section)
 
         # Bind click events for Notes section
-        notes_header.bind("<Button-1>", toggle_notes_section)
+        self.notes_header.bind("<Button-1>", toggle_notes_section)
         notes_header_inner.bind("<Button-1>", toggle_notes_section)
         notes_title.bind("<Button-1>", toggle_notes_section)
         self.notes_expand_indicator.bind("<Button-1>", toggle_notes_section)
@@ -725,7 +725,7 @@ class ForensicAnalysisGUI:
 
         # Notes text widget
         self.notes_textbox = tk.Text(
-            notes_container,
+            self.notes_container,
             wrap="word",
             bg="#1a1a1a",
             fg="#ffffff",
@@ -736,7 +736,83 @@ class ForensicAnalysisGUI:
             height=8
         )
         self.notes_textbox.pack(fill="both", expand=True, padx=2, pady=2)
-        
+
+        # Screenshots section header - Clickable
+        self.screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.screenshots_header.pack(fill="x", pady=(10, 5))
+
+        screenshots_header_inner = ctk.CTkFrame(self.screenshots_header, fg_color="transparent", cursor="hand2")
+        screenshots_header_inner.pack(fill="x", padx=15, pady=10)
+
+        # Expand indicator for Screenshots (starts collapsed)
+        self.screenshots_expand_indicator = ctk.CTkLabel(screenshots_header_inner, text="▶",
+                                                         font=Fonts.body_large,
+                                                         text_color="gray60",
+                                                         cursor="hand2")
+        self.screenshots_expand_indicator.pack(side="left", padx=(0, 10))
+
+        screenshots_title = ctk.CTkLabel(screenshots_header_inner, text="Screenshots",
+                                         font=Fonts.title_medium,
+                                         text_color="white",
+                                         cursor="hand2")
+        screenshots_title.pack(side="left")
+
+        # Attach from clipboard button
+        btn_attach_screenshot = ctk.CTkButton(screenshots_header_inner, text="📋 Paste from Clipboard",
+                                              command=self.attach_screenshot_from_clipboard,
+                                              height=30, width=160,
+                                              fg_color=self.colors["red"],
+                                              hover_color=self.colors["red_dark"],
+                                              font=Fonts.label)
+        btn_attach_screenshot.pack(side="right")
+
+        # Screenshots container (collapsible) - starts hidden
+        self.screenshots_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        # Don't pack initially - will be shown when screenshots are added
+
+        # Screenshots display frame (scrollable)
+        self.screenshots_display_frame = ctk.CTkScrollableFrame(self.screenshots_container,
+                                                                 fg_color="transparent",
+                                                                 height=200)
+        self.screenshots_display_frame.pack(fill="x", padx=10, pady=10)
+
+        # Placeholder text when no screenshots
+        self.screenshots_placeholder = ctk.CTkLabel(self.screenshots_display_frame,
+                                                    text="No screenshots attached. Use 'Paste from Clipboard' to add screenshots.",
+                                                    font=Fonts.body,
+                                                    text_color="gray")
+        self.screenshots_placeholder.pack(pady=20)
+
+        # Track screenshots visibility (starts collapsed)
+        self.screenshots_section_visible = [False]
+
+        # Toggle function for Screenshots section
+        def toggle_screenshots_section(event=None):
+            if event and hasattr(event.widget, 'cget'):
+                try:
+                    if "Clipboard" in str(event.widget.cget('text')):
+                        return
+                except:
+                    pass
+
+            if self.screenshots_section_visible[0]:
+                self.screenshots_container.pack_forget()
+                self.screenshots_expand_indicator.configure(text="▶")
+                self.screenshots_section_visible[0] = False
+            else:
+                self.screenshots_container.pack(fill="x", pady=(0, 10))
+                self.screenshots_expand_indicator.configure(text="▼")
+                self.screenshots_section_visible[0] = True
+
+        # Bind click events for Screenshots section
+        self.screenshots_header.bind("<Button-1>", toggle_screenshots_section)
+        screenshots_header_inner.bind("<Button-1>", toggle_screenshots_section)
+        screenshots_title.bind("<Button-1>", toggle_screenshots_section)
+        self.screenshots_expand_indicator.bind("<Button-1>", toggle_screenshots_section)
+
+        # Store screenshot references for display
+        self.screenshot_images = []
+
         self.tabs["current_case"] = frame
         
     # ==================== ANALYSIS TAB ====================
@@ -2349,7 +2425,82 @@ class ForensicAnalysisGUI:
                         except:
                             pass
                 else:
+                    # Download failed - prompt user for action
                     failed_downloads.append(f"{url}: {error}")
+
+                    # Show error dialog with retry/upload options (on main thread)
+                    retry_result = [None]  # Use list to capture result from lambda
+
+                    def show_download_error():
+                        result = messagebox.askretrycancel(
+                            "Download Failed",
+                            f"Failed to download file from URL:\n{url[:80]}...\n\n"
+                            f"Error: {error}\n\n"
+                            "Click 'Retry' to try again, or 'Cancel' to skip this file.\n"
+                            "You can also upload files manually from the 'New Case' tab."
+                        )
+                        retry_result[0] = result
+
+                    # Show dialog on main thread and wait for response
+                    self.root.after(0, show_download_error)
+
+                    # Wait for user response (poll until result is set)
+                    import time
+                    while retry_result[0] is None:
+                        time.sleep(0.1)
+
+                    if retry_result[0]:  # User clicked Retry
+                        # Remove from failed list and retry
+                        failed_downloads.pop()
+                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Retrying: {url[:50]}...")
+                        success, file_path, error = self.case_manager.download_file_from_url(url)
+
+                        if success:
+                            downloaded_files.append(file_path)
+                            files_to_process = [file_path]
+
+                            # Check if downloaded file is an archive - auto-extract
+                            if self.case_manager._is_archive(file_path):
+                                self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
+                                extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
+                                if extract_success and extracted_files:
+                                    files_to_process = extracted_files
+                                    try:
+                                        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+                                        archive_name = os.path.splitext(os.path.basename(file_path))[0]
+                                        desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
+                                        os.makedirs(desktop_extract_folder, exist_ok=True)
+                                        for extracted_file in extracted_files:
+                                            dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
+                                            shutil.copy2(extracted_file, dest_path)
+                                    except Exception as e:
+                                        print(f"Warning: Could not copy to desktop: {e}")
+                                    try:
+                                        os.remove(file_path)
+                                    except:
+                                        pass
+
+                            # Process files from retry
+                            for j, process_file_path in enumerate(files_to_process):
+                                filename = os.path.basename(process_file_path)
+                                self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
+                                file_info = self.case_manager.process_file(process_file_path, files_dir, case_id)
+                                file_info["source_url"] = url
+                                case_data["files"].append(file_info)
+                                has_yara = len(file_info["yara_matches"]) > 0
+                                has_thq = file_info["thq_family"] and file_info["thq_family"] not in ["Unknown", "N/A"]
+                                has_vt = file_info["vt_hits"] > 0
+                                if has_yara or has_thq or has_vt:
+                                    case_data["total_threats"] += 1
+                                case_data["total_vt_hits"] += file_info["vt_hits"]
+                                try:
+                                    if os.path.exists(process_file_path):
+                                        os.remove(process_file_path)
+                                except:
+                                    pass
+                        else:
+                            # Retry also failed
+                            failed_downloads.append(f"{url}: {error} (retry failed)")
 
             # Save case metadata
             self.case_manager.save_case_metadata(case_dir, case_data)
@@ -2661,6 +2812,9 @@ class ForensicAnalysisGUI:
         self.iocs_ips_list.delete("1.0", "end")
         self.iocs_domains_list.delete("1.0", "end")
 
+        # Check if there are any IOCs
+        has_iocs = bool(iocs.get("urls") or iocs.get("ips") or iocs.get("domains"))
+
         # Display IOCs
         if iocs.get("urls"):
             self.iocs_urls_list.insert("1.0", "\n".join(iocs["urls"]))
@@ -2676,6 +2830,12 @@ class ForensicAnalysisGUI:
             self.iocs_domains_list.insert("1.0", "\n".join(iocs["domains"]))
         else:
             self.iocs_domains_list.insert("1.0", "No domains recorded")
+
+        # Auto-expand IOCs section if there are IOCs
+        if has_iocs and not self.iocs_section_visible[0]:
+            self.iocs_container.pack(fill="x", pady=(0, 10), before=self.notes_header)
+            self.iocs_expand_indicator.configure(text="▼")
+            self.iocs_section_visible[0] = True
 
     def handle_save_notes(self):
         """Save notes to the current case"""
@@ -2714,7 +2874,244 @@ class ForensicAnalysisGUI:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save notes: {str(e)}")
-    
+
+    def attach_screenshot_from_clipboard(self):
+        """Attach a screenshot from the clipboard to the current case"""
+        if not self.current_case:
+            messagebox.showwarning("No Case", "No active case to attach screenshot to")
+            return
+
+        try:
+            # Try to get image from clipboard using PIL
+            from PIL import ImageGrab
+
+            # Capture image from clipboard
+            clipboard_image = ImageGrab.grabclipboard()
+
+            if clipboard_image is None:
+                messagebox.showwarning(
+                    "No Image",
+                    "No image found in clipboard.\n\n"
+                    "Use the Snipping Tool (Win+Shift+S) to capture a screenshot, "
+                    "then click 'Paste from Clipboard'."
+                )
+                return
+
+            # Check if it's actually an image
+            if not isinstance(clipboard_image, Image.Image):
+                # Sometimes clipboard returns a list of file paths
+                if isinstance(clipboard_image, list) and len(clipboard_image) > 0:
+                    # Try to open the first file as an image
+                    try:
+                        clipboard_image = Image.open(clipboard_image[0])
+                    except:
+                        messagebox.showwarning("Invalid Image", "Clipboard does not contain a valid image")
+                        return
+                else:
+                    messagebox.showwarning("Invalid Image", "Clipboard does not contain a valid image")
+                    return
+
+            # Create screenshots directory in case folder
+            case_dir = os.path.join(self.case_manager.case_storage_path, self.current_case["id"])
+            screenshots_dir = os.path.join(case_dir, "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screenshot_filename = f"screenshot_{timestamp}.png"
+            screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+
+            # Save the image
+            clipboard_image.save(screenshot_path, "PNG")
+
+            # Add to case metadata
+            if "screenshots" not in self.current_case:
+                self.current_case["screenshots"] = []
+
+            self.current_case["screenshots"].append({
+                "filename": screenshot_filename,
+                "path": screenshot_path,
+                "timestamp": datetime.now().isoformat(),
+                "width": clipboard_image.width,
+                "height": clipboard_image.height
+            })
+
+            # Save updated case metadata
+            self.case_manager.save_case_metadata(case_dir, self.current_case)
+
+            # Copy screenshot to network case folder if enabled
+            network_copy_msg = ""
+            if self.current_case.get("network_case_path"):
+                try:
+                    import shutil
+                    network_path = self.current_case["network_case_path"]
+                    network_screenshots_dir = os.path.join(network_path, "screenshots")
+                    os.makedirs(network_screenshots_dir, exist_ok=True)
+                    network_screenshot_path = os.path.join(network_screenshots_dir, screenshot_filename)
+                    shutil.copy2(screenshot_path, network_screenshot_path)
+                    network_copy_msg = f"\n\nAlso copied to network folder."
+                except Exception as e:
+                    print(f"Warning: Could not copy screenshot to network folder: {e}")
+
+            # Refresh the screenshots display
+            self.refresh_screenshots_display()
+
+            messagebox.showinfo(
+                "Screenshot Attached",
+                f"Screenshot saved successfully!\n\n"
+                f"Size: {clipboard_image.width} x {clipboard_image.height}\n"
+                f"File: {screenshot_filename}{network_copy_msg}"
+            )
+
+        except ImportError:
+            messagebox.showerror(
+                "Missing Dependency",
+                "PIL/Pillow is required for clipboard image capture.\n"
+                "Install with: pip install Pillow"
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to attach screenshot: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def refresh_screenshots_display(self):
+        """Refresh the screenshots display in the Current Case tab"""
+        # Clear existing screenshots display
+        for widget in self.screenshots_display_frame.winfo_children():
+            widget.destroy()
+
+        # Clear stored image references
+        self.screenshot_images = []
+
+        if not self.current_case or "screenshots" not in self.current_case or not self.current_case["screenshots"]:
+            # Show placeholder
+            placeholder = ctk.CTkLabel(
+                self.screenshots_display_frame,
+                text="No screenshots attached. Use 'Paste from Clipboard' to add screenshots.",
+                font=Fonts.body,
+                text_color="gray"
+            )
+            placeholder.pack(pady=20)
+            return
+
+        # Auto-expand Screenshots section if there are screenshots
+        if not self.screenshots_section_visible[0]:
+            self.screenshots_container.pack(fill="x", pady=(0, 10))
+            self.screenshots_expand_indicator.configure(text="▼")
+            self.screenshots_section_visible[0] = True
+
+        # Create horizontal container for thumbnails
+        gallery_frame = ctk.CTkFrame(self.screenshots_display_frame, fg_color="transparent")
+        gallery_frame.pack(fill="x", padx=5, pady=10)
+
+        # Display each screenshot as a thumbnail horizontally
+        for i, screenshot_info in enumerate(self.current_case["screenshots"]):
+            screenshot_path = screenshot_info.get("path", "")
+
+            if not os.path.exists(screenshot_path):
+                continue
+
+            # Create frame for each screenshot (vertical: thumbnail + delete button)
+            screenshot_frame = ctk.CTkFrame(gallery_frame, fg_color="#1a1a1a", corner_radius=8)
+            screenshot_frame.pack(side="left", padx=5, pady=5)
+
+            # Load and create thumbnail
+            try:
+                pil_image = Image.open(screenshot_path)
+
+                # Create thumbnail (max 120px height for compact gallery view)
+                max_height = 120
+                ratio = max_height / pil_image.height
+                new_width = int(pil_image.width * ratio)
+                # Cap width to prevent very wide thumbnails
+                if new_width > 200:
+                    new_width = 200
+                    ratio = new_width / pil_image.width
+                    max_height = int(pil_image.height * ratio)
+
+                thumbnail = pil_image.copy()
+                thumbnail.thumbnail((new_width, max_height), Image.Resampling.LANCZOS)
+
+                # Convert to CTkImage
+                ctk_image = ctk.CTkImage(light_image=thumbnail, dark_image=thumbnail,
+                                         size=(thumbnail.width, thumbnail.height))
+
+                # Store reference to prevent garbage collection
+                self.screenshot_images.append(ctk_image)
+
+                # Image label (clickable to open full size)
+                img_label = ctk.CTkLabel(screenshot_frame, image=ctk_image, text="",
+                                         cursor="hand2")
+                img_label.pack(padx=8, pady=(8, 4))
+                img_label.bind("<Button-1>", lambda e, path=screenshot_path: self.open_screenshot(path))
+
+                # Delete button below thumbnail
+                btn_delete = ctk.CTkButton(screenshot_frame, text="Delete",
+                                           command=lambda idx=i: self.delete_screenshot(idx),
+                                           width=70, height=25,
+                                           fg_color=self.colors["red"],
+                                           hover_color=self.colors["red_dark"],
+                                           font=Fonts.body)
+                btn_delete.pack(pady=(0, 8))
+
+            except Exception as e:
+                print(f"Error loading screenshot {screenshot_path}: {e}")
+                error_label = ctk.CTkLabel(screenshot_frame, text=f"Error loading: {screenshot_info.get('filename', 'Unknown')}",
+                                           font=Fonts.body, text_color="red")
+                error_label.pack(pady=10)
+
+    def open_screenshot(self, path):
+        """Open a screenshot with the default image viewer"""
+        try:
+            if platform.system() == "Windows":
+                os.startfile(path)
+            elif platform.system() == "Darwin":
+                subprocess.run(["open", path])
+            else:
+                subprocess.run(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open screenshot: {str(e)}")
+
+    def delete_screenshot(self, index):
+        """Delete a screenshot from the case"""
+        if not self.current_case or "screenshots" not in self.current_case:
+            return
+
+        if index >= len(self.current_case["screenshots"]):
+            return
+
+        screenshot_info = self.current_case["screenshots"][index]
+        filename = screenshot_info.get("filename", "this screenshot")
+
+        result = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete {filename}?"
+        )
+
+        if not result:
+            return
+
+        try:
+            # Remove the file
+            screenshot_path = screenshot_info.get("path", "")
+            if os.path.exists(screenshot_path):
+                os.remove(screenshot_path)
+
+            # Remove from case metadata
+            self.current_case["screenshots"].pop(index)
+
+            # Save updated case metadata
+            case_dir = os.path.join(self.case_manager.case_storage_path, self.current_case["id"])
+            self.case_manager.save_case_metadata(case_dir, self.current_case)
+
+            # Refresh display
+            self.refresh_screenshots_display()
+
+            messagebox.showinfo("Deleted", f"Screenshot '{filename}' deleted successfully")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete screenshot: {str(e)}")
+
     # ==================== DISPLAY UPDATES ====================
     def update_current_case_display(self):
         """Update the current case tab display"""
@@ -2756,17 +3153,31 @@ class ForensicAnalysisGUI:
         # Clear and rebuild files list
         for widget in self.files_list_frame.winfo_children():
             widget.destroy()
-        
+
         for file_info in self.current_case["files"]:
             self.create_file_card(file_info)
-        
-        # Load existing notes if available
-        if "notes" in self.current_case:
-            self.notes_textbox.delete("1.0", "end")
-            self.notes_textbox.insert("1.0", self.current_case["notes"])
 
-        # Refresh IOCs display
+        # Auto-expand Files section if there are files
+        if self.current_case["files"] and not self.files_section_visible[0]:
+            self.files_list_frame.pack(fill="x", pady=(0, 10), before=self.iocs_header)
+            self.files_expand_indicator.configure(text="▼")
+            self.files_section_visible[0] = True
+
+        # Load existing notes if available
+        self.notes_textbox.delete("1.0", "end")
+        if "notes" in self.current_case and self.current_case["notes"]:
+            self.notes_textbox.insert("1.0", self.current_case["notes"])
+            # Auto-expand Notes section if there are notes
+            if not self.notes_section_visible[0]:
+                self.notes_container.pack(fill="both", expand=True, pady=(0, 10), before=self.screenshots_header)
+                self.notes_expand_indicator.configure(text="▼")
+                self.notes_section_visible[0] = True
+
+        # Refresh IOCs display (will auto-expand if IOCs exist)
         self.refresh_iocs_display()
+
+        # Refresh screenshots display (will auto-expand if screenshots exist)
+        self.refresh_screenshots_display()
 
     def create_file_card(self, file_info):
         """Create an expandable card for displaying file information"""
@@ -5233,17 +5644,24 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         def search_strings(event=None):
             """Search and highlight strings with length filtering"""
+            # Check if window still exists before accessing widgets
+            try:
+                if not details_window.winfo_exists():
+                    return
+            except:
+                return
+
             search_term = search_entry.get().strip().lower()
 
             # Get length filter values
             try:
                 min_len = int(min_length_entry.get()) if min_length_entry.get() else 0
-            except ValueError:
+            except (ValueError, tk.TclError):
                 min_len = 0
 
             try:
                 max_len = int(max_length_entry.get()) if max_length_entry.get() else float('inf')
-            except ValueError:
+            except (ValueError, tk.TclError):
                 max_len = float('inf')
 
             strings_text.configure(state="normal")
@@ -5517,6 +5935,17 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                         process_name=name
                     )
                     if success:
+                        # Also copy to network case folder if enabled
+                        network_copy_msg = ""
+                        if self.current_case and self.current_case.get("network_case_path"):
+                            try:
+                                network_path = self.current_case["network_case_path"]
+                                network_strings_path = os.path.join(network_path, os.path.basename(file_path))
+                                shutil.copy2(file_path, network_strings_path)
+                                network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
+                            except Exception as e:
+                                print(f"Warning: Could not copy strings to network folder: {e}")
+
                         # Show summary including metadata
                         mem_regions = len(extraction_result.get('memory_regions', []))
                         bytes_scanned = extraction_result.get('total_bytes_scanned', 0)
@@ -5524,6 +5953,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                         summary += f"Memory Regions Scanned: {mem_regions}\n"
                         summary += f"Total Bytes Scanned: {bytes_scanned:,}\n"
                         summary += f"Extraction Method: {extraction_result.get('extraction_method', 'unknown')}"
+                        summary += network_copy_msg
                         messagebox.showinfo("Export Complete", summary)
                     else:
                         messagebox.showerror("Export Failed", "Failed to export strings")
@@ -6107,6 +6537,25 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                 extraction_data["strings"] = all_strings
                 extraction_data["extraction_result"] = result
 
+                # Auto-save strings to network folder if enabled
+                if self.current_case and self.current_case.get("network_case_path"):
+                    try:
+                        import shutil
+                        network_path = self.current_case["network_case_path"]
+                        strings_filename = f"{os.path.splitext(file_name)[0]}_strings.txt"
+                        network_strings_path = os.path.join(network_path, strings_filename)
+
+                        # Export strings to network folder
+                        success = extractor.export_to_txt(
+                            result,
+                            network_strings_path,
+                            include_metadata=True
+                        )
+                        if success:
+                            print(f"Strings auto-saved to network folder: {network_strings_path}")
+                    except Exception as e:
+                        print(f"Warning: Could not auto-save strings to network folder: {e}")
+
                 # Update UI
                 self.root.after(0, lambda: status_label.configure(
                     text=f"Complete: {len(all_strings)} strings extracted in {result.get('extraction_time', 0):.2f}s"
@@ -6127,6 +6576,9 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
         def export_file_strings():
             """Export strings to TXT file"""
             try:
+                import os
+                import shutil
+
                 if not extraction_data["extraction_result"]:
                     messagebox.showwarning("No Data", "No strings available to export")
                     return
@@ -6145,7 +6597,6 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
                 # Import file string extractor
                 import sys
-                import os
                 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'analysis_modules'))
                 from file_string_extractor import FileStringExtractor
 
@@ -6157,7 +6608,18 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                 )
 
                 if success:
-                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}")
+                    # Also copy to network case folder if enabled
+                    network_copy_msg = ""
+                    if self.current_case and self.current_case.get("network_case_path"):
+                        try:
+                            network_path = self.current_case["network_case_path"]
+                            network_strings_path = os.path.join(network_path, os.path.basename(save_path))
+                            shutil.copy2(save_path, network_strings_path)
+                            network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
+                        except Exception as e:
+                            print(f"Warning: Could not copy strings to network folder: {e}")
+
+                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}{network_copy_msg}")
                 else:
                     messagebox.showerror("Export Failed", "Failed to export strings")
 
