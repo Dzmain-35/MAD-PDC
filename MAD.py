@@ -31,8 +31,27 @@ class ForensicAnalysisGUI:
         # Initialize main window
         self.root = ctk.CTk()
         self.root.title("MAD - Malware Analysis Dashboard")
-        self.root.geometry("1200x800")
-        
+
+        # Detect screen size and set responsive geometry
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        # Scale window to 80% of screen, with min/max bounds
+        win_w = max(1000, min(int(screen_w * 0.80), 2400))
+        win_h = max(700, min(int(screen_h * 0.80), 1600))
+
+        # Center the window on screen
+        x_pos = (screen_w - win_w) // 2
+        y_pos = (screen_h - win_h) // 2
+        self.root.geometry(f"{win_w}x{win_h}+{x_pos}+{y_pos}")
+        self.root.minsize(1000, 700)
+
+        # Store screen metrics for responsive scaling
+        self.screen_width = screen_w
+        self.screen_height = screen_h
+        self._is_large_screen = screen_w >= 1920
+        self._sidebar_width = 220 if self._is_large_screen else 160
+
         # Color scheme
         self.colors = {
             "dark_blue": "#1a2332",
@@ -114,6 +133,54 @@ class ForensicAnalysisGUI:
         """Build the main user interface"""
         self.create_header()
         self.create_main_container()
+
+        # Bind resize event for dynamic layout adjustments
+        self._resize_after_id = None
+        self.root.bind("<Configure>", self._on_window_resize)
+
+    def _on_window_resize(self, event):
+        """Handle window resize with debouncing to update responsive elements"""
+        # Only respond to root window resize events
+        if event.widget != self.root:
+            return
+
+        # Debounce: cancel pending resize callback and schedule a new one
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(150, self._apply_resize_layout)
+
+    def _apply_resize_layout(self):
+        """Apply layout adjustments based on current window size"""
+        try:
+            win_w = self.root.winfo_width()
+            win_h = self.root.winfo_height()
+
+            # Determine screen class based on current window width
+            is_wide = win_w >= 1400
+            is_narrow = win_w < 1100
+
+            # Adjust sidebar width dynamically
+            if is_narrow:
+                new_sidebar_w = 160
+            elif is_wide:
+                new_sidebar_w = 220
+            else:
+                new_sidebar_w = 190
+            self.sidebar.configure(width=new_sidebar_w)
+
+            # Update New Case form entry widths dynamically
+            content_w = win_w - new_sidebar_w
+            form_w = max(300, min(int(content_w * 0.45), 600))
+            if hasattr(self, 'analyst_name_entry'):
+                self.analyst_name_entry.configure(width=form_w)
+            if hasattr(self, 'report_url_entry'):
+                self.report_url_entry.configure(width=form_w)
+            if hasattr(self, 'url_entry'):
+                self.url_entry.configure(width=form_w)
+            if hasattr(self, 'btn_new_case_upload'):
+                self.btn_new_case_upload.configure(width=form_w)
+        except Exception:
+            pass  # Widget may not exist yet during startup
         
     def create_header(self):
         """Create top header bar"""
@@ -151,7 +218,7 @@ class ForensicAnalysisGUI:
         
     def create_sidebar(self, parent):
         """Create left sidebar with navigation buttons"""
-        self.sidebar = ctk.CTkFrame(parent, width=200, corner_radius=0, fg_color=self.colors["sidebar_bg"])
+        self.sidebar = ctk.CTkFrame(parent, width=self._sidebar_width, corner_radius=0, fg_color=self.colors["sidebar_bg"])
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
         
@@ -159,67 +226,75 @@ class ForensicAnalysisGUI:
         nav_frame.pack(fill="both", expand=True, padx=10, pady=20)
         
         # Navigation buttons with updated styling
+        nav_btn_height = 50 if self._is_large_screen else 36
+        nav_btn_font = Fonts.label_large if self._is_large_screen else Fonts.label
+        nav_btn_pady = 6 if self._is_large_screen else 3
+
         self.btn_new_case = ctk.CTkButton(
-            nav_frame, text="New Case", 
+            nav_frame, text="New Case",
             command=lambda: self.show_tab("new_case"),
-            height=45, font=Fonts.label_large,
+            height=nav_btn_height, font=nav_btn_font,
             fg_color=self.colors["navy"],
             hover_color=self.colors["dark_blue"],
             corner_radius=8
         )
-        self.btn_new_case.pack(fill="x", pady=5)
-        
+        self.btn_new_case.pack(fill="x", pady=nav_btn_pady)
+
         self.btn_current_case = ctk.CTkButton(
             nav_frame, text="Current Case",
             command=lambda: self.show_tab("current_case"),
-            height=45, font=Fonts.label_large,
-            fg_color="transparent", 
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["navy"],
-            corner_radius=8
-        )
-        self.btn_current_case.pack(fill="x", pady=5)
-        
-        self.btn_analysis = ctk.CTkButton(
-            nav_frame, text="Analysis",
-            command=lambda: self.show_tab("analysis"),
-            height=45, font=Fonts.label_large,
+            height=nav_btn_height, font=nav_btn_font,
             fg_color="transparent",
             hover_color=self.colors["navy"],
             border_width=2,
             border_color=self.colors["navy"],
             corner_radius=8
         )
-        self.btn_analysis.pack(fill="x", pady=5)
+        self.btn_current_case.pack(fill="x", pady=nav_btn_pady)
+
+        self.btn_analysis = ctk.CTkButton(
+            nav_frame, text="Analysis",
+            command=lambda: self.show_tab("analysis"),
+            height=nav_btn_height, font=nav_btn_font,
+            fg_color="transparent",
+            hover_color=self.colors["navy"],
+            border_width=2,
+            border_color=self.colors["navy"],
+            corner_radius=8
+        )
+        self.btn_analysis.pack(fill="x", pady=nav_btn_pady)
 
         self.btn_yara_rules = ctk.CTkButton(
             nav_frame, text="YARA Rules",
             command=lambda: self.show_tab("yara_rules"),
-            height=45, font=Fonts.label_large,
+            height=nav_btn_height, font=nav_btn_font,
             fg_color="transparent",
             hover_color=self.colors["navy"],
             border_width=2,
             border_color=self.colors["navy"],
             corner_radius=8
         )
-        self.btn_yara_rules.pack(fill="x", pady=5)
+        self.btn_yara_rules.pack(fill="x", pady=nav_btn_pady)
 
         self.btn_settings = ctk.CTkButton(
             nav_frame, text="Settings",
             command=lambda: self.show_tab("settings"),
-            height=45, font=Fonts.label_large,
+            height=nav_btn_height, font=nav_btn_font,
             fg_color="transparent",
             hover_color=self.colors["navy"],
             border_width=2,
             border_color=self.colors["navy"],
             corner_radius=8
         )
-        self.btn_settings.pack(fill="x", pady=5)
+        self.btn_settings.pack(fill="x", pady=nav_btn_pady)
         
     # ==================== NEW CASE TAB ====================
     def create_new_case_tab(self):
         """Create the New Case tab interface with M.A.D. branding"""
+        # Scale form widths based on screen size
+        form_entry_width = 500 if self._is_large_screen else 320
+        form_btn_width = 500 if self._is_large_screen else 320
+
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
         
         # Center container
@@ -251,9 +326,9 @@ class ForensicAnalysisGUI:
             if logo_path and os.path.exists(logo_path):
                 # Load and resize image
                 pil_image = Image.open(logo_path)
-                
-                # Keep aspect ratio, max size 300px (smaller for form)
-                max_size = 300
+
+                # Scale logo based on screen size
+                max_size = 350 if self._is_large_screen else 190
                 pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                 
                 logo_image = ctk.CTkImage(
@@ -310,7 +385,7 @@ class ForensicAnalysisGUI:
         
         self.analyst_name_entry = ctk.CTkEntry(
             form_container,
-            width=400,
+            width=form_entry_width,
             height=40,
             placeholder_text="Enter your name",
             font=Fonts.body_large,
@@ -332,7 +407,7 @@ class ForensicAnalysisGUI:
         
         self.report_url_entry = ctk.CTkEntry(
             form_container,
-            width=400,
+            width=form_entry_width,
             height=40,
             placeholder_text="Enter report URL",
             font=Fonts.body_large,
@@ -399,7 +474,7 @@ class ForensicAnalysisGUI:
             self.url_input_frame,
             placeholder_text="Enter URL to download file from...",
             height=45,
-            width=500,
+            width=form_entry_width,
             font=Fonts.body_large,
             fg_color="gray20",
             border_color=self.colors["red"],
@@ -413,7 +488,7 @@ class ForensicAnalysisGUI:
             text="Upload File to Start Case",
             command=self.handle_new_case_upload,
             height=50,
-            width=400,
+            width=form_btn_width,
             font=Fonts.title_medium,
             fg_color=self.colors["red"],
             hover_color=self.colors["red_dark"],
@@ -932,12 +1007,12 @@ class ForensicAnalysisGUI:
             search_frame,
             placeholder_text="Enter PID or Process Name...",
             height=35,
-            width=300,
+            width=350 if self._is_large_screen else 180,
             fg_color="gray20",
             border_color=self.colors["navy"],
             border_width=2
         )
-        self.process_search_entry.pack(side="left", padx=5)
+        self.process_search_entry.pack(side="left", padx=5, fill="x", expand=True)
         self.process_search_entry.bind("<KeyRelease>", lambda e: self.filter_processes())
 
         # Clear search button
@@ -963,7 +1038,7 @@ class ForensicAnalysisGUI:
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
-            width=180,
+            width=200 if self._is_large_screen else 145,
             fg_color="gray20",
             border_color=self.colors["navy"],
             button_color=self.colors["navy"],
@@ -997,23 +1072,28 @@ class ForensicAnalysisGUI:
         # Style for Treeview to match dark theme
         style = ttk.Style()
         style.theme_use('default')
-        
-        # Configure Treeview colors with larger font
+
+        # Scale treeview font and row height to screen
+        _tree_font_size = 14 if self._is_large_screen else 11
+        _tree_heading_size = 15 if self._is_large_screen else 12
+        _tree_row_height = 32 if self._is_large_screen else 24
+
+        # Configure Treeview colors with responsive font
         style.configure("Process.Treeview",
                        background="#1a1a1a",
                        foreground="white",
                        fieldbackground="#1a1a1a",
                        borderwidth=0,
                        relief="flat",
-                       font=('Segoe UI', 13),
-                       rowheight=28)
+                       font=('Segoe UI', _tree_font_size),
+                       rowheight=_tree_row_height)
 
         style.configure("Process.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=1,
                        relief="flat",
-                       font=('Segoe UI', 14, 'bold'))
+                       font=('Segoe UI', _tree_heading_size, 'bold'))
         
         style.map("Process.Treeview",
                  background=[('selected', '#dc2626')],
@@ -3611,11 +3691,12 @@ File Size: {file_info['file_size']} bytes"""
         btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         btn_frame.pack(side="right")
 
+        _action_font = Fonts.label_large if self._is_large_screen else Fonts.label
         self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
                                      command=self.add_yara_rule_dialog,
                                      fg_color=self.colors["red"],
                                      hover_color=self.colors["red_dark"],
-                                     font=Fonts.label_large)
+                                     font=_action_font)
         # Only show Add Rule button if rule creation is enabled in settings
         if self.settings_manager.get("yara.enable_rule_creation", True):
             self.btn_add_yara_rule.pack(side="left", padx=5)
@@ -3624,14 +3705,14 @@ File Size: {file_info['file_size']} bytes"""
                                        command=self.import_yara_rule_file,
                                        fg_color=self.colors["navy"],
                                        hover_color=self.colors["dark_blue"],
-                                       font=Fonts.label_large)
+                                       font=_action_font)
         btn_import_rule.pack(side="left", padx=5)
 
         btn_refresh = ctk.CTkButton(btn_frame, text="Refresh",
                                    command=self.refresh_yara_rules_list,
                                    fg_color=self.colors["navy"],
                                    hover_color=self.colors["dark_blue"],
-                                   font=Fonts.label_large)
+                                   font=_action_font)
         btn_refresh.pack(side="left", padx=5)
 
         # Info bar
@@ -3659,18 +3740,22 @@ File Size: {file_info['file_size']} bytes"""
         # Style configuration for dark theme
         style = ttk.Style()
         style.theme_use('default')
+        _yara_font_size = 14 if self._is_large_screen else 11
+        _yara_heading_size = 15 if self._is_large_screen else 12
+        _yara_row_height = 32 if self._is_large_screen else 24
+
         style.configure("Yara.Treeview",
                        background="#1a2332",
                        foreground="white",
                        fieldbackground="#1a2332",
                        borderwidth=0,
-                       font=('Segoe UI', 13),
-                       rowheight=28)
+                       font=('Segoe UI', _yara_font_size),
+                       rowheight=_yara_row_height)
         style.configure("Yara.Treeview.Heading",
                        background="#0d1520",
                        foreground="white",
                        borderwidth=0,
-                       font=('Segoe UI', 14, 'bold'))
+                       font=('Segoe UI', _yara_heading_size, 'bold'))
         style.map('Yara.Treeview',
                  background=[('selected', '#991b1b')])
 
@@ -4181,18 +4266,19 @@ File Size: {file_info['file_size']} bytes"""
         btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         btn_frame.pack(side="right")
 
+        _settings_font = Fonts.label_large if self._is_large_screen else Fonts.label
         btn_save = ctk.CTkButton(btn_frame, text="Save Settings",
                                 command=self.save_settings,
                                 fg_color=self.colors["red"],
                                 hover_color=self.colors["red_dark"],
-                                font=Fonts.label_large)
+                                font=_settings_font)
         btn_save.pack(side="left", padx=5)
 
         btn_reset = ctk.CTkButton(btn_frame, text="Reset to Defaults",
                                  command=self.reset_settings,
                                  fg_color=self.colors["navy"],
                                  hover_color=self.colors["dark_blue"],
-                                 font=Fonts.label_large)
+                                 font=_settings_font)
         btn_reset.pack(side="left", padx=5)
 
         # Scrollable settings container
@@ -4264,24 +4350,28 @@ File Size: {file_info['file_size']} bytes"""
         item_frame = ctk.CTkFrame(parent, fg_color="transparent")
         item_frame.pack(fill="x", padx=20, pady=5)
 
+        # Scale label and widget widths to screen
+        label_w = 320 if self._is_large_screen else 220
+        entry_w = 350 if self._is_large_screen else 230
+
         # Label
         label = ctk.CTkLabel(item_frame, text=label_text,
-                            font=Fonts.label_large,
+                            font=Fonts.label_large if self._is_large_screen else Fonts.label,
                             text_color="white",
-                            width=300,
+                            width=label_w,
                             anchor="w")
         label.pack(side="left", padx=10)
 
         # Widget based on type
         if widget_type == "entry":
-            widget = ctk.CTkEntry(item_frame, font=Fonts.label_large, width=300)
+            widget = ctk.CTkEntry(item_frame, font=Fonts.label_large if self._is_large_screen else Fonts.label, width=entry_w)
             widget.pack(side="right", padx=10, pady=5)
         elif widget_type == "switch":
-            widget = ctk.CTkSwitch(item_frame, text="", font=Fonts.label_large)
+            widget = ctk.CTkSwitch(item_frame, text="", font=Fonts.label_large if self._is_large_screen else Fonts.label)
             widget.pack(side="right", padx=10, pady=5)
         elif widget_type == "option" and options:
             widget = ctk.CTkOptionMenu(item_frame, values=options,
-                                      font=Fonts.label_large, width=200)
+                                      font=Fonts.label_large if self._is_large_screen else Fonts.label, width=entry_w - 100)
             widget.pack(side="right", padx=10, pady=5)
         else:
             return
