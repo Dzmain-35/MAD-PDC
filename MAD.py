@@ -6536,6 +6536,9 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
         def export_file_strings():
             """Export strings to TXT file"""
             try:
+                import os
+                import shutil
+
                 if not extraction_data["extraction_result"]:
                     messagebox.showwarning("No Data", "No strings available to export")
                     return
@@ -6554,7 +6557,6 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
                 # Import file string extractor
                 import sys
-                import os
                 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'analysis_modules'))
                 from file_string_extractor import FileStringExtractor
 
