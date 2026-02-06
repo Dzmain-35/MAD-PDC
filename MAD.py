@@ -2943,6 +2943,7 @@ class ForensicAnalysisGUI:
             network_copy_msg = ""
             if self.current_case.get("network_case_path"):
                 try:
+                    import shutil
                     network_path = self.current_case["network_case_path"]
                     network_screenshots_dir = os.path.join(network_path, "screenshots")
                     os.makedirs(network_screenshots_dir, exist_ok=True)
