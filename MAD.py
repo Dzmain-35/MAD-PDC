@@ -21,6 +21,7 @@ import re
 from typography import Fonts
 from yara_rule_manager import YaraRuleManager
 from sigma_rule_manager import SigmaRuleManager
+from analysis_modules.sigma_evaluator import SigmaEvaluator
 from settings_manager import SettingsManager
 
 class ForensicAnalysisGUI:
@@ -98,6 +99,17 @@ class ForensicAnalysisGUI:
             settings_manager=self.settings_manager
         )
         self.sigma_enabled = self.settings_manager.get("sigma.enable_sigma_evaluation", True)
+
+        # Initialize standalone Sigma evaluator for process tree evaluation
+        self.sigma_evaluator = None
+        self._process_sigma_cache = {}  # Cache: exe_path -> list of sigma match titles
+        if self.sigma_enabled and os.path.isdir(self.sigma_rules_path):
+            try:
+                self.sigma_evaluator = SigmaEvaluator()
+                self.sigma_evaluator.load_rules_from_directory(self.sigma_rules_path)
+            except Exception as e:
+                print(f"Warning: Could not load Sigma rules for process tree: {e}")
+                self.sigma_evaluator = None
 
         # Data references
         self.current_case = None
@@ -1052,7 +1064,7 @@ class ForensicAnalysisGUI:
         self.process_filter_var = ctk.StringVar(value="All Processes")
         self.process_filter_dropdown = ctk.CTkComboBox(
             search_frame,
-            values=["All Processes", "YARA Matches Only", "Benign Only", "Not Scanned"],
+            values=["All Processes", "YARA Matches Only", "Sigma Matches Only", "Benign Only", "Not Scanned"],
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
@@ -1134,10 +1146,10 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "Name", "File Path", "YARA Matches")
+        columns = ("PID", "Name", "File Path", "Detection Status")
         self.process_tree = ttk.Treeview(
-            tree_frame, 
-            columns=columns, 
+            tree_frame,
+            columns=columns,
             show="tree headings",
             yscrollcommand=vsb.set,
             xscrollcommand=hsb.set,
@@ -1146,20 +1158,20 @@ class ForensicAnalysisGUI:
         self.process_tree.pack(side="left", fill="both", expand=True)
         vsb.config(command=self.process_tree.yview)
         hsb.config(command=self.process_tree.xview)
-        
+
         # Configure columns
         self.process_tree.column("#0", width=200, minwidth=150)  # Tree hierarchy
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
         self.process_tree.column("Name", width=200, minwidth=150)
         self.process_tree.column("File Path", width=350, minwidth=200)
-        self.process_tree.column("YARA Matches", width=150, minwidth=100, anchor="center")
-        
+        self.process_tree.column("Detection Status", width=250, minwidth=150, anchor="center")
+
         # Headers
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
         self.process_tree.heading("Name", text="Name")
         self.process_tree.heading("File Path", text="File Path")
-        self.process_tree.heading("YARA Matches", text="YARA Matches")
+        self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
         # Right-click menu with dark theme styling
         self.process_context_menu = tk.Menu(
@@ -1200,6 +1212,7 @@ class ForensicAnalysisGUI:
         self.process_tree.tag_configure('benign', background='#1a4d2e', foreground='white')  # Green for whitelisted/benign
         self.process_tree.tag_configure('system', foreground='#888888')
         self.process_tree.tag_configure('suspended', background='#3a3a3a', foreground='#808080')  # Grey for suspended processes
+        self.process_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')  # Purple for Sigma matches
         
         self.analysis_subtabs["processes"] = frame
         
@@ -4718,6 +4731,17 @@ File Size: {file_info['file_size']} bytes"""
                 elif proc['name'].lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                     tags = ('system',)
 
+                # Evaluate Sigma rules against this process
+                sigma_titles = self.evaluate_process_sigma(proc)
+                if sigma_titles:
+                    sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                    if yara_status != "No":
+                        yara_status = f"{yara_status} | {sigma_label}"
+                    else:
+                        yara_status = sigma_label
+                    if not tags or tags == ('new',) or tags == ('system',):
+                        tags = ('sigma_match',)
+
                 # Update if YARA status changed
                 if len(current_values) > 3 and current_values[3] != yara_status:
                     self.process_tree.item(item_id, values=(pid, proc['name'], proc.get('exe', 'N/A'), yara_status), tags=tags)
@@ -4800,6 +4824,17 @@ File Size: {file_info['file_size']} bytes"""
                 elif name.lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                     tags = ('system',)
 
+                # Evaluate Sigma rules against this process
+                sigma_titles = self.evaluate_process_sigma(proc)
+                if sigma_titles:
+                    sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                    if yara_status != "No":
+                        yara_status = f"{yara_status} | {sigma_label}"
+                    else:
+                        yara_status = sigma_label
+                    if not tags or tags == ('new',) or tags == ('system',):
+                        tags = ('sigma_match',)
+
                 # Insert into tree
                 item_id = self.process_tree.insert(
                     parent_id,
@@ -4851,9 +4886,39 @@ File Size: {file_info['file_size']} bytes"""
             except:
                 pass
 
+        # Count Sigma matches across all visible processes and update badge
+        if self.sigma_evaluator:
+            sigma_count = 0
+            for item_id in self._get_all_tree_items(self.process_tree):
+                try:
+                    vals = self.process_tree.item(item_id, 'values')
+                    if len(vals) > 3 and '🔷' in str(vals[3]):
+                        sigma_count += 1
+                except:
+                    pass
+            if sigma_count > 0:
+                self.total_sigma_matches = max(self.total_sigma_matches, sigma_count)
+                self.update_sigma_match_badge()
+
         # Mark initial load as complete
         if self.process_tree_initial_load:
             self.process_tree_initial_load = False
+
+    def _get_all_tree_items(self, tree):
+        """Recursively get all item IDs from a treeview"""
+        items = []
+        for item in tree.get_children():
+            items.append(item)
+            items.extend(self._get_all_tree_children(tree, item))
+        return items
+
+    def _get_all_tree_children(self, tree, parent):
+        """Get all descendant items of a treeview item"""
+        children = []
+        for child in tree.get_children(parent):
+            children.append(child)
+            children.extend(self._get_all_tree_children(tree, child))
+        return children
 
     def focus_process_by_pid(self, target_pid):
         """
@@ -4960,6 +5025,40 @@ File Size: {file_info['file_size']} bytes"""
             self.sigma_match_badge.configure(text_color="#c084fc", fg_color="#581c87")
         else:
             self.sigma_match_badge.configure(text_color="#e879f9", fg_color="#701a75")
+
+    def evaluate_process_sigma(self, proc):
+        """
+        Evaluate a process dict against Sigma process_creation rules.
+        Returns list of matching rule titles (cached by exe path).
+        """
+        if not self.sigma_evaluator:
+            return []
+
+        exe = proc.get('exe', '')
+        if not exe or exe == 'N/A':
+            return []
+
+        # Check cache first
+        if exe in self._process_sigma_cache:
+            return self._process_sigma_cache[exe]
+
+        # Build a Sigma-compatible event dict for process_creation (event_id=1)
+        event_dict = {
+            'Image': exe,
+            'CommandLine': proc.get('cmdline', exe),
+            'ParentImage': proc.get('parent_exe', ''),
+            'User': proc.get('username', ''),
+            'ProcessId': str(proc.get('pid', '')),
+        }
+
+        try:
+            matches = self.sigma_evaluator._evaluate(event_dict, event_id=1)
+            match_titles = [m.rule.title for m in matches]
+            self._process_sigma_cache[exe] = match_titles
+            return match_titles
+        except Exception:
+            self._process_sigma_cache[exe] = []
+            return []
 
     def on_sigma_match_detected(self, sigma_match, event_dict):
         """
@@ -5112,6 +5211,8 @@ File Size: {file_info['file_size']} bytes"""
                 filter_match = (proc.get('threat_detected', False) and
                                yara_rule and
                                yara_rule != 'No_YARA_Hit')
+            elif filter_choice == "Sigma Matches Only":
+                filter_match = len(self.evaluate_process_sigma(proc)) > 0
             elif filter_choice == "Benign Only":
                 filter_match = proc.get('whitelisted', False)
             elif filter_choice == "Not Scanned":
@@ -5168,6 +5269,17 @@ File Size: {file_info['file_size']} bytes"""
                 tags = ('threat',)
             elif name.lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                 tags = ('system',)
+
+            # Evaluate Sigma rules against this process
+            sigma_titles = self.evaluate_process_sigma(proc)
+            if sigma_titles:
+                sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                if yara_status != "No":
+                    yara_status = f"{yara_status} | {sigma_label}"
+                else:
+                    yara_status = sigma_label
+                if not tags or tags == ('system',):
+                    tags = ('sigma_match',)
 
             # Insert into tree (expanded by default for filtered view)
             item_id = self.process_tree.insert(
