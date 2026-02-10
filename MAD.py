@@ -20,6 +20,7 @@ from tkinter import ttk
 import re
 from typography import Fonts
 from yara_rule_manager import YaraRuleManager
+from sigma_rule_manager import SigmaRuleManager
 from settings_manager import SettingsManager
 
 class ForensicAnalysisGUI:
@@ -85,6 +86,19 @@ class ForensicAnalysisGUI:
             settings_manager=self.settings_manager
         )
 
+        # Initialize Sigma rule manager
+        self.sigma_rules_path = self.settings_manager.get("sigma.sigma_rules_path", "")
+        if not self.sigma_rules_path:
+            # Auto-detect: sigma_rules/ next to the script
+            self.sigma_rules_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "sigma_rules"
+            )
+        self.sigma_rule_manager = SigmaRuleManager(
+            self.sigma_rules_path,
+            settings_manager=self.settings_manager
+        )
+        self.sigma_enabled = self.settings_manager.get("sigma.enable_sigma_evaluation", True)
+
         # Data references
         self.current_case = None
         self.scan_in_progress = False
@@ -117,6 +131,10 @@ class ForensicAnalysisGUI:
         self.popup_count_by_rule = {}  # Track popup count per YARA rule family
         self.max_popups_per_rule = self.settings_manager.get("application.max_popups_per_rule", 3)
         self.total_yara_matches = 0    # Total YARA matches for badge display
+
+        # Sigma match tracking
+        self.sigma_popup_count_by_rule = {}  # Track popup count per Sigma rule
+        self.total_sigma_matches = 0         # Total Sigma matches for badge display
 
         # Procmon live monitors (PID -> monitor instance)
         self.procmon_monitors = {}
@@ -1059,6 +1077,19 @@ class ForensicAnalysisGUI:
         )
         self.yara_match_badge.pack(side="left", padx=(15, 5))
 
+        # Sigma match counter badge
+        self.sigma_match_badge = ctk.CTkLabel(
+            search_frame,
+            text="SIGMA: 0",
+            font=("Segoe UI", 15, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            corner_radius=6,
+            padx=12,
+            pady=6
+        )
+        self.sigma_match_badge.pack(side="left", padx=5)
+
         # Process tree area with parent-child hierarchy
         tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
         tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
@@ -1583,6 +1614,8 @@ class ForensicAnalysisGUI:
 
         # Tag for suspicious events
         events_tree.tag_configure('suspicious', background='#5c1c1c', foreground='#ff6b6b')
+        # Tag for Sigma rule matches (higher priority - purple/magenta)
+        events_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')
 
         events_tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         events_vsb.config(command=events_tree.yview)
@@ -1623,8 +1656,13 @@ class ForensicAnalysisGUI:
             if not monitor_state["monitoring"]:
                 # Start monitoring
                 try:
-                    # Create system-wide monitor
-                    monitor = SystemWideMonitor(max_events=50000)
+                    # Create system-wide monitor (with Sigma rules if enabled)
+                    sigma_path = self.sigma_rules_path if self.sigma_enabled else None
+                    monitor = SystemWideMonitor(max_events=50000, sigma_rules_path=sigma_path)
+
+                    # Register Sigma match callback for GUI alerts
+                    if monitor.is_sigma_enabled():
+                        monitor.register_sigma_callback(self.on_sigma_match_detected)
 
                     # Check if Sysmon is available
                     sysmon_available = False
@@ -1634,11 +1672,16 @@ class ForensicAnalysisGUI:
                     except:
                         pass
 
+                    sigma_info = ""
+                    if monitor.is_sigma_enabled():
+                        sigma_count = monitor.get_sigma_evaluator().get_rule_count()
+                        sigma_info = f" | Sigma: {sigma_count} rules"
+
                     if sysmon_available:
-                        sysmon_status.configure(text="✓ Sysmon Enabled (Full monitoring)",
+                        sysmon_status.configure(text=f"✓ Sysmon Enabled (Full monitoring){sigma_info}",
                                               text_color="#10b981")
                     else:
-                        sysmon_status.configure(text="⚠ Sysmon Not Available (Limited monitoring)",
+                        sysmon_status.configure(text=f"⚠ Sysmon Not Available (Limited monitoring){sigma_info}",
                                               text_color="#f59e0b")
 
                     # Apply current filters
@@ -1735,9 +1778,15 @@ class ForensicAnalysisGUI:
                 if not event_filter.matches(event):
                     continue
 
-                # Check if suspicious for highlighting
+                # Check if suspicious or sigma match for highlighting
+                has_sigma = bool(event.get('sigma_matches'))
                 is_suspicious = event_filter.is_suspicious(event)
-                tags = ('suspicious',) if is_suspicious else ()
+                if has_sigma:
+                    tags = ('sigma_match',)
+                elif is_suspicious:
+                    tags = ('suspicious',)
+                else:
+                    tags = ()
 
                 # Truncate long paths
                 path = event.get('path', '')
@@ -1790,9 +1839,15 @@ class ForensicAnalysisGUI:
             all_events = monitor.get_recent_events(count=5000)
 
             for event in all_events:
-                # Check if suspicious for highlighting
+                # Check if sigma match or suspicious for highlighting
+                has_sigma = bool(event.get('sigma_matches'))
                 is_suspicious = event_filter.is_suspicious(event)
-                tags = ('suspicious',) if is_suspicious else ()
+                if has_sigma:
+                    tags = ('sigma_match',)
+                elif is_suspicious:
+                    tags = ('suspicious',)
+                else:
+                    tags = ()
 
                 # Truncate long paths
                 path = event.get('path', '')
@@ -1888,9 +1943,15 @@ class ForensicAnalysisGUI:
                     if not event_filter.matches(event):
                         continue
 
-                    # Check if suspicious for highlighting
+                    # Check if sigma match or suspicious for highlighting
+                    has_sigma = bool(event.get('sigma_matches'))
                     is_suspicious = event_filter.is_suspicious(event)
-                    tags = ('suspicious',) if is_suspicious else ()
+                    if has_sigma:
+                        tags = ('sigma_match',)
+                    elif is_suspicious:
+                        tags = ('suspicious',)
+                    else:
+                        tags = ()
 
                     # Truncate long paths
                     path = event.get('path', '')
@@ -1928,11 +1989,17 @@ class ForensicAnalysisGUI:
                     if monitor_state["current_filter"] and not monitor_state["current_filter"].matches(event):
                         continue
 
-                    # Check if suspicious for highlighting
+                    # Check if sigma match or suspicious for highlighting
+                    has_sigma = bool(event.get('sigma_matches'))
                     is_suspicious = False
                     if monitor_state["current_filter"]:
                         is_suspicious = monitor_state["current_filter"].is_suspicious(event)
-                    tags = ('suspicious',) if is_suspicious else ()
+                    if has_sigma:
+                        tags = ('sigma_match',)
+                    elif is_suspicious:
+                        tags = ('suspicious',)
+                    else:
+                        tags = ()
 
                     # Truncate long paths
                     path = event.get('path', '')
@@ -1960,6 +2027,8 @@ class ForensicAnalysisGUI:
 
                 # Update statistics
                 stats = monitor.get_stats()
+                sigma_count = stats.get('sigma_matches', 0)
+                sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
                 stats_label.configure(
                     text=f"Total: {stats['total_events']} | "
                          f"File: {stats['file_events']} | "
@@ -1967,6 +2036,7 @@ class ForensicAnalysisGUI:
                          f"Network: {stats['network_events']} | "
                          f"Process: {stats['process_events']} | "
                          f"DNS: {stats.get('dns_events', 0)}"
+                         f"{sigma_text}"
                 )
 
                 # Update last update time
@@ -4875,6 +4945,117 @@ File Size: {file_info['file_size']} bytes"""
                 text_color="#f87171",
                 fg_color="#7f1d1d"
             )
+
+    def update_sigma_match_badge(self):
+        """Update the Sigma match counter badge with current count and color coding."""
+        count = self.total_sigma_matches
+
+        self.sigma_match_badge.configure(text=f"SIGMA: {count}")
+
+        if count == 0:
+            self.sigma_match_badge.configure(text_color="#9ca3af", fg_color="#374151")
+        elif count <= 10:
+            self.sigma_match_badge.configure(text_color="#a78bfa", fg_color="#4c1d95")
+        elif count <= 25:
+            self.sigma_match_badge.configure(text_color="#c084fc", fg_color="#581c87")
+        else:
+            self.sigma_match_badge.configure(text_color="#e879f9", fg_color="#701a75")
+
+    def on_sigma_match_detected(self, sigma_match, event_dict):
+        """
+        Callback fired by SystemWideMonitor when a Sigma rule matches an event.
+        Shows a popup alert (rate-limited per rule) and updates the badge.
+        """
+        rule_title = sigma_match.rule.title
+        rule_level = sigma_match.rule.level
+
+        self.total_sigma_matches += 1
+        self.root.after(0, self.update_sigma_match_badge)
+
+        # Rate-limit popups per rule title (same approach as YARA)
+        count = self.sigma_popup_count_by_rule.get(rule_title, 0)
+        if count >= self.max_popups_per_rule:
+            return
+        self.sigma_popup_count_by_rule[rule_title] = count + 1
+
+        # Only show popups for high and critical
+        if rule_level not in ('high', 'critical'):
+            return
+
+        def show_sigma_alert():
+            alert = ctk.CTkToplevel(self.root)
+            alert.title("SIGMA Rule Match")
+            alert.geometry("600x450")
+            alert.minsize(500, 350)
+            alert.attributes('-topmost', True)
+
+            # Color based on severity
+            if rule_level == 'critical':
+                bg_color = self.colors["red_dark"]
+                header_text = "CRITICAL SIGMA DETECTION"
+            else:
+                bg_color = "#4c1d95"
+                header_text = "HIGH SIGMA DETECTION"
+
+            main_frame = ctk.CTkFrame(alert, fg_color=bg_color)
+            main_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+            # Header
+            header_frame = ctk.CTkFrame(main_frame, fg_color=bg_color)
+            header_frame.pack(fill="x", padx=10, pady=(15, 10))
+
+            title_label = ctk.CTkLabel(
+                header_frame,
+                text=header_text,
+                font=Fonts.title_large,
+                text_color="white"
+            )
+            title_label.pack()
+
+            # Details
+            details_frame = ctk.CTkFrame(main_frame, fg_color="#1a1a1a", corner_radius=8)
+            details_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+            rule_info = sigma_match.rule
+            tags_str = ", ".join(rule_info.tags[:5]) if rule_info.tags else "None"
+
+            details_text = (
+                f"Rule: {rule_info.title}\n"
+                f"Level: {rule_info.level.upper()}\n"
+                f"Description: {rule_info.description}\n\n"
+                f"MITRE Tags: {tags_str}\n\n"
+                f"Event: {event_dict.get('operation', '')} | "
+                f"PID: {event_dict.get('pid', '')} | "
+                f"Process: {event_dict.get('process_name', '')}\n"
+                f"Path: {str(event_dict.get('path', ''))[:120]}"
+            )
+
+            details_label = ctk.CTkLabel(
+                details_frame,
+                text=details_text,
+                font=Fonts.body,
+                justify="left",
+                text_color="white",
+                wraplength=550
+            )
+            details_label.pack(pady=15, padx=15, anchor="w")
+
+            # Footer
+            footer_frame = ctk.CTkFrame(main_frame, fg_color=bg_color)
+            footer_frame.pack(fill="x", padx=10, pady=(5, 15))
+
+            btn_close = ctk.CTkButton(
+                footer_frame,
+                text="Close",
+                command=alert.destroy,
+                fg_color=self.colors["navy"],
+                hover_color=self.colors["dark_blue"],
+                width=120,
+                height=35
+            )
+            btn_close.pack(pady=5)
+
+        self.root.after(0, show_sigma_alert)
 
     def filter_processes(self):
         """Filter processes by PID or Name, showing matching processes and all their children"""
