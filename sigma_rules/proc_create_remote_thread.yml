@@ -1,0 +1,34 @@
+title: Remote Thread Creation in Suspicious Target
+id: f2d1c7a0-1012-4a0b-8b0a-sigma0012
+status: stable
+level: critical
+description: Detects remote thread creation in processes commonly targeted for injection
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1055
+    - attack.privilege_escalation
+logsource:
+    category: create_remote_thread
+    product: windows
+detection:
+    selection:
+        TargetImage|endswith:
+            - '\svchost.exe'
+            - '\lsass.exe'
+            - '\explorer.exe'
+            - '\winlogon.exe'
+            - '\csrss.exe'
+    filter_system:
+        SourceImage|endswith:
+            - '\csrss.exe'
+            - '\wininit.exe'
+            - '\services.exe'
+            - '\lsass.exe'
+    condition: selection and not filter_system
+falsepositives:
+    - Security software and EDR agents
+    - Legitimate debugging tools
+references:
+    - https://attack.mitre.org/techniques/T1055/

@@ -1,0 +1,36 @@
+title: PowerShell Download Cradle
+id: f2d1c7a0-1002-4a0b-8b0a-sigma0002
+status: stable
+level: high
+description: Detects PowerShell commands that download and execute content from the internet
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.command_and_control
+    - attack.t1105
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+    selection_dl:
+        CommandLine|contains:
+            - 'downloadstring'
+            - 'downloadfile'
+            - 'downloaddata'
+            - 'invoke-webrequest'
+            - 'iwr '
+            - 'wget '
+            - 'curl '
+            - 'Net.WebClient'
+            - 'Start-BitsTransfer'
+    condition: selection_img and selection_dl
+falsepositives:
+    - Legitimate admin scripts that download updates
+references:
+    - https://attack.mitre.org/techniques/T1105/

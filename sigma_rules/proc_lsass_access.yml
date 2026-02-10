@@ -1,0 +1,30 @@
+title: LSASS Process Access - Credential Dumping
+id: f2d1c7a0-1017-4a0b-8b0a-sigma0017
+status: stable
+level: critical
+description: Detects suspicious access to the LSASS process, indicating potential credential dumping
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.credential_access
+    - attack.t1003.001
+logsource:
+    category: process_access
+    product: windows
+detection:
+    selection:
+        TargetImage|endswith: '\lsass.exe'
+    filter_system:
+        SourceImage|endswith:
+            - '\svchost.exe'
+            - '\lsm.exe'
+            - '\csrss.exe'
+            - '\wininit.exe'
+            - '\wmiprvse.exe'
+            - '\MsMpEng.exe'
+    condition: selection and not filter_system
+falsepositives:
+    - Antivirus and EDR products
+    - Windows Defender
+references:
+    - https://attack.mitre.org/techniques/T1003/001/

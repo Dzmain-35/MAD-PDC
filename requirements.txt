@@ -21,3 +21,4 @@ scikit-learn
 pandas
 requests
 Pillow
+pyyaml

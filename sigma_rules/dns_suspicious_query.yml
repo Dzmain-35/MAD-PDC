@@ -1,0 +1,35 @@
+title: DNS Query to Known Suspicious TLD
+id: f2d1c7a0-1018-4a0b-8b0a-sigma0018
+status: stable
+level: medium
+description: Detects DNS queries to TLDs commonly associated with malicious activity
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.command_and_control
+    - attack.t1071.004
+logsource:
+    category: dns_query
+    product: windows
+detection:
+    selection:
+        QueryName|endswith:
+            - '.top'
+            - '.xyz'
+            - '.tk'
+            - '.ml'
+            - '.ga'
+            - '.cf'
+            - '.gq'
+            - '.cc'
+            - '.su'
+            - '.pw'
+            - '.buzz'
+            - '.club'
+            - '.work'
+            - '.link'
+    condition: selection
+falsepositives:
+    - Legitimate websites using these TLDs
+references:
+    - https://attack.mitre.org/techniques/T1071/004/

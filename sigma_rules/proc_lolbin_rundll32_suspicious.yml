@@ -1,0 +1,30 @@
+title: Rundll32 Execution with Suspicious DLL
+id: f2d1c7a0-1005-4a0b-8b0a-sigma0005
+status: stable
+level: medium
+description: Detects rundll32.exe executing suspicious DLLs or from unusual locations
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1218.011
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\rundll32.exe'
+    selection_suspicious:
+        CommandLine|contains:
+            - 'javascript:'
+            - 'vbscript:'
+            - 'http://'
+            - 'https://'
+            - '\AppData\'
+            - '\Temp\'
+            - 'shell32.dll,ShellExec_RunDLL'
+    condition: selection and selection_suspicious
+falsepositives:
+    - Legitimate software using rundll32 with URLs
+references:
+    - https://attack.mitre.org/techniques/T1218/011/

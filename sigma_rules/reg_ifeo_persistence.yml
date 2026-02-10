@@ -1,0 +1,26 @@
+title: Image File Execution Options Injection
+id: f2d1c7a0-1008-4a0b-8b0a-sigma0008
+status: stable
+level: critical
+description: Detects modification of IFEO registry keys for persistence or privilege escalation
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.persistence
+    - attack.t1546.012
+    - attack.defense_evasion
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    selection:
+        TargetObject|contains: '\Image File Execution Options\'
+    selection_debugger:
+        TargetObject|endswith:
+            - '\Debugger'
+            - '\GlobalFlag'
+    condition: selection and selection_debugger
+falsepositives:
+    - Legitimate debugging configuration
+references:
+    - https://attack.mitre.org/techniques/T1546/012/

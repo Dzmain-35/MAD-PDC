@@ -1,0 +1,33 @@
+title: Cmd.exe Spawned by Suspicious Parent
+id: f2d1c7a0-1015-4a0b-8b0a-sigma0015
+status: stable
+level: medium
+description: Detects cmd.exe being spawned by processes that typically should not launch command prompts
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.execution
+    - attack.t1059.003
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\cmd.exe'
+    selection_parent:
+        ParentImage|endswith:
+            - '\winword.exe'
+            - '\excel.exe'
+            - '\powerpnt.exe'
+            - '\outlook.exe'
+            - '\msaccess.exe'
+            - '\mspub.exe'
+            - '\visio.exe'
+            - '\wordpad.exe'
+            - '\acrobat.exe'
+            - '\acrord32.exe'
+    condition: selection and selection_parent
+falsepositives:
+    - Legitimate macros that launch cmd.exe
+references:
+    - https://attack.mitre.org/techniques/T1059/003/

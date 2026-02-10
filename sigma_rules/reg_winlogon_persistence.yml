@@ -1,0 +1,28 @@
+title: Winlogon Registry Key Modification
+id: f2d1c7a0-1014-4a0b-8b0a-sigma0014
+status: stable
+level: critical
+description: Detects modification of Winlogon-related registry keys for persistence or credential access
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.persistence
+    - attack.t1547.004
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    selection:
+        TargetObject|contains: '\Microsoft\Windows NT\CurrentVersion\Winlogon\'
+    selection_keys:
+        TargetObject|endswith:
+            - '\Shell'
+            - '\Userinit'
+            - '\Notify'
+            - '\AppInit_DLLs'
+    condition: selection and selection_keys
+falsepositives:
+    - System administration
+    - Windows Updates
+references:
+    - https://attack.mitre.org/techniques/T1547/004/

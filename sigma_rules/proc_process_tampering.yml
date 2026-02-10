@@ -1,0 +1,23 @@
+title: Process Tampering Detected
+id: f2d1c7a0-1019-4a0b-8b0a-sigma0019
+status: stable
+level: critical
+description: Detects Sysmon process tampering events indicating process hollowing, herpaderping, or ghosting
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1055.012
+logsource:
+    category: process_tampering
+    product: windows
+detection:
+    selection:
+        EventType:
+            - 'Image is replaced'
+            - 'Image is locked for access'
+    condition: selection
+falsepositives:
+    - Some legitimate packers and installers
+references:
+    - https://attack.mitre.org/techniques/T1055/012/
