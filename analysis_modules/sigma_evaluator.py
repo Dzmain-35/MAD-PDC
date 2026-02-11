@@ -334,6 +334,11 @@ class SigmaEvaluator:
         self.stats['events_evaluated'] += 1
         matches = []
 
+        # Inject EventID into event_data so selections referencing it can match
+        if event_id is not None and 'EventID' not in event_data:
+            event_data = dict(event_data)  # shallow copy to avoid mutating caller's dict
+            event_data['EventID'] = str(event_id)
+
         # Get candidate rules based on event_id
         candidate_rules = self._get_candidate_rules(event_id)
 
