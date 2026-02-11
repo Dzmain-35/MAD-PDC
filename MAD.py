@@ -5749,7 +5749,7 @@ Errors: {scan_stats['errors']}"""
         # Create window
         details_window = ctk.CTkToplevel(self.root)
         details_window.title(f"Process Analysis: {name} (PID {pid})")
-        details_window.geometry("1000x700")
+        details_window.geometry("1000x900")
         
         # Main container
         main_container = ctk.CTkFrame(details_window, fg_color=self.colors["dark_blue"])
@@ -5842,33 +5842,34 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             for conn in info['connections'][:10]:
                 details += f"  {conn['laddr']} -> {conn['raddr']} ({conn['status']})\n"
         
-        # Check if YARA scanned
+        # Build YARA section separately for colored tagging
+        yara_section = ""
         if pid in self.process_monitor.monitored_processes:
             scan_results = self.process_monitor.monitored_processes[pid].get('scan_results', {})
             if scan_results.get('matches_found'):
-                details += f"\n{'='*80}\n"
-                details += "⚠️ YARA SCAN RESULTS\n"
-                details += f"{'='*80}\n"
+                yara_section += f"\n{'='*80}\n"
+                yara_section += "⚠️ YARA SCAN RESULTS\n"
+                yara_section += f"{'='*80}\n"
 
                 # Show all matched rules
                 all_rules = scan_results.get('all_rules', [scan_results.get('rule', 'Unknown')])
                 if len(all_rules) > 1:
-                    details += f"Rules Matched ({len(all_rules)}):\n"
+                    yara_section += f"Rules Matched ({len(all_rules)}):\n"
                     for i, rule in enumerate(all_rules, 1):
-                        details += f"  {i}. {rule}\n"
+                        yara_section += f"  {i}. {rule}\n"
                 else:
-                    details += f"Rule Matched: {all_rules[0]}\n"
+                    yara_section += f"Rule Matched: {all_rules[0]}\n"
 
-                details += f"Threat Score: {scan_results.get('threat_score', 0)}\n"
-                details += f"Risk Level: {scan_results.get('risk_level', 'Unknown')}\n"
+                yara_section += f"Threat Score: {scan_results.get('threat_score', 0)}\n"
+                yara_section += f"Risk Level: {scan_results.get('risk_level', 'Unknown')}\n"
 
                 # Show all matched strings
                 if scan_results.get('strings'):
-                    details += f"\nMatched Strings ({len(scan_results['strings'])}):\n"
+                    yara_section += f"\nMatched Strings ({len(scan_results['strings'])}):\n"
                     for i, s in enumerate(scan_results['strings'], 1):
-                        details += f"  {i}. {s}\n"
+                        yara_section += f"  {i}. {s}\n"
 
-        # Check for Sigma matches
+        # Build Sigma section separately for colored tagging
         sigma_section = ""
         sigma_matches_full = []
         if self.sigma_evaluator:
@@ -5920,14 +5921,25 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             padx=20,
             pady=20
         )
+
+        # Configure colored tags
+        info_text.tag_configure("yara_section", foreground="#f87171")
+        info_text.tag_configure("sigma_section", foreground="#c084fc")
+
+        # Insert base details (white)
         info_text.insert("1.0", details)
+
+        # Insert YARA section with red styling
+        if yara_section:
+            yara_start = info_text.index("end-1c")
+            info_text.insert("end", yara_section)
+            info_text.tag_add("yara_section", yara_start, info_text.index("end-1c"))
 
         # Insert Sigma section with purple styling
         if sigma_section:
             sigma_start = info_text.index("end-1c")
             info_text.insert("end", sigma_section)
-            info_text.tag_add("sigma_header", sigma_start, info_text.index("end-1c"))
-            info_text.tag_configure("sigma_header", foreground="#c084fc")
+            info_text.tag_add("sigma_section", sigma_start, info_text.index("end-1c"))
 
         info_text.configure(state="disabled")
         info_text.pack(fill="both", expand=True, padx=2, pady=2)
