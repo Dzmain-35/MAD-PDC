@@ -5847,7 +5847,49 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                     details += f"\nMatched Strings ({len(scan_results['strings'])}):\n"
                     for i, s in enumerate(scan_results['strings'], 1):
                         details += f"  {i}. {s}\n"
-        
+
+        # Check for Sigma matches
+        sigma_section = ""
+        sigma_matches_full = []
+        if self.sigma_evaluator:
+            exe = info.get('exe', '')
+            if exe and exe != 'N/A':
+                event_dict = {
+                    'Image': exe,
+                    'CommandLine': info.get('cmdline', exe),
+                    'User': info.get('username', ''),
+                    'ProcessId': str(pid),
+                }
+                try:
+                    sigma_matches_full = self.sigma_evaluator._evaluate(event_dict, event_id=1)
+                except Exception:
+                    pass
+
+            if sigma_matches_full:
+                sigma_section += f"\n{'='*80}\n"
+                sigma_section += f"🔷 SIGMA RULE MATCHES ({len(sigma_matches_full)})\n"
+                sigma_section += f"{'='*80}\n"
+                for i, match in enumerate(sigma_matches_full, 1):
+                    rule = match.rule
+                    level_icons = {
+                        'critical': '🔴', 'high': '🟠',
+                        'medium': '🟡', 'low': '🔵', 'informational': 'ℹ️'
+                    }
+                    icon = level_icons.get(rule.level, '🔷')
+                    sigma_section += f"\n{icon} Rule {i}: {rule.title}\n"
+                    sigma_section += f"  Level: {rule.level.upper()}\n"
+                    if rule.description:
+                        sigma_section += f"  Description: {rule.description}\n"
+                    if rule.tags:
+                        sigma_section += f"  MITRE Tags: {', '.join(rule.tags)}\n"
+                    if rule.falsepositives:
+                        sigma_section += f"  False Positives: {', '.join(str(fp) for fp in rule.falsepositives)}\n"
+                    sigma_section += f"  Matched Selections: {', '.join(match.matched_selections)}\n"
+                    if rule.references:
+                        sigma_section += f"  References:\n"
+                        for ref in rule.references:
+                            sigma_section += f"    - {ref}\n"
+
         info_text = tk.Text(
             info_frame,
             wrap="word",
@@ -5859,6 +5901,14 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             pady=20
         )
         info_text.insert("1.0", details)
+
+        # Insert Sigma section with purple styling
+        if sigma_section:
+            sigma_start = info_text.index("end-1c")
+            info_text.insert("end", sigma_section)
+            info_text.tag_add("sigma_header", sigma_start, info_text.index("end-1c"))
+            info_text.tag_configure("sigma_header", foreground="#c084fc")
+
         info_text.configure(state="disabled")
         info_text.pack(fill="both", expand=True, padx=2, pady=2)
         
