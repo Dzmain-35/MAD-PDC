@@ -4874,19 +4874,8 @@ File Size: {file_info['file_size']} bytes"""
         # Restore selection
         self._restore_selected_pid(selected_pid)
 
-        # Count Sigma matches across all visible processes and update badge
-        if self.sigma_evaluator:
-            sigma_count = 0
-            for item_id in self._get_all_tree_items(self.process_tree):
-                try:
-                    vals = self.process_tree.item(item_id, 'values')
-                    if len(vals) > 3 and '🔷' in str(vals[3]):
-                        sigma_count += 1
-                except:
-                    pass
-            if sigma_count > 0:
-                self.total_sigma_matches = max(self.total_sigma_matches, sigma_count)
-                self.update_sigma_match_badge()
+        # Update Sigma badge from process tree matches
+        self._update_sigma_badge_from_tree()
 
         # Mark initial load as complete
         if self.process_tree_initial_load:
@@ -4930,6 +4919,15 @@ File Size: {file_info['file_size']} bytes"""
                     self.process_tree.see(item_id)
             except:
                 pass
+
+    def _update_sigma_badge_from_tree(self):
+        """Count Sigma matches in the process tree and update the badge"""
+        if not self.sigma_evaluator:
+            return
+        sigma_count = sum(1 for titles in self._process_sigma_cache.values() if titles)
+        if sigma_count != self.total_sigma_matches:
+            self.total_sigma_matches = sigma_count
+            self.update_sigma_match_badge()
 
     def focus_process_by_pid(self, target_pid):
         """
@@ -5195,8 +5193,9 @@ File Size: {file_info['file_size']} bytes"""
             # Restore the flag immediately after refresh
             self.process_tree_initial_load = was_initial_load
 
-            # Restore selection
+            # Restore selection and update Sigma badge
             self._restore_selected_pid(selected_pid)
+            self._update_sigma_badge_from_tree()
             return
 
         # Get all processes
@@ -5331,8 +5330,9 @@ File Size: {file_info['file_size']} bytes"""
             if pid in process_map:
                 add_process_to_tree(process_map[pid])
 
-        # Restore selection
+        # Restore selection and update Sigma badge
         self._restore_selected_pid(selected_pid)
+        self._update_sigma_badge_from_tree()
 
     def clear_process_search(self):
         """Clear the process search and show all processes"""
