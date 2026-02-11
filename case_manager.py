@@ -839,7 +839,7 @@ class CaseManager:
 
         Supports:
         - Dropbox: www.dropbox.com -> dl.dropboxusercontent.com
-        - Google Drive: Convert to direct download format
+        - Google Drive: Convert multiple URL formats to direct download
         """
         parsed = urlparse(url)
 
@@ -863,18 +863,66 @@ class CaseManager:
                 print(f"Converted Dropbox URL to direct download: {new_url}")
                 return new_url
 
-        # Google Drive conversion
-        if 'drive.google.com' in parsed.netloc:
-            # Convert /file/d/FILE_ID/view to direct download
-            import re
-            match = re.search(r'/file/d/([^/]+)', url)
-            if match:
-                file_id = match.group(1)
-                new_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-                print(f"Converted Google Drive URL to direct download: {new_url}")
-                return new_url
+        # Google Drive conversion - handle multiple URL formats
+        file_id = self._extract_google_drive_file_id(url)
+        if file_id:
+            new_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            print(f"Converted Google Drive URL to direct download: {new_url}")
+            return new_url
 
         return url
+
+    def _extract_google_drive_file_id(self, url: str) -> str:
+        """
+        Extract the Google Drive file ID from various URL formats.
+
+        Supported formats:
+        - https://drive.google.com/file/d/FILE_ID/view
+        - https://drive.google.com/open?id=FILE_ID
+        - https://drive.google.com/uc?id=FILE_ID&export=download
+        - https://drive.google.com/u/0/uc?id=FILE_ID
+        - https://docs.google.com/uc?id=FILE_ID
+        - https://drive-thirdparty.googleusercontent.com/...  (needs cookie-based auth)
+
+        Returns:
+            File ID string, or empty string if not a Google Drive URL
+        """
+        import re
+        from urllib.parse import parse_qs
+
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+
+        # drive.google.com or docs.google.com
+        if 'drive.google.com' in netloc or 'docs.google.com' in netloc:
+            # Format: /file/d/FILE_ID/...
+            match = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
+            if match:
+                return match.group(1)
+
+            # Format: ?id=FILE_ID (covers /open?id=, /uc?id=, etc.)
+            query_params = parse_qs(parsed.query)
+            if 'id' in query_params:
+                return query_params['id'][0]
+
+        return ""
+
+    def _is_google_drive_url(self, url: str) -> bool:
+        """Check if a URL is any type of Google Drive URL"""
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        gdrive_domains = [
+            'drive.google.com',
+            'docs.google.com',
+            'drive.usercontent.google.com',
+            'drive-thirdparty.googleusercontent.com',
+        ]
+        # Match known domains or googleusercontent.com patterns from Drive
+        if any(d in netloc for d in gdrive_domains):
+            return True
+        if 'googleusercontent.com' in netloc and ('doc' in netloc or 'drive' in netloc):
+            return True
+        return bool(self._extract_google_drive_file_id(url))
 
     def _extract_archive(self, archive_path: str) -> Tuple[bool, List[str], str]:
         """
@@ -975,6 +1023,7 @@ class CaseManager:
 
             # Convert sharing URLs to direct download URLs
             original_url = url
+            is_gdrive = self._is_google_drive_url(url)
             url = self._convert_to_direct_download_url(url)
             print(f"Downloading file from URL: {url}")
 
@@ -1007,7 +1056,13 @@ class CaseManager:
 
             # Create a session for cookie handling (like a browser)
             session = requests.Session()
-            response = session.get(url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+
+            # Google Drive needs special handling for large file confirmation
+            if is_gdrive:
+                response = self._download_from_google_drive(session, url, headers, timeout)
+            else:
+                response = session.get(url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+
             response.raise_for_status()
 
             # Try to get filename from Content-Disposition header (like browsers do)
@@ -1029,9 +1084,25 @@ class CaseManager:
             file_size = os.path.getsize(temp_path)
             print(f"Successfully downloaded {file_size} bytes to {temp_path}")
 
+            # Detect if Google Drive returned an HTML error page instead of the file
+            if is_gdrive and file_size < 50000:
+                try:
+                    with open(temp_path, 'rb') as f:
+                        head = f.read(512)
+                    if b'<!DOCTYPE html>' in head or b'<html' in head:
+                        os.remove(temp_path)
+                        return False, "", (
+                            "Google Drive returned an HTML page instead of the file. "
+                            "The file may require special permissions, may not exist, "
+                            "or the sharing link may not allow direct download. "
+                            "Try setting the file to 'Anyone with the link can view' in Google Drive sharing settings."
+                        )
+                except:
+                    pass
+
             # Add URL to IOCs if we have a current case
             if self.current_case:
-                self.add_ioc("urls", url)
+                self.add_ioc("urls", original_url)
 
             return True, temp_path, ""
 
@@ -1049,6 +1120,66 @@ class CaseManager:
             error_msg = f"Unexpected error downloading from {url}: {str(e)}"
             print(f"ERROR: {error_msg}")
             return False, "", error_msg
+
+    def _download_from_google_drive(self, session, url: str, headers: dict, timeout: int):
+        """
+        Handle Google Drive downloads including large file virus scan confirmation.
+
+        Google Drive shows a confirmation page for large files that says
+        "Google Drive can't scan this file for viruses". We need to extract
+        the confirmation token and retry with it.
+        """
+        import re
+
+        response = session.get(url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+        response.raise_for_status()
+
+        content_type = response.headers.get('Content-Type', '')
+
+        # If we got actual file content (not HTML), return directly
+        if 'text/html' not in content_type:
+            return response
+
+        # Google Drive returned HTML - likely the virus scan confirmation page
+        # Read the page to find the confirmation token
+        html_content = response.content.decode('utf-8', errors='ignore')
+
+        # Look for the confirm download form/link
+        # Pattern 1: confirm=XXXXX in a download link
+        confirm_match = re.search(r'confirm=([a-zA-Z0-9_-]+)', html_content)
+        # Pattern 2: /uc?export=download&amp;confirm=XXXXX&amp;id=XXXXX
+        if not confirm_match:
+            confirm_match = re.search(r'export=download&amp;confirm=([a-zA-Z0-9_-]+)', html_content)
+        # Pattern 3: uuid parameter in newer Drive pages
+        uuid_match = re.search(r'name="uuid"\s+value="([^"]+)"', html_content)
+
+        if confirm_match:
+            confirm_token = confirm_match.group(1)
+            # Add confirm token to URL
+            separator = '&' if '?' in url else '?'
+            confirmed_url = f"{url}{separator}confirm={confirm_token}"
+            print(f"Google Drive large file detected, retrying with confirmation token")
+            response = session.get(confirmed_url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+            response.raise_for_status()
+        elif uuid_match:
+            # Newer Google Drive confirmation flow
+            uuid_val = uuid_match.group(1)
+            file_id_match = re.search(r'id=([a-zA-Z0-9_-]+)', url)
+            if file_id_match:
+                confirmed_url = f"https://drive.usercontent.google.com/download?id={file_id_match.group(1)}&export=download&confirm=t&uuid={uuid_val}"
+                print(f"Google Drive large file detected (uuid flow), retrying with confirmation")
+                response = session.get(confirmed_url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+                response.raise_for_status()
+        else:
+            # Try the usercontent.google.com direct path as final fallback
+            file_id_match = re.search(r'id=([a-zA-Z0-9_-]+)', url)
+            if file_id_match:
+                fallback_url = f"https://drive.usercontent.google.com/download?id={file_id_match.group(1)}&export=download&confirm=t"
+                print(f"Google Drive: trying usercontent.google.com fallback")
+                response = session.get(fallback_url, headers=headers, timeout=timeout, stream=True, allow_redirects=True)
+                response.raise_for_status()
+
+        return response
 
     def create_case_from_urls(self, urls: List[str]) -> Tuple[Dict, List[str]]:
         """
