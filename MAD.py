@@ -20,6 +20,8 @@ from tkinter import ttk
 import re
 from typography import Fonts
 from yara_rule_manager import YaraRuleManager
+from sigma_rule_manager import SigmaRuleManager
+from analysis_modules.sigma_evaluator import SigmaEvaluator
 from settings_manager import SettingsManager
 
 class ForensicAnalysisGUI:
@@ -85,6 +87,30 @@ class ForensicAnalysisGUI:
             settings_manager=self.settings_manager
         )
 
+        # Initialize Sigma rule manager
+        self.sigma_rules_path = self.settings_manager.get("sigma.sigma_rules_path", "")
+        if not self.sigma_rules_path:
+            # Auto-detect: sigma_rules/ next to the script
+            self.sigma_rules_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "sigma_rules"
+            )
+        self.sigma_rule_manager = SigmaRuleManager(
+            self.sigma_rules_path,
+            settings_manager=self.settings_manager
+        )
+        self.sigma_enabled = self.settings_manager.get("sigma.enable_sigma_evaluation", True)
+
+        # Initialize standalone Sigma evaluator for process tree evaluation
+        self.sigma_evaluator = None
+        self._process_sigma_cache = {}  # Cache: exe_path -> list of sigma match titles
+        if self.sigma_enabled and os.path.isdir(self.sigma_rules_path):
+            try:
+                self.sigma_evaluator = SigmaEvaluator()
+                self.sigma_evaluator.load_rules_from_directory(self.sigma_rules_path)
+            except Exception as e:
+                print(f"Warning: Could not load Sigma rules for process tree: {e}")
+                self.sigma_evaluator = None
+
         # Data references
         self.current_case = None
         self.scan_in_progress = False
@@ -117,6 +143,10 @@ class ForensicAnalysisGUI:
         self.popup_count_by_rule = {}  # Track popup count per YARA rule family
         self.max_popups_per_rule = self.settings_manager.get("application.max_popups_per_rule", 3)
         self.total_yara_matches = 0    # Total YARA matches for badge display
+
+        # Sigma match tracking
+        self.sigma_popup_count_by_rule = {}  # Track popup count per Sigma rule
+        self.total_sigma_matches = 0         # Total Sigma matches for badge display
 
         # Procmon live monitors (PID -> monitor instance)
         self.procmon_monitors = {}
@@ -1034,7 +1064,7 @@ class ForensicAnalysisGUI:
         self.process_filter_var = ctk.StringVar(value="All Processes")
         self.process_filter_dropdown = ctk.CTkComboBox(
             search_frame,
-            values=["All Processes", "YARA Matches Only", "Benign Only", "Not Scanned"],
+            values=["All Processes", "YARA Matches Only", "Sigma Matches Only", "Benign Only", "Not Scanned"],
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
@@ -1058,6 +1088,19 @@ class ForensicAnalysisGUI:
             pady=6
         )
         self.yara_match_badge.pack(side="left", padx=(15, 5))
+
+        # Sigma match counter badge
+        self.sigma_match_badge = ctk.CTkLabel(
+            search_frame,
+            text="SIGMA: 0",
+            font=("Segoe UI", 15, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            corner_radius=6,
+            padx=12,
+            pady=6
+        )
+        self.sigma_match_badge.pack(side="left", padx=5)
 
         # Process tree area with parent-child hierarchy
         tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
@@ -1103,10 +1146,10 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "Name", "File Path", "YARA Matches")
+        columns = ("PID", "Name", "File Path", "Detection Status")
         self.process_tree = ttk.Treeview(
-            tree_frame, 
-            columns=columns, 
+            tree_frame,
+            columns=columns,
             show="tree headings",
             yscrollcommand=vsb.set,
             xscrollcommand=hsb.set,
@@ -1115,20 +1158,20 @@ class ForensicAnalysisGUI:
         self.process_tree.pack(side="left", fill="both", expand=True)
         vsb.config(command=self.process_tree.yview)
         hsb.config(command=self.process_tree.xview)
-        
+
         # Configure columns
         self.process_tree.column("#0", width=200, minwidth=150)  # Tree hierarchy
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
         self.process_tree.column("Name", width=200, minwidth=150)
         self.process_tree.column("File Path", width=350, minwidth=200)
-        self.process_tree.column("YARA Matches", width=150, minwidth=100, anchor="center")
-        
+        self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
+
         # Headers
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
         self.process_tree.heading("Name", text="Name")
         self.process_tree.heading("File Path", text="File Path")
-        self.process_tree.heading("YARA Matches", text="YARA Matches")
+        self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
         # Right-click menu with dark theme styling
         self.process_context_menu = tk.Menu(
@@ -1169,6 +1212,7 @@ class ForensicAnalysisGUI:
         self.process_tree.tag_configure('benign', background='#1a4d2e', foreground='white')  # Green for whitelisted/benign
         self.process_tree.tag_configure('system', foreground='#888888')
         self.process_tree.tag_configure('suspended', background='#3a3a3a', foreground='#808080')  # Grey for suspended processes
+        self.process_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')  # Purple for Sigma matches
         
         self.analysis_subtabs["processes"] = frame
         
@@ -1583,6 +1627,8 @@ class ForensicAnalysisGUI:
 
         # Tag for suspicious events
         events_tree.tag_configure('suspicious', background='#5c1c1c', foreground='#ff6b6b')
+        # Tag for Sigma rule matches (higher priority - purple/magenta)
+        events_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')
 
         events_tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         events_vsb.config(command=events_tree.yview)
@@ -1623,8 +1669,13 @@ class ForensicAnalysisGUI:
             if not monitor_state["monitoring"]:
                 # Start monitoring
                 try:
-                    # Create system-wide monitor
-                    monitor = SystemWideMonitor(max_events=50000)
+                    # Create system-wide monitor (with Sigma rules if enabled)
+                    sigma_path = self.sigma_rules_path if self.sigma_enabled else None
+                    monitor = SystemWideMonitor(max_events=50000, sigma_rules_path=sigma_path)
+
+                    # Register Sigma match callback for GUI alerts
+                    if monitor.is_sigma_enabled():
+                        monitor.register_sigma_callback(self.on_sigma_match_detected)
 
                     # Check if Sysmon is available
                     sysmon_available = False
@@ -1634,11 +1685,16 @@ class ForensicAnalysisGUI:
                     except:
                         pass
 
+                    sigma_info = ""
+                    if monitor.is_sigma_enabled():
+                        sigma_count = monitor.get_sigma_evaluator().get_rule_count()
+                        sigma_info = f" | Sigma: {sigma_count} rules"
+
                     if sysmon_available:
-                        sysmon_status.configure(text="✓ Sysmon Enabled (Full monitoring)",
+                        sysmon_status.configure(text=f"✓ Sysmon Enabled (Full monitoring){sigma_info}",
                                               text_color="#10b981")
                     else:
-                        sysmon_status.configure(text="⚠ Sysmon Not Available (Limited monitoring)",
+                        sysmon_status.configure(text=f"⚠ Sysmon Not Available (Limited monitoring){sigma_info}",
                                               text_color="#f59e0b")
 
                     # Apply current filters
@@ -1735,9 +1791,15 @@ class ForensicAnalysisGUI:
                 if not event_filter.matches(event):
                     continue
 
-                # Check if suspicious for highlighting
+                # Check if suspicious or sigma match for highlighting
+                has_sigma = bool(event.get('sigma_matches'))
                 is_suspicious = event_filter.is_suspicious(event)
-                tags = ('suspicious',) if is_suspicious else ()
+                if has_sigma:
+                    tags = ('sigma_match',)
+                elif is_suspicious:
+                    tags = ('suspicious',)
+                else:
+                    tags = ()
 
                 # Truncate long paths
                 path = event.get('path', '')
@@ -1790,9 +1852,15 @@ class ForensicAnalysisGUI:
             all_events = monitor.get_recent_events(count=5000)
 
             for event in all_events:
-                # Check if suspicious for highlighting
+                # Check if sigma match or suspicious for highlighting
+                has_sigma = bool(event.get('sigma_matches'))
                 is_suspicious = event_filter.is_suspicious(event)
-                tags = ('suspicious',) if is_suspicious else ()
+                if has_sigma:
+                    tags = ('sigma_match',)
+                elif is_suspicious:
+                    tags = ('suspicious',)
+                else:
+                    tags = ()
 
                 # Truncate long paths
                 path = event.get('path', '')
@@ -1888,9 +1956,15 @@ class ForensicAnalysisGUI:
                     if not event_filter.matches(event):
                         continue
 
-                    # Check if suspicious for highlighting
+                    # Check if sigma match or suspicious for highlighting
+                    has_sigma = bool(event.get('sigma_matches'))
                     is_suspicious = event_filter.is_suspicious(event)
-                    tags = ('suspicious',) if is_suspicious else ()
+                    if has_sigma:
+                        tags = ('sigma_match',)
+                    elif is_suspicious:
+                        tags = ('suspicious',)
+                    else:
+                        tags = ()
 
                     # Truncate long paths
                     path = event.get('path', '')
@@ -1928,11 +2002,17 @@ class ForensicAnalysisGUI:
                     if monitor_state["current_filter"] and not monitor_state["current_filter"].matches(event):
                         continue
 
-                    # Check if suspicious for highlighting
+                    # Check if sigma match or suspicious for highlighting
+                    has_sigma = bool(event.get('sigma_matches'))
                     is_suspicious = False
                     if monitor_state["current_filter"]:
                         is_suspicious = monitor_state["current_filter"].is_suspicious(event)
-                    tags = ('suspicious',) if is_suspicious else ()
+                    if has_sigma:
+                        tags = ('sigma_match',)
+                    elif is_suspicious:
+                        tags = ('suspicious',)
+                    else:
+                        tags = ()
 
                     # Truncate long paths
                     path = event.get('path', '')
@@ -1960,6 +2040,8 @@ class ForensicAnalysisGUI:
 
                 # Update statistics
                 stats = monitor.get_stats()
+                sigma_count = stats.get('sigma_matches', 0)
+                sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
                 stats_label.configure(
                     text=f"Total: {stats['total_events']} | "
                          f"File: {stats['file_events']} | "
@@ -1967,6 +2049,7 @@ class ForensicAnalysisGUI:
                          f"Network: {stats['network_events']} | "
                          f"Process: {stats['process_events']} | "
                          f"DNS: {stats.get('dns_events', 0)}"
+                         f"{sigma_text}"
                 )
 
                 # Update last update time
@@ -4575,14 +4658,7 @@ File Size: {file_info['file_size']} bytes"""
                 except:
                     pass
 
-        selection = self.process_tree.selection()
-        if selection:
-            try:
-                values = self.process_tree.item(selection[0], 'values')
-                if values and len(values) > 0:
-                    selected_pid = int(values[0])
-            except:
-                pass
+        selected_pid = self._get_selected_pid()
 
         # Remove dead processes
         for pid in dead_pids:
@@ -4647,6 +4723,17 @@ File Size: {file_info['file_size']} bytes"""
                     tags = ('new',)
                 elif proc['name'].lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                     tags = ('system',)
+
+                # Evaluate Sigma rules against this process
+                sigma_titles = self.evaluate_process_sigma(proc)
+                if sigma_titles:
+                    sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
+                    if yara_status != "No":
+                        yara_status = f"{yara_status} | {sigma_label}"
+                    else:
+                        yara_status = sigma_label
+                    if not tags or tags == ('new',) or tags == ('system',):
+                        tags = ('sigma_match',)
 
                 # Update if YARA status changed
                 if len(current_values) > 3 and current_values[3] != yara_status:
@@ -4730,6 +4817,17 @@ File Size: {file_info['file_size']} bytes"""
                 elif name.lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                     tags = ('system',)
 
+                # Evaluate Sigma rules against this process
+                sigma_titles = self.evaluate_process_sigma(proc)
+                if sigma_titles:
+                    sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
+                    if yara_status != "No":
+                        yara_status = f"{yara_status} | {sigma_label}"
+                    else:
+                        yara_status = sigma_label
+                    if not tags or tags == ('new',) or tags == ('system',):
+                        tags = ('sigma_match',)
+
                 # Insert into tree
                 item_id = self.process_tree.insert(
                     parent_id,
@@ -4774,16 +4872,62 @@ File Size: {file_info['file_size']} bytes"""
                     add_process_tree(proc, parent_item_id)
 
         # Restore selection
-        if selected_pid and selected_pid in self.pid_to_tree_item:
-            try:
-                self.process_tree.selection_set(self.pid_to_tree_item[selected_pid])
-                self.process_tree.see(self.pid_to_tree_item[selected_pid])
-            except:
-                pass
+        self._restore_selected_pid(selected_pid)
+
+        # Update Sigma badge from process tree matches
+        self._update_sigma_badge_from_tree()
 
         # Mark initial load as complete
         if self.process_tree_initial_load:
             self.process_tree_initial_load = False
+
+    def _get_all_tree_items(self, tree):
+        """Recursively get all item IDs from a treeview"""
+        items = []
+        for item in tree.get_children():
+            items.append(item)
+            items.extend(self._get_all_tree_children(tree, item))
+        return items
+
+    def _get_all_tree_children(self, tree, parent):
+        """Get all descendant items of a treeview item"""
+        children = []
+        for child in tree.get_children(parent):
+            children.append(child)
+            children.extend(self._get_all_tree_children(tree, child))
+        return children
+
+    def _get_selected_pid(self):
+        """Get the PID of the currently selected process in the tree"""
+        selection = self.process_tree.selection()
+        if selection:
+            try:
+                values = self.process_tree.item(selection[0], 'values')
+                if values and len(values) > 0:
+                    return int(values[0])
+            except:
+                pass
+        return None
+
+    def _restore_selected_pid(self, pid):
+        """Restore selection to a process by PID after tree rebuild"""
+        if pid and pid in self.pid_to_tree_item:
+            try:
+                item_id = self.pid_to_tree_item[pid]
+                if self.process_tree.exists(item_id):
+                    self.process_tree.selection_set(item_id)
+                    self.process_tree.see(item_id)
+            except:
+                pass
+
+    def _update_sigma_badge_from_tree(self):
+        """Count Sigma matches in the process tree and update the badge"""
+        if not self.sigma_evaluator:
+            return
+        sigma_count = sum(1 for titles in self._process_sigma_cache.values() if titles)
+        if sigma_count != self.total_sigma_matches:
+            self.total_sigma_matches = sigma_count
+            self.update_sigma_match_badge()
 
     def focus_process_by_pid(self, target_pid):
         """
@@ -4876,10 +5020,158 @@ File Size: {file_info['file_size']} bytes"""
                 fg_color="#7f1d1d"
             )
 
+    def update_sigma_match_badge(self):
+        """Update the Sigma match counter badge with current count and color coding."""
+        count = self.total_sigma_matches
+
+        self.sigma_match_badge.configure(text=f"SIGMA: {count}")
+
+        if count == 0:
+            self.sigma_match_badge.configure(text_color="#9ca3af", fg_color="#374151")
+        elif count <= 10:
+            self.sigma_match_badge.configure(text_color="#a78bfa", fg_color="#4c1d95")
+        elif count <= 25:
+            self.sigma_match_badge.configure(text_color="#c084fc", fg_color="#581c87")
+        else:
+            self.sigma_match_badge.configure(text_color="#e879f9", fg_color="#701a75")
+
+    def evaluate_process_sigma(self, proc):
+        """
+        Evaluate a process dict against Sigma process_creation rules.
+        Returns list of matching rule titles (cached by exe path).
+        """
+        if not self.sigma_evaluator:
+            return []
+
+        exe = proc.get('exe', '')
+        if not exe or exe == 'N/A':
+            return []
+
+        # Check cache first
+        if exe in self._process_sigma_cache:
+            return self._process_sigma_cache[exe]
+
+        # Build a Sigma-compatible event dict for process_creation (event_id=1)
+        event_dict = {
+            'Image': exe,
+            'CommandLine': proc.get('cmdline', exe),
+            'ParentImage': proc.get('parent_exe', ''),
+            'User': proc.get('username', ''),
+            'ProcessId': str(proc.get('pid', '')),
+        }
+
+        try:
+            matches = self.sigma_evaluator._evaluate(event_dict, event_id=1)
+            match_titles = [m.rule.title for m in matches]
+            self._process_sigma_cache[exe] = match_titles
+            return match_titles
+        except Exception:
+            self._process_sigma_cache[exe] = []
+            return []
+
+    def on_sigma_match_detected(self, sigma_match, event_dict):
+        """
+        Callback fired by SystemWideMonitor when a Sigma rule matches an event.
+        Shows a popup alert (rate-limited per rule) and updates the badge.
+        """
+        rule_title = sigma_match.rule.title
+        rule_level = sigma_match.rule.level
+
+        self.total_sigma_matches += 1
+        self.root.after(0, self.update_sigma_match_badge)
+
+        # Rate-limit popups per rule title (same approach as YARA)
+        count = self.sigma_popup_count_by_rule.get(rule_title, 0)
+        if count >= self.max_popups_per_rule:
+            return
+        self.sigma_popup_count_by_rule[rule_title] = count + 1
+
+        # Only show popups for high and critical
+        if rule_level not in ('high', 'critical'):
+            return
+
+        def show_sigma_alert():
+            alert = ctk.CTkToplevel(self.root)
+            alert.title("SIGMA Rule Match")
+            alert.geometry("600x450")
+            alert.minsize(500, 350)
+            alert.attributes('-topmost', True)
+
+            # Color based on severity
+            if rule_level == 'critical':
+                bg_color = self.colors["red_dark"]
+                header_text = "CRITICAL SIGMA DETECTION"
+            else:
+                bg_color = "#4c1d95"
+                header_text = "HIGH SIGMA DETECTION"
+
+            main_frame = ctk.CTkFrame(alert, fg_color=bg_color)
+            main_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+            # Header
+            header_frame = ctk.CTkFrame(main_frame, fg_color=bg_color)
+            header_frame.pack(fill="x", padx=10, pady=(15, 10))
+
+            title_label = ctk.CTkLabel(
+                header_frame,
+                text=header_text,
+                font=Fonts.title_large,
+                text_color="white"
+            )
+            title_label.pack()
+
+            # Details
+            details_frame = ctk.CTkFrame(main_frame, fg_color="#1a1a1a", corner_radius=8)
+            details_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+            rule_info = sigma_match.rule
+            tags_str = ", ".join(rule_info.tags[:5]) if rule_info.tags else "None"
+
+            details_text = (
+                f"Rule: {rule_info.title}\n"
+                f"Level: {rule_info.level.upper()}\n"
+                f"Description: {rule_info.description}\n\n"
+                f"MITRE Tags: {tags_str}\n\n"
+                f"Event: {event_dict.get('operation', '')} | "
+                f"PID: {event_dict.get('pid', '')} | "
+                f"Process: {event_dict.get('process_name', '')}\n"
+                f"Path: {str(event_dict.get('path', ''))[:120]}"
+            )
+
+            details_label = ctk.CTkLabel(
+                details_frame,
+                text=details_text,
+                font=Fonts.body,
+                justify="left",
+                text_color="white",
+                wraplength=550
+            )
+            details_label.pack(pady=15, padx=15, anchor="w")
+
+            # Footer
+            footer_frame = ctk.CTkFrame(main_frame, fg_color=bg_color)
+            footer_frame.pack(fill="x", padx=10, pady=(5, 15))
+
+            btn_close = ctk.CTkButton(
+                footer_frame,
+                text="Close",
+                command=alert.destroy,
+                fg_color=self.colors["navy"],
+                hover_color=self.colors["dark_blue"],
+                width=120,
+                height=35
+            )
+            btn_close.pack(pady=5)
+
+        self.root.after(0, show_sigma_alert)
+
     def filter_processes(self):
         """Filter processes by PID or Name, showing matching processes and all their children"""
         search_text = self.process_search_entry.get().strip().lower()
         filter_choice = self.process_filter_var.get() if hasattr(self, 'process_filter_var') else "All Processes"
+
+        # Save selection before any tree modifications
+        selected_pid = self._get_selected_pid()
 
         # If no filters applied, refresh to show all
         if not search_text and filter_choice == "All Processes":
@@ -4900,6 +5192,10 @@ File Size: {file_info['file_size']} bytes"""
 
             # Restore the flag immediately after refresh
             self.process_tree_initial_load = was_initial_load
+
+            # Restore selection and update Sigma badge
+            self._restore_selected_pid(selected_pid)
+            self._update_sigma_badge_from_tree()
             return
 
         # Get all processes
@@ -4931,6 +5227,8 @@ File Size: {file_info['file_size']} bytes"""
                 filter_match = (proc.get('threat_detected', False) and
                                yara_rule and
                                yara_rule != 'No_YARA_Hit')
+            elif filter_choice == "Sigma Matches Only":
+                filter_match = len(self.evaluate_process_sigma(proc)) > 0
             elif filter_choice == "Benign Only":
                 filter_match = proc.get('whitelisted', False)
             elif filter_choice == "Not Scanned":
@@ -4988,6 +5286,17 @@ File Size: {file_info['file_size']} bytes"""
             elif name.lower() in ['system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'services.exe']:
                 tags = ('system',)
 
+            # Evaluate Sigma rules against this process
+            sigma_titles = self.evaluate_process_sigma(proc)
+            if sigma_titles:
+                sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
+                if yara_status != "No":
+                    yara_status = f"{yara_status} | {sigma_label}"
+                else:
+                    yara_status = sigma_label
+                if not tags or tags == ('system',):
+                    tags = ('sigma_match',)
+
             # Insert into tree (expanded by default for filtered view)
             item_id = self.process_tree.insert(
                 parent_id,
@@ -5020,6 +5329,10 @@ File Size: {file_info['file_size']} bytes"""
         for pid in sorted(root_pids):
             if pid in process_map:
                 add_process_to_tree(process_map[pid])
+
+        # Restore selection and update Sigma badge
+        self._restore_selected_pid(selected_pid)
+        self._update_sigma_badge_from_tree()
 
     def clear_process_search(self):
         """Clear the process search and show all processes"""
@@ -5436,7 +5749,7 @@ Errors: {scan_stats['errors']}"""
         # Create window
         details_window = ctk.CTkToplevel(self.root)
         details_window.title(f"Process Analysis: {name} (PID {pid})")
-        details_window.geometry("1000x700")
+        details_window.geometry("1000x900")
         
         # Main container
         main_container = ctk.CTkFrame(details_window, fg_color=self.colors["dark_blue"])
@@ -5529,32 +5842,114 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             for conn in info['connections'][:10]:
                 details += f"  {conn['laddr']} -> {conn['raddr']} ({conn['status']})\n"
         
-        # Check if YARA scanned
+        # Build YARA section separately for colored tagging
+        yara_section = ""
         if pid in self.process_monitor.monitored_processes:
             scan_results = self.process_monitor.monitored_processes[pid].get('scan_results', {})
             if scan_results.get('matches_found'):
-                details += f"\n{'='*80}\n"
-                details += "⚠️ YARA SCAN RESULTS\n"
-                details += f"{'='*80}\n"
+                yara_section += f"\n{'='*80}\n"
+                yara_section += "⚠️ YARA SCAN RESULTS\n"
+                yara_section += f"{'='*80}\n"
 
                 # Show all matched rules
                 all_rules = scan_results.get('all_rules', [scan_results.get('rule', 'Unknown')])
                 if len(all_rules) > 1:
-                    details += f"Rules Matched ({len(all_rules)}):\n"
+                    yara_section += f"Rules Matched ({len(all_rules)}):\n"
                     for i, rule in enumerate(all_rules, 1):
-                        details += f"  {i}. {rule}\n"
+                        yara_section += f"  {i}. {rule}\n"
                 else:
-                    details += f"Rule Matched: {all_rules[0]}\n"
+                    yara_section += f"Rule Matched: {all_rules[0]}\n"
 
-                details += f"Threat Score: {scan_results.get('threat_score', 0)}\n"
-                details += f"Risk Level: {scan_results.get('risk_level', 'Unknown')}\n"
+                yara_section += f"Threat Score: {scan_results.get('threat_score', 0)}\n"
+                yara_section += f"Risk Level: {scan_results.get('risk_level', 'Unknown')}\n"
 
                 # Show all matched strings
                 if scan_results.get('strings'):
-                    details += f"\nMatched Strings ({len(scan_results['strings'])}):\n"
+                    yara_section += f"\nMatched Strings ({len(scan_results['strings'])}):\n"
                     for i, s in enumerate(scan_results['strings'], 1):
-                        details += f"  {i}. {s}\n"
-        
+                        yara_section += f"  {i}. {s}\n"
+
+        # Build Sigma section separately for colored tagging
+        sigma_section = ""
+        sigma_matches_full = []
+        if self.sigma_evaluator:
+            exe = info.get('exe', '')
+            if exe and exe != 'N/A':
+                event_dict = {
+                    'Image': exe,
+                    'CommandLine': info.get('cmdline', exe),
+                    'User': info.get('username', ''),
+                    'ProcessId': str(pid),
+                }
+                try:
+                    sigma_matches_full = self.sigma_evaluator._evaluate(event_dict, event_id=1)
+                except Exception:
+                    pass
+
+            if sigma_matches_full:
+                sigma_section += f"\n{'='*80}\n"
+                sigma_section += f"🔷 SIGMA RULE MATCHES ({len(sigma_matches_full)})\n"
+                sigma_section += f"{'='*80}\n"
+                for i, match in enumerate(sigma_matches_full, 1):
+                    rule = match.rule
+                    level_icons = {
+                        'critical': '🔴', 'high': '🟠',
+                        'medium': '🟡', 'low': '🔵', 'informational': 'ℹ️'
+                    }
+                    icon = level_icons.get(rule.level, '🔷')
+                    sigma_section += f"\n{icon} Rule {i}: {rule.title}\n"
+                    sigma_section += f"  Level: {rule.level.upper()}\n"
+                    if rule.description:
+                        sigma_section += f"  Description: {rule.description}\n"
+                    if rule.tags:
+                        sigma_section += f"  MITRE Tags: {', '.join(rule.tags)}\n"
+                    if rule.falsepositives:
+                        sigma_section += f"  False Positives: {', '.join(str(fp) for fp in rule.falsepositives)}\n"
+
+                    # Show what matched - extract field values from matched selections
+                    matched_fields = []
+                    detection = rule.detection
+                    for sel_name in match.matched_selections:
+                        sel_def = detection.get(sel_name, {})
+                        if isinstance(sel_def, dict):
+                            for field_spec, expected in sel_def.items():
+                                if field_spec in ('condition', 'timeframe'):
+                                    continue
+                                field_name = field_spec.split('|')[0]
+                                actual = match.event_data.get(field_name, '')
+                                if actual:
+                                    matched_fields.append((field_name, str(actual), field_spec, expected))
+
+                    if matched_fields:
+                        sigma_section += f"\n  Matched Fields ({len(matched_fields)}):\n"
+                        for field_name, actual_val, field_spec, expected in matched_fields:
+                            modifier = field_spec.split('|', 1)[1] if '|' in field_spec else 'exact'
+                            sigma_section += f"    {field_name} ({modifier}):\n"
+                            sigma_section += f"      Actual:   {actual_val}\n"
+                            if isinstance(expected, list):
+                                # Find which pattern(s) matched
+                                for pat in expected:
+                                    pat_str = str(pat).lower()
+                                    actual_lower = actual_val.lower()
+                                    hit = False
+                                    if 'endswith' in modifier:
+                                        hit = actual_lower.endswith(pat_str)
+                                    elif 'startswith' in modifier:
+                                        hit = actual_lower.startswith(pat_str)
+                                    elif 'contains' in modifier:
+                                        hit = pat_str in actual_lower
+                                    else:
+                                        hit = actual_lower == pat_str or pat_str in actual_lower
+                                    if hit:
+                                        sigma_section += f"      Pattern:  {pat}  ✓\n"
+                            else:
+                                sigma_section += f"      Pattern:  {expected}\n"
+
+                    if rule.references:
+                        sigma_section += f"\n  References:\n"
+                        for ref in rule.references:
+                            sigma_section += f"    - {ref}\n"
+
         info_text = tk.Text(
             info_frame,
             wrap="word",
@@ -5565,7 +5960,26 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             padx=20,
             pady=20
         )
+
+        # Configure colored tags
+        info_text.tag_configure("yara_section", foreground="#f87171")
+        info_text.tag_configure("sigma_section", foreground="#c084fc")
+
+        # Insert base details (white)
         info_text.insert("1.0", details)
+
+        # Insert YARA section with red styling
+        if yara_section:
+            yara_start = info_text.index("end-1c")
+            info_text.insert("end", yara_section)
+            info_text.tag_add("yara_section", yara_start, info_text.index("end-1c"))
+
+        # Insert Sigma section with purple styling
+        if sigma_section:
+            sigma_start = info_text.index("end-1c")
+            info_text.insert("end", sigma_section)
+            info_text.tag_add("sigma_section", sigma_start, info_text.index("end-1c"))
+
         info_text.configure(state="disabled")
         info_text.pack(fill="both", expand=True, padx=2, pady=2)
         

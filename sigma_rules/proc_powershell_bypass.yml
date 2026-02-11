@@ -1,0 +1,34 @@
+title: PowerShell Execution Policy Bypass
+id: f2d1c7a0-1013-4a0b-8b0a-sigma0013
+status: stable
+level: medium
+description: Detects PowerShell execution with execution policy bypass, often used to run unsigned scripts
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.defense_evasion
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+    selection_bypass:
+        CommandLine|contains:
+            - '-ExecutionPolicy Bypass'
+            - '-ep bypass'
+            - '-exec bypass'
+            - 'Set-ExecutionPolicy'
+            - 'Invoke-Expression'
+            - 'IEX('
+            - 'IEX ('
+    condition: selection_img and selection_bypass
+falsepositives:
+    - Administrative scripts that require bypass
+    - Software deployment tools
+references:
+    - https://attack.mitre.org/techniques/T1059/001/

@@ -1,0 +1,30 @@
+title: Registry Run Key Persistence
+id: f2d1c7a0-1007-4a0b-8b0a-sigma0007
+status: stable
+level: high
+description: Detects modifications to registry Run/RunOnce keys used for persistence
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.persistence
+    - attack.t1547.001
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    selection:
+        TargetObject|contains:
+            - '\CurrentVersion\Run\'
+            - '\CurrentVersion\RunOnce\'
+            - '\CurrentVersion\RunServices\'
+            - '\CurrentVersion\RunServicesOnce\'
+    filter_legitimate:
+        Image|endswith:
+            - '\msiexec.exe'
+            - '\svchost.exe'
+    condition: selection and not filter_legitimate
+falsepositives:
+    - Legitimate software installation
+    - Windows Updates
+references:
+    - https://attack.mitre.org/techniques/T1547/001/

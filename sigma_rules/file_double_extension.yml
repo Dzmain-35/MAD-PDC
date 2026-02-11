@@ -1,0 +1,40 @@
+title: File with Double Extension Created
+id: f2d1c7a0-1016-4a0b-8b0a-sigma0016
+status: stable
+level: high
+description: Detects creation of files with double extensions often used to trick users (e.g. document.pdf.exe)
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1036.007
+logsource:
+    category: file_creation
+    product: windows
+detection:
+    selection_first_ext:
+        TargetFilename|contains:
+            - '.pdf.'
+            - '.doc.'
+            - '.docx.'
+            - '.xls.'
+            - '.xlsx.'
+            - '.txt.'
+            - '.jpg.'
+            - '.png.'
+            - '.mp3.'
+            - '.mp4.'
+    selection_final_ext:
+        TargetFilename|endswith:
+            - '.exe'
+            - '.scr'
+            - '.bat'
+            - '.cmd'
+            - '.vbs'
+            - '.ps1'
+            - '.hta'
+    condition: selection_first_ext and selection_final_ext
+falsepositives:
+    - Very unlikely in legitimate use
+references:
+    - https://attack.mitre.org/techniques/T1036/007/

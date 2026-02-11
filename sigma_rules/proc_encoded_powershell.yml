@@ -1,0 +1,32 @@
+title: Encoded PowerShell Command Execution
+id: f2d1c7a0-1001-4a0b-8b0a-sigma0001
+status: stable
+level: high
+description: Detects execution of PowerShell with encoded commands, commonly used by malware to obfuscate payloads
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.execution
+    - attack.t1059.001
+    - attack.defense_evasion
+    - attack.t1027
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+    selection_enc:
+        CommandLine|contains:
+            - '-enc'
+            - '-EncodedCommand'
+            - '-e '
+            - '-ec '
+    condition: selection_img and selection_enc
+falsepositives:
+    - Legitimate administration scripts using encoded commands
+    - Some software installers
+references:
+    - https://attack.mitre.org/techniques/T1059/001/

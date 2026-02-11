@@ -1,0 +1,23 @@
+title: Startup Folder File Creation
+id: f2d1c7a0-1010-4a0b-8b0a-sigma0010
+status: stable
+level: high
+description: Detects file creation in Windows Startup folders used for persistence
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.persistence
+    - attack.t1547.001
+logsource:
+    category: file_creation
+    product: windows
+detection:
+    selection:
+        TargetFilename|contains:
+            - '\Start Menu\Programs\Startup\'
+            - '\Start Menu\Programs\StartUp\'
+    condition: selection
+falsepositives:
+    - Legitimate application installation adding startup entries
+references:
+    - https://attack.mitre.org/techniques/T1547/001/

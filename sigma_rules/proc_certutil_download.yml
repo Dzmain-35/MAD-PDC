@@ -1,0 +1,30 @@
+title: Certutil Used for File Download
+id: f2d1c7a0-1020-4a0b-8b0a-sigma0020
+status: stable
+level: high
+description: Detects certutil.exe being used to download files from the internet, a common LOLBin technique
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.command_and_control
+    - attack.t1105
+    - attack.defense_evasion
+    - attack.t1218
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\certutil.exe'
+    selection_download:
+        CommandLine|contains:
+            - 'urlcache'
+            - '-split'
+            - 'http://'
+            - 'https://'
+            - 'ftp://'
+    condition: selection and selection_download
+falsepositives:
+    - Legitimate certificate management
+references:
+    - https://attack.mitre.org/techniques/T1105/

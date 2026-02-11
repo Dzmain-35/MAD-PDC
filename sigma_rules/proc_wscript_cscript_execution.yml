@@ -1,0 +1,32 @@
+title: Windows Script Host Execution
+id: f2d1c7a0-1006-4a0b-8b0a-sigma0006
+status: stable
+level: medium
+description: Detects wscript.exe or cscript.exe executing scripts, commonly abused for malware delivery
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.execution
+    - attack.t1059.005
+    - attack.t1059.007
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\wscript.exe'
+            - '\cscript.exe'
+    selection_scripts:
+        CommandLine|contains:
+            - '.vbs'
+            - '.js'
+            - '.wsf'
+            - '.wsh'
+            - '.hta'
+    condition: selection and selection_scripts
+falsepositives:
+    - Legitimate VBScript/JScript administration
+    - Logon scripts
+references:
+    - https://attack.mitre.org/techniques/T1059/005/

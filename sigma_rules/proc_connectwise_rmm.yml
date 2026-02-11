@@ -1,0 +1,30 @@
+title: Potential ConnectWise RMM Tool Execution
+id: 86a6d1ae-cf41-4c44-8794-4cf02f1dde4d
+status: experimental
+description: Detects potential process execution of ConnectWise (RMM). Tune allowlists for approved deployments.
+references:
+    - https://lolrmm.io/
+author: Generated from LOLRMM API
+date: 2026-02-10
+tags:
+    - attack.execution
+    - attack.t1219
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    selection:
+        Image|endswith:
+            - '\ScreenConnect.ClientService.exe'
+            - '\ScreenConnect.WindowsClient.exe'
+            - '\ScreenConnect.WindowsBackstageShell.exe'
+            - '\ScreenConnect.WindowsFileManager.exe'
+            - '\ScreenConnect.WindowsCredentialProvider.exe'
+    filter_allow_known_install_paths:
+        Image|startswith:
+            - 'C:\Program Files\ScreenConnect Client\'
+            - 'C:\Program Files (x86)\ScreenConnect Client\'
+    condition: selection and not filter_allow_known_install_paths
+falsepositives:
+    - Legitimate IT support usage from approved install paths
+level: medium

@@ -1,0 +1,32 @@
+title: Connection to Known Backdoor Port
+id: f2d1c7a0-1011-4a0b-8b0a-sigma0011
+status: stable
+level: high
+description: Detects network connections to ports commonly used by backdoors and RATs
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.command_and_control
+    - attack.t1571
+logsource:
+    category: network_connection
+    product: windows
+detection:
+    selection:
+        DestinationPort:
+            - 4444
+            - 4445
+            - 5555
+            - 6666
+            - 7777
+            - 8888
+            - 31337
+            - 12345
+            - 54321
+            - 1337
+    condition: selection
+falsepositives:
+    - Legitimate applications using these ports
+    - Development environments
+references:
+    - https://attack.mitre.org/techniques/T1571/

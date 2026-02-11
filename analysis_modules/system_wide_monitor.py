@@ -30,6 +30,7 @@ except ImportError:
 # Import our monitoring modules
 from .sysmon_parser import SysmonLogMonitor, SysmonEvent
 from .procmon_events import ProcmonEvent
+from .sigma_evaluator import SigmaEvaluator, SigmaMatch
 
 
 class EventFilter:
@@ -214,12 +215,13 @@ class SystemWideMonitor:
     Monitors all processes for file, registry, network, and process activity
     """
 
-    def __init__(self, max_events: int = 50000):
+    def __init__(self, max_events: int = 50000, sigma_rules_path: Optional[str] = None):
         """
         Initialize system-wide monitor
 
         Args:
             max_events: Maximum events to keep in buffer (larger for system-wide)
+            sigma_rules_path: Path to directory containing Sigma rules (.yml files)
         """
         self.max_events = max_events
 
@@ -234,6 +236,9 @@ class SystemWideMonitor:
         # Event callbacks
         self.event_callbacks = []
 
+        # Sigma rule match callbacks (separate from event callbacks)
+        self.sigma_match_callbacks = []
+
         # Statistics
         self.stats = {
             'total_events': 0,
@@ -243,8 +248,16 @@ class SystemWideMonitor:
             'process_events': 0,
             'thread_events': 0,
             'imageload_events': 0,
-            'dns_events': 0
+            'dns_events': 0,
+            'sigma_matches': 0,
         }
+
+        # Sigma evaluator
+        self.sigma_evaluator = SigmaEvaluator()
+        self.sigma_enabled = False
+        self.sigma_matches: deque = deque(maxlen=5000)
+        if sigma_rules_path:
+            self.load_sigma_rules(sigma_rules_path)
 
         # Sysmon monitor (if available)
         self.sysmon_monitor = None
@@ -266,6 +279,35 @@ class SystemWideMonitor:
 
         # Last event timestamp for incremental updates
         self.last_update_time = datetime.now()
+
+    def load_sigma_rules(self, rules_path: str) -> tuple:
+        """
+        Load Sigma rules from a directory.
+
+        Args:
+            rules_path: Path to directory containing .yml Sigma rules
+
+        Returns:
+            Tuple of (rules_loaded_count, error_messages)
+        """
+        loaded, errors = self.sigma_evaluator.load_rules_from_directory(rules_path)
+        self.sigma_enabled = loaded > 0
+        if loaded > 0:
+            print(f"System-wide monitor: Loaded {loaded} Sigma rules from {rules_path}")
+        if errors:
+            for err in errors[:5]:  # Print first 5 errors
+                print(f"  Sigma rule error: {err}")
+        return loaded, errors
+
+    def reload_sigma_rules(self, rules_path: str) -> tuple:
+        """Reload all Sigma rules from directory."""
+        loaded, errors = self.sigma_evaluator.reload_rules(rules_path)
+        self.sigma_enabled = loaded > 0
+        return loaded, errors
+
+    def register_sigma_callback(self, callback):
+        """Register a callback for Sigma rule matches. callback(SigmaMatch, event_dict)"""
+        self.sigma_match_callbacks.append(callback)
 
     def start_monitoring(self) -> bool:
         """Start system-wide monitoring"""
@@ -314,6 +356,27 @@ class SystemWideMonitor:
         # Convert Sysmon event to our standard format and add
         event_dict = sysmon_event.to_dict()
 
+        # Evaluate Sigma rules against the raw Sysmon data (has full field names)
+        if self.sigma_enabled:
+            try:
+                matches = self.sigma_evaluator.evaluate_sysmon_event(sysmon_event)
+                if matches:
+                    sigma_labels = []
+                    for match in matches:
+                        self.sigma_matches.append(match)
+                        self.stats['sigma_matches'] += 1
+                        sigma_labels.append(f"[{match.rule.level.upper()}] {match.rule.title}")
+                        # Notify sigma-specific callbacks
+                        for cb in self.sigma_match_callbacks:
+                            try:
+                                cb(match, event_dict)
+                            except Exception as e:
+                                print(f"Error in sigma match callback: {e}")
+                    # Tag the event with sigma match info
+                    event_dict['sigma_matches'] = sigma_labels
+            except Exception as e:
+                print(f"Error evaluating Sigma rules: {e}")
+
         # Apply filter
         if self.event_filter.matches(event_dict):
             self._add_event(event_dict)
@@ -323,6 +386,25 @@ class SystemWideMonitor:
 
     def _add_event(self, event: Dict):
         """Add event to storage and notify callbacks"""
+        # Evaluate Sigma rules for psutil fallback events (no sigma_matches tag yet)
+        if self.sigma_enabled and 'sigma_matches' not in event:
+            try:
+                matches = self.sigma_evaluator.evaluate_event_dict(event)
+                if matches:
+                    sigma_labels = []
+                    for match in matches:
+                        self.sigma_matches.append(match)
+                        self.stats['sigma_matches'] += 1
+                        sigma_labels.append(f"[{match.rule.level.upper()}] {match.rule.title}")
+                        for cb in self.sigma_match_callbacks:
+                            try:
+                                cb(match, event)
+                            except Exception as e:
+                                print(f"Error in sigma match callback: {e}")
+                    event['sigma_matches'] = sigma_labels
+            except Exception:
+                pass
+
         self.events.append(event)
         self.event_queue.put(event)
 
@@ -541,6 +623,19 @@ class SystemWideMonitor:
     def get_filter(self) -> EventFilter:
         """Get the current event filter"""
         return self.event_filter
+
+    def get_sigma_evaluator(self) -> SigmaEvaluator:
+        """Get the Sigma evaluator instance"""
+        return self.sigma_evaluator
+
+    def get_recent_sigma_matches(self, count: int = 100) -> List[Dict]:
+        """Get recent Sigma rule matches as dicts"""
+        matches = list(self.sigma_matches)[-count:]
+        return [m.to_dict() for m in matches]
+
+    def is_sigma_enabled(self) -> bool:
+        """Check if Sigma evaluation is active"""
+        return self.sigma_enabled
 
 
 # Example usage

@@ -1,0 +1,37 @@
+title: Executable Created in Suspicious Directory
+id: f2d1c7a0-1009-4a0b-8b0a-sigma0009
+status: stable
+level: high
+description: Detects creation of executable files in AppData, Temp, or other suspicious directories
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1036
+    - attack.persistence
+logsource:
+    category: file_creation
+    product: windows
+detection:
+    selection_path:
+        TargetFilename|contains:
+            - '\AppData\Roaming\'
+            - '\AppData\Local\Temp\'
+            - '\Windows\Temp\'
+            - '\ProgramData\'
+    selection_ext:
+        TargetFilename|endswith:
+            - '.exe'
+            - '.dll'
+            - '.scr'
+            - '.bat'
+            - '.cmd'
+            - '.ps1'
+            - '.vbs'
+            - '.hta'
+    condition: selection_path and selection_ext
+falsepositives:
+    - Legitimate software installers and updaters
+    - Browser downloads to temp directories
+references:
+    - https://attack.mitre.org/techniques/T1036/

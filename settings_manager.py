@@ -72,7 +72,16 @@ class SettingsManager:
             "analyst_name": "",
             "enable_network_yara_sync": True,
             "network_yara_path": r"\\10.1.64.2\pdc\!Persistent_Folder\1YarWatch1\YarWatch_Scripts\YDAMN",
-        }
+        },
+        "sigma": {
+            "enable_sigma_evaluation": True,
+            "sigma_rules_path": "",  # Empty means auto-detect (sigma_rules/ next to YDAMN)
+            "min_severity_level": "low",  # informational, low, medium, high, critical
+            "enable_network_sigma_sync": False,
+            "network_sigma_path": "",
+            "create_backups_on_delete": True,
+            "create_backups_on_update": True,
+        },
     }
 
     def __init__(self, settings_file: Optional[str] = None):
@@ -348,6 +357,13 @@ class SettingsManager:
             "network.analyst_name": "Analyst name for network folder naming",
             "network.enable_network_yara_sync": "Enable syncing YARA rules to network folder",
             "network.network_yara_path": "Network path for shared YARA rules",
+            "sigma.enable_sigma_evaluation": "Enable Sigma rule evaluation on system events",
+            "sigma.sigma_rules_path": "Directory containing Sigma rules (.yml files)",
+            "sigma.min_severity_level": "Minimum Sigma rule severity to evaluate (informational/low/medium/high/critical)",
+            "sigma.enable_network_sigma_sync": "Enable syncing Sigma rules to network folder",
+            "sigma.network_sigma_path": "Network path for shared Sigma rules",
+            "sigma.create_backups_on_delete": "Create backup when deleting Sigma rules",
+            "sigma.create_backups_on_update": "Create backup when updating Sigma rules",
         }
         return descriptions.get(key_path, "No description available")
 

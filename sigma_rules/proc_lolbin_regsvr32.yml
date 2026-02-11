@@ -1,0 +1,30 @@
+title: Regsvr32 Execution with Suspicious Parameters
+id: f2d1c7a0-1004-4a0b-8b0a-sigma0004
+status: stable
+level: high
+description: Detects regsvr32.exe execution with parameters commonly used for application whitelisting bypass (Squiblydoo)
+author: MAD-PDC
+date: 2026/02/10
+tags:
+    - attack.defense_evasion
+    - attack.t1218.010
+    - attack.execution
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\regsvr32.exe'
+    selection_suspicious:
+        CommandLine|contains:
+            - '/s /n /u /i:'
+            - 'scrobj.dll'
+            - 'http://'
+            - 'https://'
+            - '/i:http'
+            - '/i:ftp'
+    condition: selection and selection_suspicious
+falsepositives:
+    - Legitimate COM registration
+references:
+    - https://attack.mitre.org/techniques/T1218/010/
