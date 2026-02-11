@@ -1164,7 +1164,7 @@ class ForensicAnalysisGUI:
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
         self.process_tree.column("Name", width=200, minwidth=150)
         self.process_tree.column("File Path", width=350, minwidth=200)
-        self.process_tree.column("Detection Status", width=250, minwidth=150, anchor="center")
+        self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
 
         # Headers
         self.process_tree.heading("#0", text="Process Tree")
@@ -4658,14 +4658,7 @@ File Size: {file_info['file_size']} bytes"""
                 except:
                     pass
 
-        selection = self.process_tree.selection()
-        if selection:
-            try:
-                values = self.process_tree.item(selection[0], 'values')
-                if values and len(values) > 0:
-                    selected_pid = int(values[0])
-            except:
-                pass
+        selected_pid = self._get_selected_pid()
 
         # Remove dead processes
         for pid in dead_pids:
@@ -4734,7 +4727,7 @@ File Size: {file_info['file_size']} bytes"""
                 # Evaluate Sigma rules against this process
                 sigma_titles = self.evaluate_process_sigma(proc)
                 if sigma_titles:
-                    sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                    sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
                     if yara_status != "No":
                         yara_status = f"{yara_status} | {sigma_label}"
                     else:
@@ -4827,7 +4820,7 @@ File Size: {file_info['file_size']} bytes"""
                 # Evaluate Sigma rules against this process
                 sigma_titles = self.evaluate_process_sigma(proc)
                 if sigma_titles:
-                    sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                    sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
                     if yara_status != "No":
                         yara_status = f"{yara_status} | {sigma_label}"
                     else:
@@ -4879,12 +4872,7 @@ File Size: {file_info['file_size']} bytes"""
                     add_process_tree(proc, parent_item_id)
 
         # Restore selection
-        if selected_pid and selected_pid in self.pid_to_tree_item:
-            try:
-                self.process_tree.selection_set(self.pid_to_tree_item[selected_pid])
-                self.process_tree.see(self.pid_to_tree_item[selected_pid])
-            except:
-                pass
+        self._restore_selected_pid(selected_pid)
 
         # Count Sigma matches across all visible processes and update badge
         if self.sigma_evaluator:
@@ -4919,6 +4907,29 @@ File Size: {file_info['file_size']} bytes"""
             children.append(child)
             children.extend(self._get_all_tree_children(tree, child))
         return children
+
+    def _get_selected_pid(self):
+        """Get the PID of the currently selected process in the tree"""
+        selection = self.process_tree.selection()
+        if selection:
+            try:
+                values = self.process_tree.item(selection[0], 'values')
+                if values and len(values) > 0:
+                    return int(values[0])
+            except:
+                pass
+        return None
+
+    def _restore_selected_pid(self, pid):
+        """Restore selection to a process by PID after tree rebuild"""
+        if pid and pid in self.pid_to_tree_item:
+            try:
+                item_id = self.pid_to_tree_item[pid]
+                if self.process_tree.exists(item_id):
+                    self.process_tree.selection_set(item_id)
+                    self.process_tree.see(item_id)
+            except:
+                pass
 
     def focus_process_by_pid(self, target_pid):
         """
@@ -5161,6 +5172,9 @@ File Size: {file_info['file_size']} bytes"""
         search_text = self.process_search_entry.get().strip().lower()
         filter_choice = self.process_filter_var.get() if hasattr(self, 'process_filter_var') else "All Processes"
 
+        # Save selection before any tree modifications
+        selected_pid = self._get_selected_pid()
+
         # If no filters applied, refresh to show all
         if not search_text and filter_choice == "All Processes":
             # Mark that we're doing a filter clear rebuild - don't highlight as new
@@ -5180,6 +5194,9 @@ File Size: {file_info['file_size']} bytes"""
 
             # Restore the flag immediately after refresh
             self.process_tree_initial_load = was_initial_load
+
+            # Restore selection
+            self._restore_selected_pid(selected_pid)
             return
 
         # Get all processes
@@ -5273,7 +5290,7 @@ File Size: {file_info['file_size']} bytes"""
             # Evaluate Sigma rules against this process
             sigma_titles = self.evaluate_process_sigma(proc)
             if sigma_titles:
-                sigma_label = f"🔷 {sigma_titles[0]}" + (f" +{len(sigma_titles)-1}" if len(sigma_titles) > 1 else "")
+                sigma_label = f"🔷 SIGMA ({len(sigma_titles)})" if len(sigma_titles) > 1 else f"🔷 SIGMA"
                 if yara_status != "No":
                     yara_status = f"{yara_status} | {sigma_label}"
                 else:
@@ -5313,6 +5330,9 @@ File Size: {file_info['file_size']} bytes"""
         for pid in sorted(root_pids):
             if pid in process_map:
                 add_process_to_tree(process_map[pid])
+
+        # Restore selection
+        self._restore_selected_pid(selected_pid)
 
     def clear_process_search(self):
         """Clear the process search and show all processes"""
