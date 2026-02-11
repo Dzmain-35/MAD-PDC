@@ -5905,9 +5905,48 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
                         sigma_section += f"  MITRE Tags: {', '.join(rule.tags)}\n"
                     if rule.falsepositives:
                         sigma_section += f"  False Positives: {', '.join(str(fp) for fp in rule.falsepositives)}\n"
-                    sigma_section += f"  Matched Selections: {', '.join(match.matched_selections)}\n"
+
+                    # Show what matched - extract field values from matched selections
+                    matched_fields = []
+                    detection = rule.detection
+                    for sel_name in match.matched_selections:
+                        sel_def = detection.get(sel_name, {})
+                        if isinstance(sel_def, dict):
+                            for field_spec, expected in sel_def.items():
+                                if field_spec in ('condition', 'timeframe'):
+                                    continue
+                                field_name = field_spec.split('|')[0]
+                                actual = match.event_data.get(field_name, '')
+                                if actual:
+                                    matched_fields.append((field_name, str(actual), field_spec, expected))
+
+                    if matched_fields:
+                        sigma_section += f"\n  Matched Fields ({len(matched_fields)}):\n"
+                        for field_name, actual_val, field_spec, expected in matched_fields:
+                            modifier = field_spec.split('|', 1)[1] if '|' in field_spec else 'exact'
+                            sigma_section += f"    {field_name} ({modifier}):\n"
+                            sigma_section += f"      Actual:   {actual_val}\n"
+                            if isinstance(expected, list):
+                                # Find which pattern(s) matched
+                                for pat in expected:
+                                    pat_str = str(pat).lower()
+                                    actual_lower = actual_val.lower()
+                                    hit = False
+                                    if 'endswith' in modifier:
+                                        hit = actual_lower.endswith(pat_str)
+                                    elif 'startswith' in modifier:
+                                        hit = actual_lower.startswith(pat_str)
+                                    elif 'contains' in modifier:
+                                        hit = pat_str in actual_lower
+                                    else:
+                                        hit = actual_lower == pat_str or pat_str in actual_lower
+                                    if hit:
+                                        sigma_section += f"      Pattern:  {pat}  ✓\n"
+                            else:
+                                sigma_section += f"      Pattern:  {expected}\n"
+
                     if rule.references:
-                        sigma_section += f"  References:\n"
+                        sigma_section += f"\n  References:\n"
                         for ref in rule.references:
                             sigma_section += f"    - {ref}\n"
 
