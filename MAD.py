@@ -2,6 +2,7 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
+from datetime_utils import get_current_datetime, set_date_override, clear_date_override, has_date_override, get_override_date
 from case_manager import CaseManager
 from PIL import Image
 import os
@@ -217,11 +218,34 @@ class ForensicAnalysisGUI:
         header = ctk.CTkFrame(self.root, height=60, corner_radius=0, fg_color=self.colors["navy"])
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-        
+
         title = ctk.CTkLabel(header, text="MAD - Malware Analysis Dashboard",
                             font=Fonts.header_subsection,
                             text_color="white")
         title.pack(side="left", padx=20, pady=15)
+
+        # Date indicator (right side of header) - shows active session date
+        self.date_indicator_label = ctk.CTkLabel(
+            header, text="", font=("Segoe UI", 12), text_color="#9ca3af")
+        self.date_indicator_label.pack(side="right", padx=20, pady=15)
+
+        # Update the date indicator every 30 seconds
+        self._update_date_indicator()
+
+    def _update_date_indicator(self):
+        """Refresh the date indicator in the header bar."""
+        try:
+            now = get_current_datetime()
+            if has_date_override():
+                text = f"DATE OVERRIDE: {now.strftime('%m/%d/%Y')}"
+                color = "#fbbf24"  # amber for override
+            else:
+                text = now.strftime("%m/%d/%Y")
+                color = "#9ca3af"
+            self.date_indicator_label.configure(text=text, text_color=color)
+        except Exception:
+            pass
+        self.root.after(30000, self._update_date_indicator)
         
     def create_main_container(self):
         """Create main layout with sidebar and content area"""
@@ -1659,7 +1683,7 @@ class ForensicAnalysisGUI:
             "monitoring": False,
             "current_filter": None,
             "update_job": None,
-            "last_update_time": datetime.now() - timedelta(days=1),  # Start from yesterday to catch existing events
+            "last_update_time": get_current_datetime() - timedelta(days=1),  # Start from yesterday to catch existing events
             "event_count": 0
         }
 
@@ -2053,7 +2077,7 @@ class ForensicAnalysisGUI:
                 )
 
                 # Update last update time
-                monitor_state["last_update_time"] = datetime.now()
+                monitor_state["last_update_time"] = get_current_datetime()
 
                 # Schedule next refresh (500ms)
                 monitor_state["update_job"] = frame.after(500, refresh_events)
@@ -2072,7 +2096,7 @@ class ForensicAnalysisGUI:
             filepath = filedialog.asksaveasfilename(
                 defaultextension=".csv",
                 filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialfile=f"mad_system_events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                initialfile=f"mad_system_events_{get_current_datetime().strftime('%Y%m%d_%H%M%S')}.csv"
             )
 
             if filepath:
@@ -2358,7 +2382,7 @@ class ForensicAnalysisGUI:
         """Background thread for file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2379,7 +2403,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": datetime.now().isoformat(),
+                "created": get_current_datetime().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -2388,7 +2412,7 @@ class ForensicAnalysisGUI:
                 "total_threats": 0,
                 "total_vt_hits": 0
             }
-            
+
             # Process each file with progress updates
             for i, file_path in enumerate(files):
                 if self.cancel_scan:
@@ -2470,7 +2494,7 @@ class ForensicAnalysisGUI:
         """Background thread for URL downloading and file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2491,7 +2515,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": datetime.now().isoformat(),
+                "created": get_current_datetime().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -3080,7 +3104,7 @@ class ForensicAnalysisGUI:
             os.makedirs(screenshots_dir, exist_ok=True)
 
             # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
             screenshot_filename = f"screenshot_{timestamp}.png"
             screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
 
@@ -3094,7 +3118,7 @@ class ForensicAnalysisGUI:
             self.current_case["screenshots"].append({
                 "filename": screenshot_filename,
                 "path": screenshot_path,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_current_datetime().isoformat(),
                 "width": clipboard_image.width,
                 "height": clipboard_image.height
             })
@@ -4404,6 +4428,11 @@ File Size: {file_info['file_size']} bytes"""
             ("network.network_yara_path", "Network YARA Path", "entry"),
         ])
 
+        # VM Snapshot Settings
+        self.create_settings_section(settings_scroll, "VM Snapshot Date Handling", [
+            ("vm_snapshot.enable_date_check_on_startup", "Verify Date on Startup", "switch"),
+        ])
+
         # Load current settings
         self.load_settings_to_ui()
 
@@ -4559,8 +4588,148 @@ File Size: {file_info['file_size']} bytes"""
             messagebox.showerror("Error", "Failed to reset settings")
 
     # ==================== APPLICATION LIFECYCLE ====================
+
+    def _check_vm_snapshot_date(self):
+        """
+        Check if the system date may be stale due to a VM snapshot revert.
+        Prompts the analyst to confirm or correct the date on startup.
+        """
+        if not self.settings_manager.get("vm_snapshot.enable_date_check_on_startup", True):
+            return
+
+        system_date = datetime.now()
+        last_known = self.settings_manager.get("vm_snapshot.last_known_date", "")
+
+        date_may_be_stale = False
+        if last_known:
+            try:
+                last_dt = datetime.fromisoformat(last_known)
+                # If system date is older than the last known session date, snapshot was reverted
+                if system_date.date() < last_dt.date():
+                    date_may_be_stale = True
+            except (ValueError, TypeError):
+                pass
+
+        # Always show the date confirmation dialog so analysts can correct the date
+        self._show_date_verification_dialog(system_date, date_may_be_stale)
+
+        # Persist today's date as the last known date
+        self.settings_manager.set(
+            "vm_snapshot.last_known_date",
+            get_current_datetime().date().isoformat()
+        )
+        self.settings_manager.save_settings()
+
+    def _show_date_verification_dialog(self, system_date: datetime, warn_stale: bool):
+        """
+        Show a dialog that lets the analyst confirm or override the current date.
+
+        Args:
+            system_date: The current system clock datetime.
+            warn_stale: If True, the dialog warns that the date appears stale.
+        """
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Verify Session Date")
+        dialog.geometry("480x340")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center on parent
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 480) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 340) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Warning or info header
+        if warn_stale:
+            header_text = "WARNING: System date appears to be from a previous VM snapshot!"
+            header_color = "#dc2626"
+        else:
+            header_text = "Confirm today's date for this analysis session"
+            header_color = "white"
+
+        header = ctk.CTkLabel(dialog, text=header_text,
+                              font=("Segoe UI", 14, "bold"),
+                              text_color=header_color,
+                              wraplength=440)
+        header.pack(padx=20, pady=(20, 10))
+
+        sys_date_label = ctk.CTkLabel(
+            dialog,
+            text=f"System clock reads: {system_date.strftime('%A, %B %d, %Y')}",
+            font=("Segoe UI", 13),
+            text_color="#9ca3af"
+        )
+        sys_date_label.pack(padx=20, pady=(0, 15))
+
+        # Date entry frame
+        date_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        date_frame.pack(padx=20, pady=5)
+
+        ctk.CTkLabel(date_frame, text="Correct Date (MM/DD/YYYY):",
+                     font=("Segoe UI", 13)).pack(side="left", padx=(0, 10))
+
+        date_entry = ctk.CTkEntry(date_frame, width=160, font=("Segoe UI", 13))
+        date_entry.pack(side="left")
+        date_entry.insert(0, system_date.strftime("%m/%d/%Y"))
+
+        # Status label for validation feedback
+        status_label = ctk.CTkLabel(dialog, text="", font=("Segoe UI", 12),
+                                    text_color="#dc2626")
+        status_label.pack(padx=20, pady=5)
+
+        # Button frame
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(padx=20, pady=(10, 20))
+
+        def accept_date():
+            date_str = date_entry.get().strip()
+            try:
+                entered_date = datetime.strptime(date_str, "%m/%d/%Y")
+            except ValueError:
+                status_label.configure(text="Invalid format. Use MM/DD/YYYY (e.g., 02/12/2026)")
+                return
+
+            if entered_date.date() != system_date.date():
+                # Analyst corrected the date - set override
+                set_date_override(entered_date)
+                print(f"Date override set to: {entered_date.strftime('%m/%d/%Y')}")
+            else:
+                # System date matches - no override needed
+                clear_date_override()
+
+            dialog.destroy()
+
+        def use_system_date():
+            clear_date_override()
+            dialog.destroy()
+
+        ctk.CTkButton(btn_frame, text="Use This Date",
+                      command=accept_date,
+                      fg_color="#dc2626", hover_color="#991b1b",
+                      font=("Segoe UI", 13, "bold"),
+                      width=160).pack(side="left", padx=10)
+
+        ctk.CTkButton(btn_frame, text="Use System Clock",
+                      command=use_system_date,
+                      fg_color="#374151", hover_color="#4b5563",
+                      font=("Segoe UI", 13),
+                      width=160).pack(side="left", padx=10)
+
+        # Wait for dialog to close before continuing
+        self.root.wait_window(dialog)
+
     def run(self):
         """Start the application"""
+        # Check VM snapshot date before starting work
+        self.root.after(100, self._run_after_date_check)
+        self.root.mainloop()
+
+    def _run_after_date_check(self):
+        """Called after the main window is visible to run the date check and start monitoring."""
+        self._check_vm_snapshot_date()
+
         # Auto-start process monitoring
         if not self.process_monitor_active:
             self.process_monitor.start_monitoring()
@@ -4570,8 +4739,6 @@ File Size: {file_info['file_size']} bytes"""
                 self.btn_toggle_process_monitor.configure(text="⏸ Stop Monitoring")
             # Start auto-refresh
             self.start_auto_refresh()
-
-        self.root.mainloop()
 
     # ==================== PROCESS MONITOR METHODS ====================
     def toggle_process_monitoring(self):

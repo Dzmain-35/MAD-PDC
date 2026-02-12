@@ -13,6 +13,7 @@ import shutil
 import zipfile
 import tarfile
 from datetime import datetime
+from datetime_utils import get_current_datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import requests
@@ -277,7 +278,7 @@ class CaseManager:
             Case information dictionary
         """
         # Generate case ID
-        case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
         case_dir = os.path.join(self.case_storage_path, case_id)
         files_dir = os.path.join(case_dir, "files")
 
@@ -292,7 +293,7 @@ class CaseManager:
         # Initialize case data
         case_data = {
             "id": case_id,
-            "created": datetime.now().isoformat(),
+            "created": get_current_datetime().isoformat(),
             "status": "ACTIVE",
             "report_url": report_url or "",
             "network_case_path": network_case_path or "",
@@ -450,7 +451,7 @@ class CaseManager:
             "thq_family": thq_family,
             "threat_score": threat_score,
             "threat_level": threat_level,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_current_datetime().isoformat(),
             "case_id": case_id
         }
         
@@ -887,7 +888,7 @@ class CaseManager:
             Tuple of (success, list of extracted file paths, error_message)
         """
         extracted_files = []
-        extract_dir = os.path.join(tempfile.gettempdir(), f"extracted_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        extract_dir = os.path.join(tempfile.gettempdir(), f"extracted_{get_current_datetime().strftime('%Y%m%d%H%M%S')}")
 
         try:
             os.makedirs(extract_dir, exist_ok=True)
@@ -984,7 +985,7 @@ class CaseManager:
 
             # If no filename in URL, generate one
             if not filename or '.' not in filename:
-                filename = f"downloaded_file_{datetime.now().strftime('%Y%m%d%H%M%S')}.bin"
+                filename = f"downloaded_file_{get_current_datetime().strftime('%Y%m%d%H%M%S')}.bin"
 
             # Create temporary file
             temp_dir = tempfile.gettempdir()

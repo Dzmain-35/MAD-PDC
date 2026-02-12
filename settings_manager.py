@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
+from datetime_utils import get_current_datetime
 
 
 class SettingsManager:
@@ -82,6 +83,10 @@ class SettingsManager:
             "create_backups_on_delete": True,
             "create_backups_on_update": True,
         },
+        "vm_snapshot": {
+            "enable_date_check_on_startup": True,  # Prompt analyst to verify date on launch
+            "last_known_date": "",  # ISO date string of last session, used to detect stale snapshots
+        },
     }
 
     def __init__(self, settings_file: Optional[str] = None):
@@ -136,7 +141,7 @@ class SettingsManager:
             # Add metadata
             settings_with_meta = {
                 "_metadata": {
-                    "last_modified": datetime.now().isoformat(),
+                    "last_modified": get_current_datetime().isoformat(),
                     "version": self.settings["application"]["version"]
                 },
                 **self.settings
@@ -364,6 +369,8 @@ class SettingsManager:
             "sigma.network_sigma_path": "Network path for shared Sigma rules",
             "sigma.create_backups_on_delete": "Create backup when deleting Sigma rules",
             "sigma.create_backups_on_update": "Create backup when updating Sigma rules",
+            "vm_snapshot.enable_date_check_on_startup": "Prompt to verify date on startup (for VM snapshot recovery)",
+            "vm_snapshot.last_known_date": "Last known session date (auto-updated)",
         }
         return descriptions.get(key_path, "No description available")
 
@@ -448,5 +455,6 @@ class SettingsManager:
 
         import os
         # Add date-based subfolder (format: M_DD_YYYY, e.g., 2_05_2026)
-        date_folder = datetime.now().strftime("%-m_%d_%Y") if os.name != 'nt' else datetime.now().strftime("%#m_%d_%Y")
+        now = get_current_datetime()
+        date_folder = now.strftime("%-m_%d_%Y") if os.name != 'nt' else now.strftime("%#m_%d_%Y")
         return os.path.join(base_path, date_folder, folder_name)
