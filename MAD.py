@@ -471,6 +471,49 @@ class ForensicAnalysisGUI:
         )
         self.report_url_entry.pack(padx=5, pady=(0, 20))
 
+        # Session Date display (for VM snapshot awareness)
+        date_frame = ctk.CTkFrame(form_container, fg_color="transparent")
+        date_frame.pack(fill="x", padx=5, pady=(0, 15))
+
+        date_label = ctk.CTkLabel(
+            date_frame,
+            text="Session Date",
+            font=Fonts.label_large,
+            text_color="white",
+            anchor="w"
+        )
+        date_label.pack(anchor="w", pady=(0, 5))
+
+        date_row = ctk.CTkFrame(date_frame, fg_color="transparent")
+        date_row.pack(fill="x")
+
+        self.session_date_entry = ctk.CTkEntry(
+            date_row,
+            width=form_entry_width - 130,
+            height=40,
+            font=Fonts.body_large,
+            fg_color=self.colors["navy"],
+            border_color=self.colors["red"],
+            border_width=2
+        )
+        self.session_date_entry.pack(side="left")
+        self._populate_session_date_entry()
+
+        btn_change_date = ctk.CTkButton(
+            date_row,
+            text="Change",
+            command=self._change_session_date,
+            width=120,
+            height=40,
+            font=Fonts.label_large,
+            fg_color=self.colors["navy"],
+            hover_color=self.colors["dark_blue"],
+            border_width=2,
+            border_color=self.colors["red"],
+            corner_radius=8
+        )
+        btn_change_date.pack(side="left", padx=(10, 0))
+
         # Upload method selection
         upload_method_frame = ctk.CTkFrame(center_container, fg_color="transparent")
         upload_method_frame.pack(pady=(10, 10))
@@ -2304,6 +2347,56 @@ class ForensicAnalysisGUI:
                 self.live_events_toggle_monitoring()
     
     # ==================== EVENT HANDLERS ====================
+    def _populate_session_date_entry(self):
+        """Fill the session date entry with the current effective date."""
+        self.session_date_entry.configure(state="normal")
+        self.session_date_entry.delete(0, "end")
+        self.session_date_entry.insert(0, get_current_datetime().strftime("%m/%d/%Y"))
+        self.session_date_entry.configure(state="disabled")
+
+    def _change_session_date(self):
+        """Open a dialog to let the analyst change the session date."""
+        system_date = datetime.now()
+        self._show_date_verification_dialog(system_date, warn_stale=False)
+        # Refresh the entry on the New Case form and the header indicator
+        self._populate_session_date_entry()
+        self._update_date_indicator()
+        # Persist
+        self.settings_manager.set(
+            "vm_snapshot.last_known_date",
+            get_current_datetime().date().isoformat()
+        )
+        self.settings_manager.save_settings()
+
+    def _check_date_before_case_creation(self):
+        """
+        Lightweight staleness check run each time a new case is created.
+        Compares the system clock against the last known session date.
+        If the system clock has gone backwards (snapshot revert), auto-opens
+        the date verification dialog so the analyst can correct it.
+        """
+        system_date = datetime.now()
+        last_known = self.settings_manager.get("vm_snapshot.last_known_date", "")
+
+        if not last_known:
+            return  # First run ever — nothing to compare against
+
+        try:
+            last_dt = datetime.fromisoformat(last_known)
+        except (ValueError, TypeError):
+            return
+
+        if system_date.date() < last_dt.date():
+            # System clock went backwards — very likely a snapshot revert
+            self._show_date_verification_dialog(system_date, warn_stale=True)
+            self._populate_session_date_entry()
+            self._update_date_indicator()
+            self.settings_manager.set(
+                "vm_snapshot.last_known_date",
+                get_current_datetime().date().isoformat()
+            )
+            self.settings_manager.save_settings()
+
     def on_upload_method_change(self):
         """Handle upload method radio button change"""
         method = self.upload_method.get()
@@ -2319,6 +2412,9 @@ class ForensicAnalysisGUI:
         if self.scan_in_progress:
             messagebox.showwarning("Scan in Progress", "Please wait for current scan to complete")
             return
+
+        # Re-check if the system date looks stale (VM may have reverted while MAD was open)
+        self._check_date_before_case_creation()
 
         # Validate analyst name and report URL
         analyst_name = self.analyst_name_entry.get().strip()
@@ -4592,7 +4688,9 @@ File Size: {file_info['file_size']} bytes"""
     def _check_vm_snapshot_date(self):
         """
         Check if the system date may be stale due to a VM snapshot revert.
-        Prompts the analyst to confirm or correct the date on startup.
+        Only shows the verification dialog when staleness is actually detected,
+        so normal launches are uninterrupted. Analysts can always change the
+        date manually via the 'Change' button on the New Case form.
         """
         if not self.settings_manager.get("vm_snapshot.enable_date_check_on_startup", True):
             return
@@ -4600,18 +4698,15 @@ File Size: {file_info['file_size']} bytes"""
         system_date = datetime.now()
         last_known = self.settings_manager.get("vm_snapshot.last_known_date", "")
 
-        date_may_be_stale = False
         if last_known:
             try:
                 last_dt = datetime.fromisoformat(last_known)
-                # If system date is older than the last known session date, snapshot was reverted
                 if system_date.date() < last_dt.date():
-                    date_may_be_stale = True
+                    # System clock went backwards — snapshot revert detected
+                    self._show_date_verification_dialog(system_date, warn_stale=True)
+                    self._populate_session_date_entry()
             except (ValueError, TypeError):
                 pass
-
-        # Always show the date confirmation dialog so analysts can correct the date
-        self._show_date_verification_dialog(system_date, date_may_be_stale)
 
         # Persist today's date as the last known date
         self.settings_manager.set(
