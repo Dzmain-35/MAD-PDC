@@ -55,11 +55,11 @@ def sync_system_clock() -> Tuple[bool, str]:
     #   3. Start the service
     #   4. Force an NTP resync with source rediscovery
     steps = [
-        (["net", "stop", "w32time"],                   "Stopping Windows Time service"),
-        (["w32tm", "/unregister"],                      "Unregistering time service"),
-        (["w32tm", "/register"],                        "Registering time service"),
-        (["net", "start", "w32time"],                   "Starting Windows Time service"),
-        (["w32tm", "/resync", "/rediscover", "/force"], "Forcing NTP resync"),
+        (["net", "stop", "w32time"],              "Stopping Windows Time service"),
+        (["w32tm", "/unregister"],                 "Unregistering time service"),
+        (["w32tm", "/register"],                   "Registering time service"),
+        (["net", "start", "w32time"],              "Starting Windows Time service"),
+        (["w32tm", "/resync", "/force"],           "Forcing NTP resync"),
     ]
 
     errors = []
