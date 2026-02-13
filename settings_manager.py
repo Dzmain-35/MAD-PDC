@@ -84,7 +84,6 @@ class SettingsManager:
             "create_backups_on_update": True,
         },
         "vm_snapshot": {
-            "enable_date_check_on_startup": True,  # Prompt analyst to verify date on launch
             "last_known_date": "",  # ISO date string of last session, used to detect stale snapshots
         },
     }
@@ -369,8 +368,7 @@ class SettingsManager:
             "sigma.network_sigma_path": "Network path for shared Sigma rules",
             "sigma.create_backups_on_delete": "Create backup when deleting Sigma rules",
             "sigma.create_backups_on_update": "Create backup when updating Sigma rules",
-            "vm_snapshot.enable_date_check_on_startup": "Prompt to verify date on startup (for VM snapshot recovery)",
-            "vm_snapshot.last_known_date": "Last known session date (auto-updated)",
+            "vm_snapshot.last_known_date": "Last known session date (auto-updated, used for clock sync detection)",
         }
         return descriptions.get(key_path, "No description available")
 

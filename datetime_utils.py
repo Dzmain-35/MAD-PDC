@@ -1,122 +1,88 @@
 """
 DateTime Utilities for MAD-PDC
-Provides centralized date/time handling to support VM snapshot date override.
+Provides centralized date/time handling and Windows clock sync for VM snapshots.
 
 When analysts work in Virtual Machines and revert to snapshots, the system clock
-may be incorrect (set to the snapshot date). This module provides a single point
-of control for all date/time operations so the correct date can be enforced
-regardless of the system clock.
+resets to the snapshot date.  Rather than maintaining a software override, this
+module can force the real Windows clock to resync via NTP — the same effect as
+toggling "Set time automatically" off and back on in Windows Settings.
 
 Usage:
-    from datetime_utils import get_current_datetime
+    from datetime_utils import get_current_datetime, sync_system_clock
 
-    # Instead of datetime.now(), use:
+    # Centralized datetime accessor (drop-in replacement for datetime.now())
     now = get_current_datetime()
+
+    # Force an NTP resync of the system clock (requires admin / elevated)
+    success, message = sync_system_clock()
 """
 
-from datetime import datetime, timedelta
-from typing import Optional
-import threading
-
-
-class _DateTimeManager:
-    """
-    Internal singleton managing the date/time override state.
-
-    When a date override is active, get_current_datetime() returns the overridden
-    date with the current system time-of-day offset applied, so timestamps within
-    a session still progress naturally.
-    """
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._override_date: Optional[datetime] = None
-        self._override_set_at: Optional[datetime] = None  # system time when override was set
-
-    def set_date_override(self, target_date: datetime) -> None:
-        """
-        Set a date override. All subsequent calls to get_current_datetime()
-        will return timestamps on the target date, with time-of-day advancing
-        naturally from the moment the override is set.
-
-        Args:
-            target_date: The correct date to use (only the date portion is used).
-        """
-        with self._lock:
-            self._override_date = target_date.replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            self._override_set_at = datetime.now()
-
-    def clear_date_override(self) -> None:
-        """Remove the date override and revert to system clock."""
-        with self._lock:
-            self._override_date = None
-            self._override_set_at = None
-
-    def get_current_datetime(self) -> datetime:
-        """
-        Return the current datetime, applying the date override if active.
-
-        If an override is set, the returned datetime uses the overridden date
-        but the time-of-day advances normally from when the override was set.
-        """
-        with self._lock:
-            if self._override_date is not None and self._override_set_at is not None:
-                system_now = datetime.now()
-                elapsed = system_now - self._override_set_at
-                return self._override_date + timedelta(
-                    hours=self._override_set_at.hour,
-                    minutes=self._override_set_at.minute,
-                    seconds=self._override_set_at.second,
-                    microseconds=self._override_set_at.microsecond,
-                ) + elapsed
-            return datetime.now()
-
-    def has_override(self) -> bool:
-        """Check if a date override is currently active."""
-        with self._lock:
-            return self._override_date is not None
-
-    def get_override_date(self) -> Optional[datetime]:
-        """Return the override date if set, else None."""
-        with self._lock:
-            return self._override_date
-
-
-# Module-level singleton
-_manager = _DateTimeManager()
+from datetime import datetime
+from typing import Tuple
+import subprocess
+import platform
 
 
 def get_current_datetime() -> datetime:
     """
-    Get the current datetime, respecting any VM snapshot date override.
+    Get the current datetime.
 
-    Drop-in replacement for datetime.now() throughout the MAD-PDC codebase.
+    All modules in MAD-PDC call this instead of datetime.now() so that
+    the clock source is centralised in one place.
     """
-    return _manager.get_current_datetime()
+    return datetime.now()
 
 
-def set_date_override(target_date: datetime) -> None:
+def sync_system_clock() -> Tuple[bool, str]:
     """
-    Override the application date (for VM snapshot recovery).
+    Force the Windows system clock to resync via NTP.
 
-    Args:
-        target_date: The correct date to use.
+    Equivalent to toggling *Settings > Time & Language > Set time automatically*
+    off and back on.  Restarts the Windows Time service and forces an NTP resync.
+
+    Requires the process to be running with elevated (Administrator) privileges,
+    which MAD already needs for Sysmon / process monitoring.
+
+    Returns:
+        (success, message) — True with a status string, or False with an error.
     """
-    _manager.set_date_override(target_date)
+    if platform.system() != "Windows":
+        return False, "Time sync is only supported on Windows"
 
+    # The sequence mirrors what the Settings toggle does internally:
+    #   1. Stop the time service
+    #   2. Unregister / re-register to reset state
+    #   3. Start the service
+    #   4. Force an NTP resync with source rediscovery
+    steps = [
+        (["net", "stop", "w32time"],                   "Stopping Windows Time service"),
+        (["w32tm", "/unregister"],                      "Unregistering time service"),
+        (["w32tm", "/register"],                        "Registering time service"),
+        (["net", "start", "w32time"],                   "Starting Windows Time service"),
+        (["w32tm", "/resync", "/rediscover", "/force"], "Forcing NTP resync"),
+    ]
 
-def clear_date_override() -> None:
-    """Remove the date override and revert to the system clock."""
-    _manager.clear_date_override()
+    errors = []
+    for cmd, description in steps:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            # net stop returns non-zero if already stopped — that's fine
+            if result.returncode != 0 and cmd[0] != "net":
+                errors.append(f"{description}: {result.stderr.strip() or result.stdout.strip()}")
+        except FileNotFoundError:
+            return False, f"Command not found: {cmd[0]}"
+        except subprocess.TimeoutExpired:
+            errors.append(f"{description}: timed out")
+        except Exception as e:
+            errors.append(f"{description}: {e}")
 
+    if errors:
+        return False, "; ".join(errors)
 
-def has_date_override() -> bool:
-    """Check whether a date override is currently active."""
-    return _manager.has_override()
-
-
-def get_override_date() -> Optional[datetime]:
-    """Return the override date if set, else None."""
-    return _manager.get_override_date()
+    return True, f"System clock resynced successfully at {datetime.now().strftime('%m/%d/%Y %H:%M:%S')}"

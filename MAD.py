@@ -2,7 +2,7 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
-from datetime_utils import get_current_datetime, set_date_override, clear_date_override, has_date_override, get_override_date
+from datetime_utils import get_current_datetime, sync_system_clock
 from case_manager import CaseManager
 from PIL import Image
 import os
@@ -236,13 +236,10 @@ class ForensicAnalysisGUI:
         """Refresh the date indicator in the header bar."""
         try:
             now = get_current_datetime()
-            if has_date_override():
-                text = f"DATE OVERRIDE: {now.strftime('%m/%d/%Y')}"
-                color = "#fbbf24"  # amber for override
-            else:
-                text = now.strftime("%m/%d/%Y")
-                color = "#9ca3af"
-            self.date_indicator_label.configure(text=text, text_color=color)
+            self.date_indicator_label.configure(
+                text=now.strftime("%m/%d/%Y  %H:%M"),
+                text_color="#9ca3af"
+            )
         except Exception:
             pass
         self.root.after(30000, self._update_date_indicator)
@@ -470,49 +467,6 @@ class ForensicAnalysisGUI:
             border_width=2
         )
         self.report_url_entry.pack(padx=5, pady=(0, 20))
-
-        # Session Date display (for VM snapshot awareness)
-        date_frame = ctk.CTkFrame(form_container, fg_color="transparent")
-        date_frame.pack(fill="x", padx=5, pady=(0, 15))
-
-        date_label = ctk.CTkLabel(
-            date_frame,
-            text="Session Date",
-            font=Fonts.label_large,
-            text_color="white",
-            anchor="w"
-        )
-        date_label.pack(anchor="w", pady=(0, 5))
-
-        date_row = ctk.CTkFrame(date_frame, fg_color="transparent")
-        date_row.pack(fill="x")
-
-        self.session_date_entry = ctk.CTkEntry(
-            date_row,
-            width=form_entry_width - 130,
-            height=40,
-            font=Fonts.body_large,
-            fg_color=self.colors["navy"],
-            border_color=self.colors["red"],
-            border_width=2
-        )
-        self.session_date_entry.pack(side="left")
-        self._populate_session_date_entry()
-
-        btn_change_date = ctk.CTkButton(
-            date_row,
-            text="Change",
-            command=self._change_session_date,
-            width=120,
-            height=40,
-            font=Fonts.label_large,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"],
-            border_width=2,
-            border_color=self.colors["red"],
-            corner_radius=8
-        )
-        btn_change_date.pack(side="left", padx=(10, 0))
 
         # Upload method selection
         upload_method_frame = ctk.CTkFrame(center_container, fg_color="transparent")
@@ -2347,55 +2301,45 @@ class ForensicAnalysisGUI:
                 self.live_events_toggle_monitoring()
     
     # ==================== EVENT HANDLERS ====================
-    def _populate_session_date_entry(self):
-        """Fill the session date entry with the current effective date."""
-        self.session_date_entry.configure(state="normal")
-        self.session_date_entry.delete(0, "end")
-        self.session_date_entry.insert(0, get_current_datetime().strftime("%m/%d/%Y"))
-        self.session_date_entry.configure(state="disabled")
+    def _sync_clock_before_case(self):
+        """
+        Auto-sync the Windows system clock via NTP before creating a case.
 
-    def _change_session_date(self):
-        """Open a dialog to let the analyst change the session date."""
-        system_date = datetime.now()
-        self._show_date_verification_dialog(system_date, warn_stale=False)
-        # Refresh the entry on the New Case form and the header indicator
-        self._populate_session_date_entry()
+        This is the equivalent of toggling 'Set time automatically' off and
+        back on in Windows Settings — it forces w32time to resync from the
+        NTP server so the system clock is correct even after a VM snapshot
+        revert.  Runs silently; any failure is logged to the status label.
+        """
+        self.new_case_status.configure(
+            text="Syncing system clock...",
+            text_color="#fbbf24"
+        )
+        self.root.update_idletasks()
+
+        success, message = sync_system_clock()
+
+        if success:
+            print(f"Clock sync: {message}")
+            self.new_case_status.configure(
+                text=f"Clock synced: {get_current_datetime().strftime('%m/%d/%Y %H:%M:%S')}",
+                text_color="#22c55e"
+            )
+        else:
+            print(f"Clock sync failed: {message}")
+            self.new_case_status.configure(
+                text=f"Clock sync skipped ({message})",
+                text_color="#f97316"
+            )
+
+        # Update the header date display
         self._update_date_indicator()
-        # Persist
+
+        # Persist as latest known date
         self.settings_manager.set(
             "vm_snapshot.last_known_date",
             get_current_datetime().date().isoformat()
         )
         self.settings_manager.save_settings()
-
-    def _check_date_before_case_creation(self):
-        """
-        Lightweight staleness check run each time a new case is created.
-        Compares the system clock against the last known session date.
-        If the system clock has gone backwards (snapshot revert), auto-opens
-        the date verification dialog so the analyst can correct it.
-        """
-        system_date = datetime.now()
-        last_known = self.settings_manager.get("vm_snapshot.last_known_date", "")
-
-        if not last_known:
-            return  # First run ever — nothing to compare against
-
-        try:
-            last_dt = datetime.fromisoformat(last_known)
-        except (ValueError, TypeError):
-            return
-
-        if system_date.date() < last_dt.date():
-            # System clock went backwards — very likely a snapshot revert
-            self._show_date_verification_dialog(system_date, warn_stale=True)
-            self._populate_session_date_entry()
-            self._update_date_indicator()
-            self.settings_manager.set(
-                "vm_snapshot.last_known_date",
-                get_current_datetime().date().isoformat()
-            )
-            self.settings_manager.save_settings()
 
     def on_upload_method_change(self):
         """Handle upload method radio button change"""
@@ -2413,8 +2357,8 @@ class ForensicAnalysisGUI:
             messagebox.showwarning("Scan in Progress", "Please wait for current scan to complete")
             return
 
-        # Re-check if the system date looks stale (VM may have reverted while MAD was open)
-        self._check_date_before_case_creation()
+        # Force NTP clock resync to handle VM snapshot date staleness
+        self._sync_clock_before_case()
 
         # Validate analyst name and report URL
         analyst_name = self.analyst_name_entry.get().strip()
@@ -4524,11 +4468,6 @@ File Size: {file_info['file_size']} bytes"""
             ("network.network_yara_path", "Network YARA Path", "entry"),
         ])
 
-        # VM Snapshot Settings
-        self.create_settings_section(settings_scroll, "VM Snapshot Date Handling", [
-            ("vm_snapshot.enable_date_check_on_startup", "Verify Date on Startup", "switch"),
-        ])
-
         # Load current settings
         self.load_settings_to_ui()
 
@@ -4685,146 +4624,13 @@ File Size: {file_info['file_size']} bytes"""
 
     # ==================== APPLICATION LIFECYCLE ====================
 
-    def _check_vm_snapshot_date(self):
-        """
-        Check if the system date may be stale due to a VM snapshot revert.
-        Only shows the verification dialog when staleness is actually detected,
-        so normal launches are uninterrupted. Analysts can always change the
-        date manually via the 'Change' button on the New Case form.
-        """
-        if not self.settings_manager.get("vm_snapshot.enable_date_check_on_startup", True):
-            return
-
-        system_date = datetime.now()
-        last_known = self.settings_manager.get("vm_snapshot.last_known_date", "")
-
-        if last_known:
-            try:
-                last_dt = datetime.fromisoformat(last_known)
-                if system_date.date() < last_dt.date():
-                    # System clock went backwards — snapshot revert detected
-                    self._show_date_verification_dialog(system_date, warn_stale=True)
-                    self._populate_session_date_entry()
-            except (ValueError, TypeError):
-                pass
-
-        # Persist today's date as the last known date
-        self.settings_manager.set(
-            "vm_snapshot.last_known_date",
-            get_current_datetime().date().isoformat()
-        )
-        self.settings_manager.save_settings()
-
-    def _show_date_verification_dialog(self, system_date: datetime, warn_stale: bool):
-        """
-        Show a dialog that lets the analyst confirm or override the current date.
-
-        Args:
-            system_date: The current system clock datetime.
-            warn_stale: If True, the dialog warns that the date appears stale.
-        """
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("Verify Session Date")
-        dialog.geometry("480x340")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        # Center on parent
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 480) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 340) // 2
-        dialog.geometry(f"+{x}+{y}")
-
-        # Warning or info header
-        if warn_stale:
-            header_text = "WARNING: System date appears to be from a previous VM snapshot!"
-            header_color = "#dc2626"
-        else:
-            header_text = "Confirm today's date for this analysis session"
-            header_color = "white"
-
-        header = ctk.CTkLabel(dialog, text=header_text,
-                              font=("Segoe UI", 14, "bold"),
-                              text_color=header_color,
-                              wraplength=440)
-        header.pack(padx=20, pady=(20, 10))
-
-        sys_date_label = ctk.CTkLabel(
-            dialog,
-            text=f"System clock reads: {system_date.strftime('%A, %B %d, %Y')}",
-            font=("Segoe UI", 13),
-            text_color="#9ca3af"
-        )
-        sys_date_label.pack(padx=20, pady=(0, 15))
-
-        # Date entry frame
-        date_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        date_frame.pack(padx=20, pady=5)
-
-        ctk.CTkLabel(date_frame, text="Correct Date (MM/DD/YYYY):",
-                     font=("Segoe UI", 13)).pack(side="left", padx=(0, 10))
-
-        date_entry = ctk.CTkEntry(date_frame, width=160, font=("Segoe UI", 13))
-        date_entry.pack(side="left")
-        date_entry.insert(0, system_date.strftime("%m/%d/%Y"))
-
-        # Status label for validation feedback
-        status_label = ctk.CTkLabel(dialog, text="", font=("Segoe UI", 12),
-                                    text_color="#dc2626")
-        status_label.pack(padx=20, pady=5)
-
-        # Button frame
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(padx=20, pady=(10, 20))
-
-        def accept_date():
-            date_str = date_entry.get().strip()
-            try:
-                entered_date = datetime.strptime(date_str, "%m/%d/%Y")
-            except ValueError:
-                status_label.configure(text="Invalid format. Use MM/DD/YYYY (e.g., 02/12/2026)")
-                return
-
-            if entered_date.date() != system_date.date():
-                # Analyst corrected the date - set override
-                set_date_override(entered_date)
-                print(f"Date override set to: {entered_date.strftime('%m/%d/%Y')}")
-            else:
-                # System date matches - no override needed
-                clear_date_override()
-
-            dialog.destroy()
-
-        def use_system_date():
-            clear_date_override()
-            dialog.destroy()
-
-        ctk.CTkButton(btn_frame, text="Use This Date",
-                      command=accept_date,
-                      fg_color="#dc2626", hover_color="#991b1b",
-                      font=("Segoe UI", 13, "bold"),
-                      width=160).pack(side="left", padx=10)
-
-        ctk.CTkButton(btn_frame, text="Use System Clock",
-                      command=use_system_date,
-                      fg_color="#374151", hover_color="#4b5563",
-                      font=("Segoe UI", 13),
-                      width=160).pack(side="left", padx=10)
-
-        # Wait for dialog to close before continuing
-        self.root.wait_window(dialog)
-
     def run(self):
         """Start the application"""
-        # Check VM snapshot date before starting work
-        self.root.after(100, self._run_after_date_check)
+        self.root.after(100, self._start_monitoring)
         self.root.mainloop()
 
-    def _run_after_date_check(self):
-        """Called after the main window is visible to run the date check and start monitoring."""
-        self._check_vm_snapshot_date()
-
+    def _start_monitoring(self):
+        """Called after the main window is visible to start background monitoring."""
         # Auto-start process monitoring
         if not self.process_monitor_active:
             self.process_monitor.start_monitoring()
