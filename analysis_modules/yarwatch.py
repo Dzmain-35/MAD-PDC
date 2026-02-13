@@ -10,7 +10,6 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
 from datetime import datetime
-from datetime_utils import get_current_datetime
 
 
 class YarWatch:
@@ -137,7 +136,7 @@ class YarWatch:
                 "file_size": file_size,
                 "md5": md5_hash,
                 "sha256": sha256_hash,
-                "scan_timestamp": get_current_datetime().isoformat(),
+                "scan_timestamp": datetime.now().isoformat(),
                 "matches_found": len(matches),
                 "detailed_matches": detailed_matches,
                 "threat_detected": len(matches) > 0
@@ -167,7 +166,7 @@ class YarWatch:
             error_result = {
                 "error": str(e),
                 "file_path": file_path,
-                "scan_timestamp": get_current_datetime().isoformat()
+                "scan_timestamp": datetime.now().isoformat()
             }
             print(f"ERROR scanning file: {e}")
             import traceback

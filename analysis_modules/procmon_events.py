@@ -16,7 +16,6 @@ import time
 import psutil
 import threading
 from datetime import datetime
-from datetime_utils import get_current_datetime
 from typing import Dict, List, Optional, Callable, Set
 from collections import deque
 import queue
@@ -27,7 +26,7 @@ class ProcmonEvent:
     
     def __init__(self, event_type: str, operation: str, path: str, result: str, 
                  detail: str = "", pid: int = 0, tid: int = 0):
-        self.timestamp = get_current_datetime()
+        self.timestamp = datetime.now()
         self.event_type = event_type  # "File", "Registry", "Thread", "Process", "Network"
         self.operation = operation    # "CreateFile", "RegOpenKey", "ThreadCreate", etc.
         self.path = path              # File path, registry key, or resource

@@ -8,7 +8,6 @@ import os
 import shutil
 from pathlib import Path
 from datetime import datetime
-from datetime_utils import get_current_datetime
 from typing import Tuple, List, Dict, Any, Optional
 
 try:
@@ -197,7 +196,7 @@ class SigmaRuleManager:
                 backup_dir = self.sigma_rules_path / "_backups"
                 backup_dir.mkdir(exist_ok=True)
 
-                timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"{rule_path.stem}_{timestamp}{rule_path.suffix}"
                 backup_path = backup_dir / backup_name
                 shutil.copy2(rule_path, backup_path)
@@ -236,7 +235,7 @@ class SigmaRuleManager:
                 backup_dir = self.sigma_rules_path / "_backups"
                 backup_dir.mkdir(exist_ok=True)
 
-                timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"{rule_path.stem}_{timestamp}{rule_path.suffix}"
                 backup_path = backup_dir / backup_name
                 shutil.copy2(rule_path, backup_path)

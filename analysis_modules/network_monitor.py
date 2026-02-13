@@ -9,7 +9,6 @@ import threading
 import time
 from typing import Dict, List, Optional, Callable, Set
 from datetime import datetime
-from datetime_utils import get_current_datetime
 from collections import defaultdict
 import re
 
@@ -97,7 +96,7 @@ class NetworkMonitor:
                     
                     # New connection detected
                     if conn_id not in self.active_connections:
-                        conn['first_seen'] = get_current_datetime().isoformat()
+                        conn['first_seen'] = datetime.now().isoformat()
                         conn['packet_count'] = 0
                         
                         # Check if suspicious
@@ -116,7 +115,7 @@ class NetworkMonitor:
                     else:
                         # Update existing connection
                         self.active_connections[conn_id]['packet_count'] += 1
-                        self.active_connections[conn_id]['last_seen'] = get_current_datetime().isoformat()
+                        self.active_connections[conn_id]['last_seen'] = datetime.now().isoformat()
                 
                 # Remove closed connections
                 closed_connections = set(self.active_connections.keys()) - current_conn_ids
@@ -154,7 +153,7 @@ class NetworkMonitor:
                         'remote_port': conn.raddr.port if conn.raddr else None,
                         'status': conn.status,
                         'pid': conn.pid,
-                        'timestamp': get_current_datetime().isoformat()
+                        'timestamp': datetime.now().isoformat()
                     }
                     
                     # Get process info if available
