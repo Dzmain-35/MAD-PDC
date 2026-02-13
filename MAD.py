@@ -2,7 +2,7 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
-from datetime_utils import get_current_datetime, sync_system_clock
+from datetime_utils import get_current_datetime, sync_clock_from_network
 from case_manager import CaseManager
 from PIL import Image
 import os
@@ -2303,20 +2303,26 @@ class ForensicAnalysisGUI:
     # ==================== EVENT HANDLERS ====================
     def _sync_clock_before_case(self):
         """
-        Auto-sync the Windows system clock via NTP before creating a case.
+        Auto-sync the Windows system clock from the network file server
+        before creating a case.
 
-        This is the equivalent of toggling 'Set time automatically' off and
-        back on in Windows Settings — it forces w32time to resync from the
-        NTP server so the system clock is correct even after a VM snapshot
-        revert.  Runs silently; any failure is logged to the status label.
+        Probes the configured network case folder to get the server's real
+        time, then sets the local system clock to match.  The file server
+        is always correct because it is not affected by VM snapshot reverts.
+        If network sharing is not enabled, the step is silently skipped.
         """
+        network_path = self.settings_manager.get("network.network_case_folder_path", "")
+        if not network_path or not self.settings_manager.get("network.enable_network_case_folder", False):
+            # Network sharing not configured — skip silently
+            return
+
         self.new_case_status.configure(
-            text="Syncing system clock...",
+            text="Syncing clock from network server...",
             text_color="#fbbf24"
         )
         self.root.update_idletasks()
 
-        success, message = sync_system_clock()
+        success, message = sync_clock_from_network(network_path)
 
         if success:
             print(f"Clock sync: {message}")
@@ -2325,7 +2331,7 @@ class ForensicAnalysisGUI:
                 text_color="#22c55e"
             )
         else:
-            print(f"Clock sync failed: {message}")
+            print(f"Clock sync note: {message}")
             self.new_case_status.configure(
                 text=f"Clock sync skipped ({message})",
                 text_color="#f97316"
