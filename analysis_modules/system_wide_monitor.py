@@ -17,6 +17,7 @@ import threading
 import time
 import re
 from datetime import datetime, timedelta
+from datetime_utils import get_current_datetime
 from typing import Dict, List, Optional, Callable, Any, Set
 from collections import deque
 import queue
@@ -278,7 +279,7 @@ class SystemWideMonitor:
         self.event_filter = EventFilter()
 
         # Last event timestamp for incremental updates
-        self.last_update_time = datetime.now()
+        self.last_update_time = get_current_datetime()
 
     def load_sigma_rules(self, rules_path: str) -> tuple:
         """
@@ -460,9 +461,10 @@ class SystemWideMonitor:
                             cmdline = ' '.join(proc.info.get('cmdline', [])) if proc.info.get('cmdline') else ''
                             exe = proc.info.get('exe', proc.info.get('name', 'Unknown'))
 
+                            now = get_current_datetime()
                             event = {
-                                'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                                'time_full': datetime.now().isoformat(),
+                                'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
+                                'time_full': now.isoformat(),
                                 'event_type': 'Process',
                                 'operation': 'ProcessCreate',
                                 'path': exe,
@@ -482,9 +484,10 @@ class SystemWideMonitor:
                 # Detect terminated processes
                 terminated = self.known_processes - current_processes
                 for pid in terminated:
+                    now = get_current_datetime()
                     event = {
-                        'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                        'time_full': datetime.now().isoformat(),
+                        'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
+                        'time_full': now.isoformat(),
                         'event_type': 'Process',
                         'operation': 'ProcessTerminate',
                         'path': f'PID {pid}',
@@ -527,9 +530,10 @@ class SystemWideMonitor:
                                     self.known_connections[pid] = set()
 
                                 if conn_id not in self.known_connections[pid]:
+                                    now = get_current_datetime()
                                     event = {
-                                        'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                                        'time_full': datetime.now().isoformat(),
+                                        'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
+                                        'time_full': now.isoformat(),
                                         'event_type': 'Network',
                                         'operation': 'NetworkConnect',
                                         'path': f"{conn.raddr.ip}:{conn.raddr.port}",

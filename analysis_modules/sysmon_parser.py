@@ -43,6 +43,7 @@ Install: sysmon.exe -accepteula -i
 import threading
 import time
 from datetime import datetime
+from datetime_utils import get_current_datetime
 from typing import Dict, List, Optional, Callable, Any
 from collections import deque
 import queue
@@ -132,7 +133,7 @@ class SysmonEvent:
     }
 
     def __init__(self, event_id: int, event_data: Dict[str, Any]):
-        self.timestamp = event_data.get('TimeCreated', datetime.now())
+        self.timestamp = event_data.get('TimeCreated', get_current_datetime())
         self.event_id = event_id
         self.event_type = self.EVENT_TYPE_MAP.get(event_id, "Unknown")
         self.operation = self.OPERATION_MAP.get(event_id, f"Event{event_id}")

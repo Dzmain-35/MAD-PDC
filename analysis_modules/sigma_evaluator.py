@@ -18,6 +18,7 @@ import re
 import fnmatch
 from pathlib import Path
 from datetime import datetime
+from datetime_utils import get_current_datetime
 from typing import Dict, List, Optional, Any, Set, Tuple
 
 try:
@@ -69,7 +70,7 @@ class SigmaMatch:
         self.rule = rule
         self.event_data = event_data
         self.matched_selections = matched_selections
-        self.timestamp = datetime.now()
+        self.timestamp = get_current_datetime()
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -9,6 +9,7 @@ import math
 from typing import Dict, List, Set, Optional, Callable
 from collections import Counter
 from datetime import datetime
+from datetime_utils import get_current_datetime
 
 
 class FileStringExtractor:
@@ -77,7 +78,7 @@ class FileStringExtractor:
         }
 
         try:
-            start_time = datetime.now()
+            start_time = get_current_datetime()
 
             # Get file size
             file_size = os.path.getsize(file_path)
@@ -107,7 +108,7 @@ class FileStringExtractor:
             for key in result['strings']:
                 result['strings'][key] = sorted(list(result['strings'][key]))[:max_strings]
 
-            end_time = datetime.now()
+            end_time = get_current_datetime()
             result['extraction_time'] = (end_time - start_time).total_seconds()
 
             total_strings = sum(len(s) for s in result['strings'].values())
@@ -443,7 +444,7 @@ class FileStringExtractor:
                     f.write(f"File: {extraction_result['file_name']}\n")
                     f.write(f"Path: {extraction_result['file_path']}\n")
                     f.write(f"Size: {extraction_result['file_size']:,} bytes\n")
-                    f.write(f"Extracted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Extracted: {get_current_datetime().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"Scan Mode: {extraction_result.get('scan_mode', 'N/A')}\n")
 
                     total_strings = sum(len(s) for s in extraction_result['strings'].values())

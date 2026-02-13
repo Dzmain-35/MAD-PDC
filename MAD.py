@@ -2,6 +2,7 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
+from datetime_utils import get_current_datetime, sync_system_clock
 from case_manager import CaseManager
 from PIL import Image
 import os
@@ -217,11 +218,31 @@ class ForensicAnalysisGUI:
         header = ctk.CTkFrame(self.root, height=60, corner_radius=0, fg_color=self.colors["navy"])
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-        
+
         title = ctk.CTkLabel(header, text="MAD - Malware Analysis Dashboard",
                             font=Fonts.header_subsection,
                             text_color="white")
         title.pack(side="left", padx=20, pady=15)
+
+        # Date indicator (right side of header) - shows active session date
+        self.date_indicator_label = ctk.CTkLabel(
+            header, text="", font=("Segoe UI", 12), text_color="#9ca3af")
+        self.date_indicator_label.pack(side="right", padx=20, pady=15)
+
+        # Update the date indicator every 30 seconds
+        self._update_date_indicator()
+
+    def _update_date_indicator(self):
+        """Refresh the date indicator in the header bar."""
+        try:
+            now = get_current_datetime()
+            self.date_indicator_label.configure(
+                text=now.strftime("%m/%d/%Y  %H:%M"),
+                text_color="#9ca3af"
+            )
+        except Exception:
+            pass
+        self.root.after(30000, self._update_date_indicator)
         
     def create_main_container(self):
         """Create main layout with sidebar and content area"""
@@ -1659,7 +1680,7 @@ class ForensicAnalysisGUI:
             "monitoring": False,
             "current_filter": None,
             "update_job": None,
-            "last_update_time": datetime.now() - timedelta(days=1),  # Start from yesterday to catch existing events
+            "last_update_time": get_current_datetime() - timedelta(days=1),  # Start from yesterday to catch existing events
             "event_count": 0
         }
 
@@ -2053,7 +2074,7 @@ class ForensicAnalysisGUI:
                 )
 
                 # Update last update time
-                monitor_state["last_update_time"] = datetime.now()
+                monitor_state["last_update_time"] = get_current_datetime()
 
                 # Schedule next refresh (500ms)
                 monitor_state["update_job"] = frame.after(500, refresh_events)
@@ -2072,7 +2093,7 @@ class ForensicAnalysisGUI:
             filepath = filedialog.asksaveasfilename(
                 defaultextension=".csv",
                 filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialfile=f"mad_system_events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                initialfile=f"mad_system_events_{get_current_datetime().strftime('%Y%m%d_%H%M%S')}.csv"
             )
 
             if filepath:
@@ -2280,6 +2301,46 @@ class ForensicAnalysisGUI:
                 self.live_events_toggle_monitoring()
     
     # ==================== EVENT HANDLERS ====================
+    def _sync_clock_before_case(self):
+        """
+        Auto-sync the Windows system clock via NTP before creating a case.
+
+        This is the equivalent of toggling 'Set time automatically' off and
+        back on in Windows Settings — it forces w32time to resync from the
+        NTP server so the system clock is correct even after a VM snapshot
+        revert.  Runs silently; any failure is logged to the status label.
+        """
+        self.new_case_status.configure(
+            text="Syncing system clock...",
+            text_color="#fbbf24"
+        )
+        self.root.update_idletasks()
+
+        success, message = sync_system_clock()
+
+        if success:
+            print(f"Clock sync: {message}")
+            self.new_case_status.configure(
+                text=f"Clock synced: {get_current_datetime().strftime('%m/%d/%Y %H:%M:%S')}",
+                text_color="#22c55e"
+            )
+        else:
+            print(f"Clock sync failed: {message}")
+            self.new_case_status.configure(
+                text=f"Clock sync skipped ({message})",
+                text_color="#f97316"
+            )
+
+        # Update the header date display
+        self._update_date_indicator()
+
+        # Persist as latest known date
+        self.settings_manager.set(
+            "vm_snapshot.last_known_date",
+            get_current_datetime().date().isoformat()
+        )
+        self.settings_manager.save_settings()
+
     def on_upload_method_change(self):
         """Handle upload method radio button change"""
         method = self.upload_method.get()
@@ -2295,6 +2356,9 @@ class ForensicAnalysisGUI:
         if self.scan_in_progress:
             messagebox.showwarning("Scan in Progress", "Please wait for current scan to complete")
             return
+
+        # Force NTP clock resync to handle VM snapshot date staleness
+        self._sync_clock_before_case()
 
         # Validate analyst name and report URL
         analyst_name = self.analyst_name_entry.get().strip()
@@ -2358,7 +2422,7 @@ class ForensicAnalysisGUI:
         """Background thread for file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2379,7 +2443,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": datetime.now().isoformat(),
+                "created": get_current_datetime().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -2388,7 +2452,7 @@ class ForensicAnalysisGUI:
                 "total_threats": 0,
                 "total_vt_hits": 0
             }
-            
+
             # Process each file with progress updates
             for i, file_path in enumerate(files):
                 if self.cancel_scan:
@@ -2470,7 +2534,7 @@ class ForensicAnalysisGUI:
         """Background thread for URL downloading and file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2491,7 +2555,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": datetime.now().isoformat(),
+                "created": get_current_datetime().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -3080,7 +3144,7 @@ class ForensicAnalysisGUI:
             os.makedirs(screenshots_dir, exist_ok=True)
 
             # Generate filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
             screenshot_filename = f"screenshot_{timestamp}.png"
             screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
 
@@ -3094,7 +3158,7 @@ class ForensicAnalysisGUI:
             self.current_case["screenshots"].append({
                 "filename": screenshot_filename,
                 "path": screenshot_path,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_current_datetime().isoformat(),
                 "width": clipboard_image.width,
                 "height": clipboard_image.height
             })
@@ -4559,8 +4623,14 @@ File Size: {file_info['file_size']} bytes"""
             messagebox.showerror("Error", "Failed to reset settings")
 
     # ==================== APPLICATION LIFECYCLE ====================
+
     def run(self):
         """Start the application"""
+        self.root.after(100, self._start_monitoring)
+        self.root.mainloop()
+
+    def _start_monitoring(self):
+        """Called after the main window is visible to start background monitoring."""
         # Auto-start process monitoring
         if not self.process_monitor_active:
             self.process_monitor.start_monitoring()
@@ -4570,8 +4640,6 @@ File Size: {file_info['file_size']} bytes"""
                 self.btn_toggle_process_monitor.configure(text="⏸ Stop Monitoring")
             # Start auto-refresh
             self.start_auto_refresh()
-
-        self.root.mainloop()
 
     # ==================== PROCESS MONITOR METHODS ====================
     def toggle_process_monitoring(self):

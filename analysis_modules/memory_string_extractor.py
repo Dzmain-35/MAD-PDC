@@ -978,7 +978,7 @@ class MemoryStringExtractor:
             True if successful
         """
         try:
-            from datetime import datetime
+            from datetime_utils import get_current_datetime as _get_dt
 
             with open(output_path, 'w', encoding='utf-8') as f:
                 if include_metadata:
@@ -989,7 +989,7 @@ class MemoryStringExtractor:
                     else:
                         f.write(f"Process PID: {extraction_result['pid']}\n")
 
-                    f.write(f"Extracted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"Extracted: {_get_dt().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"Scan Mode: {extraction_result.get('scan_mode', 'N/A')}\n")
 
                     total_strings = sum(len(s) for s in extraction_result['strings'].values())
