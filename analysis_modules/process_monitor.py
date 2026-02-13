@@ -15,7 +15,6 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Set
 from datetime import datetime
-from datetime_utils import get_current_datetime
 
 # Enhanced memory extraction support
 try:
@@ -336,7 +335,7 @@ class ProcessMonitor:
                 "results": {
                     "target_type": "pid",
                     "target": str(pid),
-                    "timestamp": get_current_datetime().isoformat(),
+                    "timestamp": datetime.now().isoformat(),
                     "matches_found": False,
                 },
             }

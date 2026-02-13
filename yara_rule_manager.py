@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Tuple, List, Dict
 import shutil
 from datetime import datetime
-from datetime_utils import get_current_datetime
 
 
 class YaraRuleManager:
@@ -211,7 +210,7 @@ class YaraRuleManager:
                 backup_dir = self.yara_rules_path / "_backups"
                 backup_dir.mkdir(exist_ok=True)
 
-                timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"{rule_path.stem}_{timestamp}{rule_path.suffix}"
                 backup_path = backup_dir / backup_name
 
@@ -309,7 +308,7 @@ class YaraRuleManager:
                 backup_dir = self.yara_rules_path / "_backups"
                 backup_dir.mkdir(exist_ok=True)
 
-                timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 backup_name = f"{rule_path.stem}_{timestamp}{rule_path.suffix}"
                 backup_path = backup_dir / backup_name
 

@@ -2,7 +2,6 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
-from datetime_utils import get_current_datetime, sync_system_clock
 from case_manager import CaseManager
 from PIL import Image
 import os
@@ -235,7 +234,7 @@ class ForensicAnalysisGUI:
     def _update_date_indicator(self):
         """Refresh the date indicator in the header bar."""
         try:
-            now = get_current_datetime()
+            now = datetime.now()
             self.date_indicator_label.configure(
                 text=now.strftime("%m/%d/%Y  %H:%M"),
                 text_color="#9ca3af"
@@ -1680,7 +1679,7 @@ class ForensicAnalysisGUI:
             "monitoring": False,
             "current_filter": None,
             "update_job": None,
-            "last_update_time": get_current_datetime() - timedelta(days=1),  # Start from yesterday to catch existing events
+            "last_update_time": datetime.now() - timedelta(days=1),  # Start from yesterday to catch existing events
             "event_count": 0
         }
 
@@ -2074,7 +2073,7 @@ class ForensicAnalysisGUI:
                 )
 
                 # Update last update time
-                monitor_state["last_update_time"] = get_current_datetime()
+                monitor_state["last_update_time"] = datetime.now()
 
                 # Schedule next refresh (500ms)
                 monitor_state["update_job"] = frame.after(500, refresh_events)
@@ -2093,7 +2092,7 @@ class ForensicAnalysisGUI:
             filepath = filedialog.asksaveasfilename(
                 defaultextension=".csv",
                 filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialfile=f"mad_system_events_{get_current_datetime().strftime('%Y%m%d_%H%M%S')}.csv"
+                initialfile=f"mad_system_events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             )
 
             if filepath:
@@ -2305,30 +2304,59 @@ class ForensicAnalysisGUI:
         """
         Auto-sync the Windows system clock via NTP before creating a case.
 
-        This is the equivalent of toggling 'Set time automatically' off and
-        back on in Windows Settings — it forces w32time to resync from the
-        NTP server so the system clock is correct even after a VM snapshot
-        revert.  Runs silently; any failure is logged to the status label.
+        Equivalent to toggling 'Set time automatically' off and back on in
+        Windows Settings — restarts w32time and forces an NTP resync so the
+        system clock is correct even after a VM snapshot revert.
         """
+        if platform.system() != "Windows":
+            return
+
         self.new_case_status.configure(
             text="Syncing system clock...",
             text_color="#fbbf24"
         )
         self.root.update_idletasks()
 
-        success, message = sync_system_clock()
+        steps = [
+            (["net", "stop", "w32time"],        "Stopping Windows Time service"),
+            (["w32tm", "/unregister"],           "Unregistering time service"),
+            (["w32tm", "/register"],             "Registering time service"),
+            (["net", "start", "w32time"],        "Starting Windows Time service"),
+            (["w32tm", "/resync", "/force"],     "Forcing NTP resync"),
+        ]
 
-        if success:
-            print(f"Clock sync: {message}")
+        errors = []
+        for cmd, description in steps:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if result.returncode != 0 and cmd[0] != "net":
+                    errors.append(f"{description}: {result.stderr.strip() or result.stdout.strip()}")
+            except FileNotFoundError:
+                errors.append(f"Command not found: {cmd[0]}")
+                break
+            except subprocess.TimeoutExpired:
+                errors.append(f"{description}: timed out")
+            except Exception as e:
+                errors.append(f"{description}: {e}")
+
+        if errors:
+            msg = "; ".join(errors)
+            print(f"Clock sync failed: {msg}")
             self.new_case_status.configure(
-                text=f"Clock synced: {get_current_datetime().strftime('%m/%d/%Y %H:%M:%S')}",
-                text_color="#22c55e"
+                text=f"Clock sync skipped ({msg})",
+                text_color="#f97316"
             )
         else:
-            print(f"Clock sync failed: {message}")
+            print(f"Clock resynced at {datetime.now().strftime('%m/%d/%Y %H:%M:%S')}")
             self.new_case_status.configure(
-                text=f"Clock sync skipped ({message})",
-                text_color="#f97316"
+                text=f"Clock synced: {datetime.now().strftime('%m/%d/%Y %H:%M:%S')}",
+                text_color="#22c55e"
             )
 
         # Update the header date display
@@ -2337,7 +2365,7 @@ class ForensicAnalysisGUI:
         # Persist as latest known date
         self.settings_manager.set(
             "vm_snapshot.last_known_date",
-            get_current_datetime().date().isoformat()
+            datetime.now().date().isoformat()
         )
         self.settings_manager.save_settings()
 
@@ -2422,7 +2450,7 @@ class ForensicAnalysisGUI:
         """Background thread for file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2443,7 +2471,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": get_current_datetime().isoformat(),
+                "created": datetime.now().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -2534,7 +2562,7 @@ class ForensicAnalysisGUI:
         """Background thread for URL downloading and file scanning"""
         try:
             # Create case structure
-            case_id = f"CASE-{get_current_datetime().strftime('%Y%m%d%H%M%S')}"
+            case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
             case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
             files_dir = os.path.join(case_dir, "files")
             os.makedirs(files_dir, exist_ok=True)
@@ -2555,7 +2583,7 @@ class ForensicAnalysisGUI:
             # Initialize case data
             case_data = {
                 "id": case_id,
-                "created": get_current_datetime().isoformat(),
+                "created": datetime.now().isoformat(),
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
@@ -3144,7 +3172,7 @@ class ForensicAnalysisGUI:
             os.makedirs(screenshots_dir, exist_ok=True)
 
             # Generate filename with timestamp
-            timestamp = get_current_datetime().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_filename = f"screenshot_{timestamp}.png"
             screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
 
@@ -3158,7 +3186,7 @@ class ForensicAnalysisGUI:
             self.current_case["screenshots"].append({
                 "filename": screenshot_filename,
                 "path": screenshot_path,
-                "timestamp": get_current_datetime().isoformat(),
+                "timestamp": datetime.now().isoformat(),
                 "width": clipboard_image.width,
                 "height": clipboard_image.height
             })

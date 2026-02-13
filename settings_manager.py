@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
-from datetime_utils import get_current_datetime
 
 
 class SettingsManager:
@@ -140,7 +139,7 @@ class SettingsManager:
             # Add metadata
             settings_with_meta = {
                 "_metadata": {
-                    "last_modified": get_current_datetime().isoformat(),
+                    "last_modified": datetime.now().isoformat(),
                     "version": self.settings["application"]["version"]
                 },
                 **self.settings
@@ -453,6 +452,6 @@ class SettingsManager:
 
         import os
         # Add date-based subfolder (format: M_DD_YYYY, e.g., 2_05_2026)
-        now = get_current_datetime()
+        now = datetime.now()
         date_folder = now.strftime("%-m_%d_%Y") if os.name != 'nt' else now.strftime("%#m_%d_%Y")
         return os.path.join(base_path, date_folder, folder_name)
