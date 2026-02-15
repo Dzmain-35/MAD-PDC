@@ -1166,7 +1166,7 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "Name", "File Path", "Connections", "Detection Status")
+        columns = ("PID", "File Path", "Private Bytes", "Connections", "Detection Status")
         self.process_tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1180,18 +1180,18 @@ class ForensicAnalysisGUI:
         hsb.config(command=self.process_tree.xview)
 
         # Configure columns
-        self.process_tree.column("#0", width=200, minwidth=150)  # Tree hierarchy
+        self.process_tree.column("#0", width=250, minwidth=180)  # Tree hierarchy (name shown here)
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
-        self.process_tree.column("Name", width=200, minwidth=150)
         self.process_tree.column("File Path", width=350, minwidth=200)
+        self.process_tree.column("Private Bytes", width=120, minwidth=80, anchor="e")
         self.process_tree.column("Connections", width=200, minwidth=120, anchor="center")
         self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
 
         # Headers
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
-        self.process_tree.heading("Name", text="Name")
         self.process_tree.heading("File Path", text="File Path")
+        self.process_tree.heading("Private Bytes", text="Private Bytes")
         self.process_tree.heading("Connections", text="Network Connections")
         self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
@@ -4861,14 +4861,16 @@ File Size: {file_info['file_size']} bytes"""
                     if not tags or tags == ('new',) or tags == ('system',):
                         tags = ('sigma_match',)
 
-                # Get network connections summary
+                # Get network connections summary and private bytes
                 conn_summary = self._get_process_connections_summary(pid)
+                private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
 
-                # Update if status changed (check both connections and detection columns)
-                if len(current_values) > 4 and (current_values[3] != conn_summary or current_values[4] != yara_status):
-                    self.process_tree.item(item_id, values=(pid, proc['name'], proc.get('exe', 'N/A'), conn_summary, yara_status), tags=tags)
-                elif len(current_values) <= 4:
-                    self.process_tree.item(item_id, values=(pid, proc['name'], proc.get('exe', 'N/A'), conn_summary, yara_status), tags=tags)
+                # Build new values tuple
+                new_values = (pid, proc.get('exe', 'N/A'), private_bytes, conn_summary, yara_status)
+
+                # Update if any column changed
+                if len(current_values) != len(new_values) or tuple(str(v) for v in current_values) != tuple(str(v) for v in new_values):
+                    self.process_tree.item(item_id, values=new_values, tags=tags)
             except Exception as e:
                 # If error, mark for re-adding
                 if pid in self.pid_to_tree_item:
@@ -4959,15 +4961,16 @@ File Size: {file_info['file_size']} bytes"""
                     if not tags or tags == ('new',) or tags == ('system',):
                         tags = ('sigma_match',)
 
-                # Get network connections summary
+                # Get network connections summary and private bytes
                 conn_summary = self._get_process_connections_summary(pid)
+                private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
 
                 # Insert into tree
                 item_id = self.process_tree.insert(
                     parent_id,
                     "end",
                     text=f"  {name}",
-                    values=(pid, name, exe, conn_summary, yara_status),
+                    values=(pid, exe, private_bytes, conn_summary, yara_status),
                     tags=tags,
                     open=pid in expanded_pids
                 )
@@ -5062,6 +5065,20 @@ File Size: {file_info['file_size']} bytes"""
         if sigma_count != self.total_sigma_matches:
             self.total_sigma_matches = sigma_count
             self.update_sigma_match_badge()
+
+    def _format_private_bytes(self, num_bytes):
+        """Format bytes into human-readable size (like Process Hacker Private Bytes)"""
+        if not num_bytes or num_bytes == 0:
+            return "0 B"
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        unit_index = 0
+        size = float(num_bytes)
+        while size >= 1024.0 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(size)} B"
+        return f"{size:,.1f} {units[unit_index]}"
 
     def _get_process_connections_summary(self, pid):
         """Get a summary string of network connections for a process"""
@@ -5463,15 +5480,16 @@ File Size: {file_info['file_size']} bytes"""
                 if not tags or tags == ('system',):
                     tags = ('sigma_match',)
 
-            # Get network connections summary
+            # Get network connections summary and private bytes
             conn_summary = self._get_process_connections_summary(pid)
+            private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
 
             # Insert into tree (expanded by default for filtered view)
             item_id = self.process_tree.insert(
                 parent_id,
                 "end",
                 text=f"  {name}",
-                values=(pid, name, exe, conn_summary, yara_status),
+                values=(pid, exe, private_bytes, conn_summary, yara_status),
                 tags=tags,
                 open=True  # Auto-expand
             )
@@ -5915,14 +5933,14 @@ Errors: {scan_stats['errors']}"""
         
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
-        
+        name = item['text'].strip()
+
         # Get process info
         info = self.process_monitor.get_process_info(pid)
         if not info:
             messagebox.showerror("Error", f"Could not get info for PID {pid}")
             return
-        
+
         # Create window
         details_window = ctk.CTkToplevel(self.root)
         details_window.title(f"Process Analysis: {name} (PID {pid})")
@@ -7325,7 +7343,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             return
 
         item = self.process_tree.item(selection[0])
-        file_path = item['values'][2]  # File Path column
+        file_path = item['values'][1]  # File Path column
 
         if not file_path or file_path == "N/A":
             messagebox.showerror("Error", "Process does not have an accessible file path")
@@ -7364,7 +7382,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         if messagebox.askyesno("Confirm Kill",
                               f"Are you sure you want to kill process {name} (PID {pid})?"):
@@ -7384,7 +7402,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         success = self.process_monitor.suspend_process(pid)
         if success:
@@ -7401,7 +7419,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         success = self.process_monitor.resume_process(pid)
         if success:
