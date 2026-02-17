@@ -1166,7 +1166,7 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "Name", "File Path", "Detection Status")
+        columns = ("PID", "File Path", "Private Bytes", "Connections", "Detection Status")
         self.process_tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1180,17 +1180,19 @@ class ForensicAnalysisGUI:
         hsb.config(command=self.process_tree.xview)
 
         # Configure columns
-        self.process_tree.column("#0", width=200, minwidth=150)  # Tree hierarchy
+        self.process_tree.column("#0", width=250, minwidth=180)  # Tree hierarchy (name shown here)
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
-        self.process_tree.column("Name", width=200, minwidth=150)
         self.process_tree.column("File Path", width=350, minwidth=200)
+        self.process_tree.column("Private Bytes", width=120, minwidth=80, anchor="e")
+        self.process_tree.column("Connections", width=200, minwidth=120, anchor="center")
         self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
 
         # Headers
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
-        self.process_tree.heading("Name", text="Name")
         self.process_tree.heading("File Path", text="File Path")
+        self.process_tree.heading("Private Bytes", text="Private Bytes")
+        self.process_tree.heading("Connections", text="Network Connections")
         self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
         # Right-click menu with dark theme styling
@@ -1215,6 +1217,34 @@ class ForensicAnalysisGUI:
         self.process_context_menu.add_command(
             label="📂 Open Folder Location",
             command=self.open_folder_location
+        )
+        self.process_context_menu.add_separator(background="#444444")
+        # Network connection IOC submenu
+        self.process_conn_menu = tk.Menu(
+            self.process_context_menu,
+            tearoff=0,
+            bg="#1a1a1a",
+            fg="white",
+            activebackground="#dc2626",
+            activeforeground="white",
+            borderwidth=0,
+            relief="flat"
+        )
+        self.process_conn_menu.add_command(
+            label="Add Remote IP to Case",
+            command=lambda: self.add_process_conn_ioc_to_case("remote_ip")
+        )
+        self.process_conn_menu.add_command(
+            label="Add Remote Hostname to Case",
+            command=lambda: self.add_process_conn_ioc_to_case("hostname")
+        )
+        self.process_conn_menu.add_command(
+            label="Add All Connection IPs to Case",
+            command=lambda: self.add_process_conn_ioc_to_case("all_ips")
+        )
+        self.process_context_menu.add_cascade(
+            label="🌐 Add Connection to Case",
+            menu=self.process_conn_menu
         )
         self.process_context_menu.add_separator(background="#444444")
         # Note: Suspend/Resume will be added dynamically in show_process_context_menu
@@ -4831,9 +4861,16 @@ File Size: {file_info['file_size']} bytes"""
                     if not tags or tags == ('new',) or tags == ('system',):
                         tags = ('sigma_match',)
 
-                # Update if YARA status changed
-                if len(current_values) > 3 and current_values[3] != yara_status:
-                    self.process_tree.item(item_id, values=(pid, proc['name'], proc.get('exe', 'N/A'), yara_status), tags=tags)
+                # Get network connections summary and private bytes
+                conn_summary = self._get_process_connections_summary(pid)
+                private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
+
+                # Build new values tuple
+                new_values = (pid, proc.get('exe', 'N/A'), private_bytes, conn_summary, yara_status)
+
+                # Update if any column changed
+                if len(current_values) != len(new_values) or tuple(str(v) for v in current_values) != tuple(str(v) for v in new_values):
+                    self.process_tree.item(item_id, values=new_values, tags=tags)
             except Exception as e:
                 # If error, mark for re-adding
                 if pid in self.pid_to_tree_item:
@@ -4924,12 +4961,16 @@ File Size: {file_info['file_size']} bytes"""
                     if not tags or tags == ('new',) or tags == ('system',):
                         tags = ('sigma_match',)
 
+                # Get network connections summary and private bytes
+                conn_summary = self._get_process_connections_summary(pid)
+                private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
+
                 # Insert into tree
                 item_id = self.process_tree.insert(
                     parent_id,
                     "end",
                     text=f"  {name}",
-                    values=(pid, name, exe, yara_status),
+                    values=(pid, exe, private_bytes, conn_summary, yara_status),
                     tags=tags,
                     open=pid in expanded_pids
                 )
@@ -5024,6 +5065,52 @@ File Size: {file_info['file_size']} bytes"""
         if sigma_count != self.total_sigma_matches:
             self.total_sigma_matches = sigma_count
             self.update_sigma_match_badge()
+
+    def _format_private_bytes(self, num_bytes):
+        """Format bytes into human-readable size (like Process Hacker Private Bytes)"""
+        if not num_bytes or num_bytes == 0:
+            return "0 B"
+        units = ['B', 'KB', 'MB', 'GB', 'TB']
+        unit_index = 0
+        size = float(num_bytes)
+        while size >= 1024.0 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(size)} B"
+        return f"{size:,.1f} {units[unit_index]}"
+
+    def _get_process_connections_summary(self, pid):
+        """Get a summary string of network connections for a process"""
+        try:
+            connections = self.network_monitor.get_connections_by_process(pid)
+            if not connections:
+                return "None"
+            count = len(connections)
+            # Collect unique remote IPs (excluding empty/local)
+            remote_ips = set()
+            for conn in connections:
+                rip = conn.get('remote_ip', '')
+                if rip and rip not in ('', '0.0.0.0', '::', '127.0.0.1', '::1'):
+                    remote_ips.add(rip)
+            suspicious_count = sum(1 for c in connections if c.get('suspicious'))
+            if suspicious_count:
+                return f"⚠️ {count} ({suspicious_count} suspicious)"
+            elif remote_ips:
+                if len(remote_ips) == 1:
+                    return f"{count} → {next(iter(remote_ips))}"
+                return f"{count} → {len(remote_ips)} IPs"
+            else:
+                return f"{count} (local)"
+        except Exception:
+            return "None"
+
+    def _get_process_connections(self, pid):
+        """Get the list of network connections for a process"""
+        try:
+            return self.network_monitor.get_connections_by_process(pid)
+        except Exception:
+            return []
 
     def focus_process_by_pid(self, target_pid):
         """
@@ -5393,12 +5480,16 @@ File Size: {file_info['file_size']} bytes"""
                 if not tags or tags == ('system',):
                     tags = ('sigma_match',)
 
+            # Get network connections summary and private bytes
+            conn_summary = self._get_process_connections_summary(pid)
+            private_bytes = self._format_private_bytes(proc.get('private_bytes', 0))
+
             # Insert into tree (expanded by default for filtered view)
             item_id = self.process_tree.insert(
                 parent_id,
                 "end",
                 text=f"  {name}",
-                values=(pid, name, exe, yara_status),
+                values=(pid, exe, private_bytes, conn_summary, yara_status),
                 tags=tags,
                 open=True  # Auto-expand
             )
@@ -5481,16 +5572,24 @@ File Size: {file_info['file_size']} bytes"""
             except:
                 pass
 
+            # Enable/disable network connection submenu based on connections
+            connections = self._get_process_connections(pid)
+            if connections:
+                self.process_context_menu.entryconfigure(4, state="normal")
+            else:
+                self.process_context_menu.entryconfigure(4, state="disabled")
+
             # Remove any existing suspend/resume entries
-            # The menu structure is: Scan, View Details, Open Folder, Separator, [Suspend/Resume], Kill
-            # So suspend/resume would be at index 4 (after separator at 3)
+            # Menu structure: Scan(0), Details(1), Folder(2), Sep(3), Connections(4), Sep(5), [Suspend/Resume(6)], Kill(7)
+            # The dynamic suspend/resume is inserted at index 6
+            suspend_resume_idx = 6
             menu_length = self.process_context_menu.index('end')
-            if menu_length is not None and menu_length >= 4:
-                # Check if there's a suspend or resume entry
+            if menu_length is not None and menu_length >= suspend_resume_idx:
+                # Check if there's a suspend or resume entry at the expected index
                 try:
-                    label = self.process_context_menu.entrycget(4, 'label')
+                    label = self.process_context_menu.entrycget(suspend_resume_idx, 'label')
                     if '⏸️' in label or '▶️' in label:
-                        self.process_context_menu.delete(4)
+                        self.process_context_menu.delete(suspend_resume_idx)
                 except:
                     pass
 
@@ -5498,14 +5597,14 @@ File Size: {file_info['file_size']} bytes"""
             if is_suspended:
                 # Show Resume option
                 self.process_context_menu.insert_command(
-                    4,
+                    suspend_resume_idx,
                     label="▶️ Resume Process",
                     command=self.resume_selected_process
                 )
             else:
                 # Show Suspend option
                 self.process_context_menu.insert_command(
-                    4,
+                    suspend_resume_idx,
                     label="⏸️ Suspend Process",
                     command=self.suspend_selected_process
                 )
@@ -5834,14 +5933,14 @@ Errors: {scan_stats['errors']}"""
         
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
-        
+        name = item['text'].strip()
+
         # Get process info
         info = self.process_monitor.get_process_info(pid)
         if not info:
             messagebox.showerror("Error", f"Could not get info for PID {pid}")
             return
-        
+
         # Create window
         details_window = ctk.CTkToplevel(self.root)
         details_window.title(f"Process Analysis: {name} (PID {pid})")
@@ -7244,7 +7343,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
             return
 
         item = self.process_tree.item(selection[0])
-        file_path = item['values'][2]  # File Path column
+        file_path = item['values'][1]  # File Path column
 
         if not file_path or file_path == "N/A":
             messagebox.showerror("Error", "Process does not have an accessible file path")
@@ -7283,7 +7382,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         if messagebox.askyesno("Confirm Kill",
                               f"Are you sure you want to kill process {name} (PID {pid})?"):
@@ -7303,7 +7402,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         success = self.process_monitor.suspend_process(pid)
         if success:
@@ -7320,7 +7419,7 @@ Parent PID: {info['parent_pid']} ({info['parent_name']})
 
         item = self.process_tree.item(selection[0])
         pid = int(item['values'][0])
-        name = item['values'][1]
+        name = item['text'].strip()
 
         success = self.process_monitor.resume_process(pid)
         if success:
@@ -7569,6 +7668,139 @@ Risk Level: {risk_level}"""
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to add IOC: {str(e)}")
+
+    def add_process_conn_ioc_to_case(self, field_type):
+        """Add network connection IOCs from the selected process to the current case"""
+        if not self.current_case:
+            messagebox.showwarning("No Active Case", "No active case to add IOC to. Please create or load a case first.")
+            return
+
+        selection = self.process_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a process first.")
+            return
+
+        try:
+            item = self.process_tree.item(selection[0])
+            pid = int(item['values'][0])
+            connections = self._get_process_connections(pid)
+
+            if not connections:
+                messagebox.showinfo("No Connections", f"No network connections found for PID {pid}.")
+                return
+
+            if field_type == "all_ips":
+                # Add all unique remote IPs from this process's connections
+                added_ips = []
+                for conn in connections:
+                    rip = conn.get('remote_ip', '')
+                    if rip and rip not in ('', '0.0.0.0', '::', '127.0.0.1', '::1'):
+                        if rip not in added_ips:
+                            self.case_manager.add_ioc("ips", rip)
+                            added_ips.append(rip)
+                if added_ips:
+                    self.refresh_iocs_display()
+                    messagebox.showinfo("Success", f"Added {len(added_ips)} IP(s) to case IOCs:\n" + "\n".join(added_ips))
+                else:
+                    messagebox.showinfo("No IPs", "No remote IPs found in this process's connections.")
+
+            elif field_type == "remote_ip":
+                # Show a selection dialog if there are multiple unique remote IPs
+                remote_ips = []
+                for conn in connections:
+                    rip = conn.get('remote_ip', '')
+                    if rip and rip not in ('', '0.0.0.0', '::', '127.0.0.1', '::1') and rip not in remote_ips:
+                        remote_ips.append(rip)
+
+                if not remote_ips:
+                    messagebox.showinfo("No IPs", "No remote IPs found in this process's connections.")
+                    return
+
+                if len(remote_ips) == 1:
+                    ip = remote_ips[0]
+                    self.case_manager.add_ioc("ips", ip)
+                    self.refresh_iocs_display()
+                    messagebox.showinfo("Success", f"Added IP '{ip}' to case IOCs!")
+                else:
+                    self._show_connection_picker(remote_ips, "ips", "Select IP to Add")
+
+            elif field_type == "hostname":
+                # Collect unique hostnames
+                hostnames = []
+                for conn in connections:
+                    hostname = conn.get('remote_hostname', '')
+                    if hostname and hostname != '-' and hostname not in hostnames:
+                        hostnames.append(hostname)
+
+                if not hostnames:
+                    messagebox.showinfo("No Hostnames", "No resolved hostnames found in this process's connections.")
+                    return
+
+                if len(hostnames) == 1:
+                    domain = hostnames[0]
+                    self.case_manager.add_ioc("domains", domain)
+                    self.refresh_iocs_display()
+                    messagebox.showinfo("Success", f"Added domain '{domain}' to case IOCs!")
+                else:
+                    self._show_connection_picker(hostnames, "domains", "Select Domain to Add")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to add IOC: {str(e)}")
+
+    def _show_connection_picker(self, items, ioc_type, title):
+        """Show a picker dialog for selecting which connection IOC to add to case"""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("400x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (350 // 2)
+        dialog.geometry(f"400x350+{x}+{y}")
+
+        content = ctk.CTkFrame(dialog, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=15, pady=15)
+
+        label = ctk.CTkLabel(content, text=f"Select {ioc_type.rstrip('s')} to add to case:",
+                             font=("Segoe UI", 14, "bold"))
+        label.pack(pady=(0, 10))
+
+        # Scrollable list of items with checkboxes
+        scroll_frame = ctk.CTkScrollableFrame(content, fg_color="gray20", height=200)
+        scroll_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        check_vars = {}
+        for item_val in items:
+            var = tk.BooleanVar(value=True)
+            check_vars[item_val] = var
+            cb = ctk.CTkCheckBox(scroll_frame, text=item_val, variable=var,
+                                 fg_color=self.colors["red"],
+                                 hover_color=self.colors["red_dark"])
+            cb.pack(anchor="w", padx=10, pady=3)
+
+        def add_selected():
+            added = []
+            for val, var in check_vars.items():
+                if var.get():
+                    self.case_manager.add_ioc(ioc_type, val)
+                    added.append(val)
+            if added:
+                self.refresh_iocs_display()
+                messagebox.showinfo("Success", f"Added {len(added)} {ioc_type.rstrip('s')}(s) to case IOCs!")
+            dialog.destroy()
+
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(btn_frame, text="Add Selected", command=add_selected,
+                       fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+                       height=35).pack(side="left", padx=5, expand=True, fill="x")
+        ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy,
+                       fg_color="gray30", hover_color="gray40",
+                       height=35).pack(side="right", padx=5)
 
     def add_live_event_iocs_to_case(self, events_tree):
         """Extract and add IOCs from selected live event(s) to current case"""

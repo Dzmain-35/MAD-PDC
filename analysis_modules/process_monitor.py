@@ -896,6 +896,14 @@ class ProcessMonitor:
                         info['exe'] = proc.exe() if proc.exe() else "N/A"
                     except:
                         info['exe'] = "N/A"
+
+                    # Get memory info (private bytes / rss)
+                    try:
+                        mem = proc.memory_info()
+                        # On Windows, 'private' is Private Bytes; on Linux use rss
+                        info['private_bytes'] = getattr(mem, 'private', None) or mem.rss
+                    except:
+                        info['private_bytes'] = 0
                     
                     # Check if this process has been scanned
                     if info['pid'] in self.monitored_processes:
