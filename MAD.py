@@ -1662,6 +1662,8 @@ class ForensicAnalysisGUI:
             yscrollcommand=events_vsb.set,
             xscrollcommand=events_hsb.set
         )
+        self.live_events_tree = events_tree
+        self._live_event_data = {}  # iid -> full event dict
 
         # Configure columns
         events_tree.heading("time", text="Time")
@@ -1721,6 +1723,7 @@ class ForensicAnalysisGUI:
                 events_context_menu.grab_release()
 
         events_tree.bind("<Button-3>", show_context_menu)
+        events_tree.bind("<Double-1>", lambda e: self._show_live_event_detail())
 
         # Store state for monitoring
         from datetime import timedelta
@@ -1851,6 +1854,7 @@ class ForensicAnalysisGUI:
 
             # Clear and refresh display with filtered events
             events_tree.delete(*events_tree.get_children())
+            self._live_event_data.clear()
 
             # Get ALL events from monitor and filter them for display
             monitor = monitor_state["monitor"]
@@ -1877,7 +1881,7 @@ class ForensicAnalysisGUI:
                     path = str(path)[:97] + "..."
 
                 # Insert event
-                events_tree.insert("", "end", values=(
+                iid = events_tree.insert("", "end", values=(
                     event.get('timestamp', ''),
                     event.get('pid', 0),
                     event.get('process_name', '')[:20],
@@ -1886,6 +1890,7 @@ class ForensicAnalysisGUI:
                     path,
                     event.get('result', '')
                 ), tags=tags)
+                self._live_event_data[iid] = event
 
             # Update process info panel
             update_process_info()
@@ -1917,6 +1922,7 @@ class ForensicAnalysisGUI:
 
             # Clear and refresh display with ALL events
             events_tree.delete(*events_tree.get_children())
+            self._live_event_data.clear()
 
             monitor = monitor_state["monitor"]
             all_events = monitor.get_recent_events(count=5000)
@@ -1938,7 +1944,7 @@ class ForensicAnalysisGUI:
                     path = str(path)[:97] + "..."
 
                 # Insert event
-                events_tree.insert("", "end", values=(
+                iid = events_tree.insert("", "end", values=(
                     event.get('timestamp', ''),
                     event.get('pid', 0),
                     event.get('process_name', '')[:20],
@@ -1947,6 +1953,7 @@ class ForensicAnalysisGUI:
                     path,
                     event.get('result', '')
                 ), tags=tags)
+                self._live_event_data[iid] = event
 
             # Hide process info panel
             process_info_panel.pack_forget()
@@ -2016,6 +2023,7 @@ class ForensicAnalysisGUI:
 
                 # Clear and refresh display with filtered events
                 events_tree.delete(*events_tree.get_children())
+                self._live_event_data.clear()
 
                 # Get ALL events from monitor and filter them for display
                 monitor = monitor_state["monitor"]
@@ -2042,7 +2050,7 @@ class ForensicAnalysisGUI:
                         path = str(path)[:97] + "..."
 
                     # Insert event
-                    events_tree.insert("", "end", values=(
+                    iid = events_tree.insert("", "end", values=(
                         event.get('timestamp', ''),
                         event.get('pid', 0),
                         event.get('process_name', '')[:20],
@@ -2051,6 +2059,7 @@ class ForensicAnalysisGUI:
                         path,
                         event.get('result', '')
                     ), tags=tags)
+                    self._live_event_data[iid] = event
 
                 # Update process info panel
                 update_process_info()
@@ -2090,7 +2099,7 @@ class ForensicAnalysisGUI:
                         path = str(path)[:97] + "..."
 
                     # Insert event
-                    events_tree.insert("", "end", values=(
+                    iid = events_tree.insert("", "end", values=(
                         event.get('timestamp', ''),
                         event.get('pid', 0),
                         event.get('process_name', '')[:20],  # Truncate process name
@@ -2099,6 +2108,7 @@ class ForensicAnalysisGUI:
                         path,
                         event.get('result', '')
                     ), tags=tags)
+                    self._live_event_data[iid] = event
 
                     monitor_state["event_count"] += 1
 
@@ -2106,6 +2116,7 @@ class ForensicAnalysisGUI:
                 children = events_tree.get_children()
                 if len(children) > 5000:
                     for item in children[:len(children) - 5000]:
+                        self._live_event_data.pop(item, None)
                         events_tree.delete(item)
 
                 # Update statistics
@@ -2235,6 +2246,108 @@ class ForensicAnalysisGUI:
         self.live_events_toggle_monitoring = toggle_monitoring
 
         self.analysis_subtabs["live_events"] = frame
+
+    def _show_live_event_detail(self):
+        """Show full details for a double-clicked live event."""
+        sel = self.live_events_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        event = self._live_event_data.get(iid)
+        if not event:
+            return
+
+        detail = ctk.CTkToplevel(self.root)
+        detail.title(f"Event Detail: {event.get('operation', '')} - PID {event.get('pid', '')}")
+        detail.geometry("720x500")
+        detail.configure(fg_color="#1a1a1a")
+        detail.attributes("-topmost", True)
+        detail.after(200, lambda: detail.focus_force())
+
+        # Header with event type coloring
+        etype = event.get('event_type', 'Unknown')
+        type_colors = {
+            "Process": "#22d3ee", "Registry": "#f97316",
+            "File": "#4ade80", "Network": "#a78bfa",
+            "DNS": "#fbbf24", "ImageLoad": "#f472b6",
+        }
+        header_color = type_colors.get(etype, "#9ca3af")
+
+        ctk.CTkLabel(
+            detail,
+            text=f"{etype}  |  {event.get('operation', '')}",
+            font=Fonts.title_medium, text_color=header_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        # Sigma match banner
+        sigma = event.get('sigma_matches')
+        if sigma:
+            sigma_text = "  |  ".join(sigma) if isinstance(sigma, list) else str(sigma)
+            ctk.CTkLabel(
+                detail, text=f"SIGMA: {sigma_text}",
+                font=Fonts.body_bold, text_color="#c084fc", fg_color="#4c1d95",
+                corner_radius=6
+            ).pack(padx=15, pady=(0, 5), anchor="w")
+
+        # Build detail text
+        lines = [
+            f"Time:       {event.get('timestamp', '')}",
+            f"PID:        {event.get('pid', '')}",
+            f"Process:    {event.get('process_name', '')}",
+            f"User:       {event.get('user', 'N/A')}",
+            f"Event Type: {etype}",
+            f"Operation:  {event.get('operation', '')}",
+            f"Result:     {event.get('result', '')}",
+            f"Event ID:   {event.get('event_id', 'N/A')}",
+            "",
+            "Path / Target:",
+            "=" * 60,
+            str(event.get('path', '')),
+        ]
+
+        detail_field = event.get('detail', '')
+        if detail_field:
+            lines += ["", "Detail / Command Line:", "=" * 60, str(detail_field)]
+
+        # Show any extra raw fields
+        skip_keys = {'timestamp', 'time_full', 'event_type', 'operation', 'path',
+                     'result', 'detail', 'pid', 'tid', 'process_name', 'user',
+                     'event_id', 'sigma_matches'}
+        extra = {k: v for k, v in event.items() if k not in skip_keys and v}
+        if extra:
+            lines += ["", "Additional Fields:", "=" * 60]
+            for k, v in extra.items():
+                lines.append(f"  {k}: {v}")
+
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", "\n".join(lines))
+        text_widget.configure(state="disabled")
+
+        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        # Copy detail/command
+        copy_text = str(detail_field) if detail_field else str(event.get('path', ''))
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Detail", height=32, width=140,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(copy_text))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Path", height=32, width=140,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(),
+                             self.root.clipboard_append(str(event.get('path', ''))))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Close", command=detail.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(side="right", padx=5)
 
     # ==================== PERSISTENCE SUBTAB ====================
     def create_persistence_subtab(self):
