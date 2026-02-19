@@ -2400,6 +2400,7 @@ class ForensicAnalysisGUI:
         )
 
         self.persistence_tree.bind("<Button-3>", self._show_persistence_context_menu)
+        self.persistence_tree.bind("<Double-1>", lambda e: self._show_persistence_entry_detail())
 
         self.analysis_subtabs["persistence"] = frame
 
@@ -2458,6 +2459,7 @@ class ForensicAnalysisGUI:
             return
 
         self.persistence_tree.delete(*self.persistence_tree.get_children())
+        self._persistence_entry_map = {}  # iid -> PersistenceEntry (full, untruncated)
         filter_type = self.persistence_filter_var.get()
         search = self.persistence_search_var.get().lower().strip()
 
@@ -2480,11 +2482,12 @@ class ForensicAnalysisGUI:
                     continue
                 type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
                 tag = change["change_type"]  # added / removed / modified
-                self.persistence_tree.insert("", "end", values=(
+                iid = self.persistence_tree.insert("", "end", values=(
                     type_label, entry.source, entry.name,
                     entry.value[:200], entry.severity.upper(),
                     change["change_type"].upper()
                 ), tags=(tag,))
+                self._persistence_entry_map[iid] = entry
         else:
             # Show full baseline
             for entry in self.persistence_monitor.get_all_entries():
@@ -2493,10 +2496,11 @@ class ForensicAnalysisGUI:
                 if search and not self._persistence_matches_search(entry, search):
                     continue
                 type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
-                self.persistence_tree.insert("", "end", values=(
+                iid = self.persistence_tree.insert("", "end", values=(
                     type_label, entry.source, entry.name,
                     entry.value[:200], entry.severity.upper(), "baseline"
                 ), tags=(entry.severity,))
+                self._persistence_entry_map[iid] = entry
 
     @staticmethod
     def _persistence_matches_search(entry, search: str) -> bool:
@@ -2600,6 +2604,87 @@ class ForensicAnalysisGUI:
             ioc_entry = f"[Persistence] {values[2]}: {ioc_value}"
             if hasattr(self.current_case, 'iocs') and isinstance(self.current_case.get('iocs'), list):
                 self.current_case['iocs'].append(ioc_entry)
+
+    def _show_persistence_entry_detail(self):
+        """Show full untruncated details for the selected persistence entry."""
+        sel = self.persistence_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        entry = getattr(self, '_persistence_entry_map', {}).get(iid)
+        if not entry:
+            return
+
+        detail = ctk.CTkToplevel(self.root)
+        detail.title(f"Persistence Entry: {entry.name}")
+        detail.geometry("700x480")
+        detail.configure(fg_color="#1a1a1a")
+        detail.attributes("-topmost", True)
+        detail.after(200, lambda: detail.focus_force())
+
+        severity_colors = {
+            "critical": "#ef4444", "high": "#f97316",
+            "medium": "#eab308", "low": "#9ca3af"
+        }
+        header_color = severity_colors.get(entry.severity, "#9ca3af")
+
+        ctk.CTkLabel(
+            detail,
+            text=f"{'Registry' if entry.entry_type == 'registry' else 'Scheduled Task'}"
+                 f"  [{entry.severity.upper()}]",
+            font=Fonts.title_medium, text_color=header_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        # Build full detail text
+        lines = [
+            f"Source:    {entry.source}",
+            f"Location:  {entry.location}",
+            f"Name:      {entry.name}",
+            f"Severity:  {entry.severity.upper()}",
+            f"First seen: {entry.first_seen.strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "Full Value / Command:",
+            "=" * 60,
+            entry.value,
+        ]
+
+        if entry.extra.get("previous_value"):
+            lines += ["", "Previous Value:", "=" * 60, entry.extra["previous_value"]]
+
+        if entry.entry_type == "scheduled_task":
+            lines.append("")
+            if entry.extra.get("author"):
+                lines.append(f"Author:   {entry.extra['author']}")
+            if entry.extra.get("triggers"):
+                lines.append(f"Triggers: {entry.extra['triggers']}")
+            if entry.extra.get("full_path"):
+                lines.append(f"Task Path: {entry.extra['full_path']}")
+
+        if entry.entry_type == "registry" and entry.extra.get("reg_type") is not None:
+            reg_type_names = {1: "REG_SZ", 2: "REG_EXPAND_SZ", 3: "REG_BINARY",
+                              4: "REG_DWORD", 7: "REG_MULTI_SZ", 11: "REG_QWORD"}
+            lines.append(f"\nRegistry Type: {reg_type_names.get(entry.extra['reg_type'], entry.extra['reg_type'])}")
+
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", "\n".join(lines))
+        text_widget.configure(state="disabled")
+
+        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Command", height=32, width=140,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(entry.value))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Close", command=detail.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(side="right", padx=5)
 
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
