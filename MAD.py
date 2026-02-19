@@ -6041,13 +6041,13 @@ Errors: {scan_stats['errors']}"""
         details = f"""Process Details (PID {pid})
 {'='*80}
 
-Name: {info['name']}
-Executable: {info['exe']}
-Command Line: {info['cmdline']}
-Status: {info['status']}
-Username: {info['username']}
-Created: {info['create_time']}
-Parent PID: {info['parent_pid']} ({info['parent_name']})
+Name: {info.get('name', 'N/A')}
+Executable: {info.get('exe', 'N/A')}
+Command Line: {info.get('cmdline', 'N/A')}
+Status: {info.get('status', 'N/A')}
+Username: {info.get('username', 'N/A')}
+Created: {info.get('create_time', 'N/A')}
+Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
 """
         
