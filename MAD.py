@@ -5,6 +5,7 @@ from datetime import datetime
 from case_manager import CaseManager
 from PIL import Image
 import os
+import socket
 import threading
 import subprocess
 import platform
@@ -5083,7 +5084,7 @@ File Size: {file_info['file_size']} bytes"""
     def _get_process_connections_summary(self, pid):
         """Get a summary string of network connections for a process"""
         try:
-            connections = self.network_monitor.get_connections_by_process(pid)
+            connections = self._get_process_connections(pid)
             if not connections:
                 return "None"
             count = len(connections)
@@ -5106,9 +5107,35 @@ File Size: {file_info['file_size']} bytes"""
             return "None"
 
     def _get_process_connections(self, pid):
-        """Get the list of network connections for a process"""
+        """Get live network connections for a process directly via psutil"""
         try:
-            return self.network_monitor.get_connections_by_process(pid)
+            import psutil
+            proc = psutil.Process(pid)
+            raw_conns = proc.net_connections(kind='inet')
+            connections = []
+            for conn in raw_conns:
+                conn_info = {
+                    'family': 'IPv4' if conn.family == socket.AF_INET else 'IPv6',
+                    'type': 'TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
+                    'local_ip': conn.laddr.ip if conn.laddr else None,
+                    'local_port': conn.laddr.port if conn.laddr else None,
+                    'remote_ip': conn.raddr.ip if conn.raddr else None,
+                    'remote_port': conn.raddr.port if conn.raddr else None,
+                    'status': conn.status,
+                    'pid': pid,
+                }
+                # Check suspicious via network monitor
+                if self.network_monitor._is_suspicious_connection(conn_info):
+                    conn_info['suspicious'] = True
+                # Try hostname from network monitor's active_connections cache
+                conn_id = self.network_monitor._get_connection_id(conn_info)
+                cached = self.network_monitor.active_connections.get(conn_id)
+                if cached:
+                    conn_info['remote_hostname'] = cached.get('remote_hostname', '')
+                connections.append(conn_info)
+            return connections
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return []
         except Exception:
             return []
 
