@@ -1,0 +1,46 @@
+title: Scheduled Task Created via schtasks.exe
+id: f2d1c7a0-1022-4a0b-8b0a-sigma0022
+status: stable
+level: high
+description: Detects creation of scheduled tasks via schtasks.exe, commonly used by malware for persistence
+author: MAD-PDC
+date: 2026/02/19
+tags:
+    - attack.persistence
+    - attack.execution
+    - attack.t1053.005
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_schtasks:
+        Image|endswith: '\schtasks.exe'
+        CommandLine|contains: '/create'
+    selection_suspicious_action:
+        CommandLine|contains:
+            - 'powershell'
+            - 'cmd.exe'
+            - 'mshta'
+            - 'wscript'
+            - 'cscript'
+            - 'rundll32'
+            - 'regsvr32'
+            - 'certutil'
+            - '\AppData\'
+            - '\Temp\'
+            - '\ProgramData\'
+            - 'bitsadmin'
+            - '-enc'
+            - '-nop'
+            - '-w hidden'
+            - 'bypass'
+            - '.bat'
+            - '.vbs'
+            - '.js'
+            - '.hta'
+    condition: selection_schtasks and selection_suspicious_action
+falsepositives:
+    - Legitimate administrative scripts
+    - Software deployment tools
+references:
+    - https://attack.mitre.org/techniques/T1053/005/

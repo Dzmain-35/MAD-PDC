@@ -12,6 +12,7 @@ import platform
 import webbrowser
 from analysis_modules.process_monitor import ProcessMonitor
 from analysis_modules.network_monitor import NetworkMonitor
+from analysis_modules.persistence_monitor import PersistenceMonitor
 from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
@@ -125,13 +126,18 @@ class ForensicAnalysisGUI:
 
         self.network_monitor = NetworkMonitor()
 
+        self.persistence_monitor = PersistenceMonitor(poll_interval=5.0)
+
         # Register callbacks for real-time updates
         self.process_monitor.register_process_callback(self.on_new_process_detected)
         self.network_monitor.register_connection_callback(self.on_new_connection_detected)
+        self.persistence_monitor.register_callback(self.on_persistence_change_detected)
 
         # Monitoring states (from settings)
         self.process_monitor_active = False
         self.network_monitor_active = False
+        self.persistence_monitor_active = False
+        self.persistence_change_count = 0
 
         # Auto-refresh state (from settings)
         self.auto_refresh_enabled = True
@@ -989,6 +995,18 @@ class ForensicAnalysisGUI:
         )
         self.btn_live_events.pack(side="left", padx=5)
 
+        self.btn_persistence = ctk.CTkButton(
+            subtab_frame, text="🔒 Persistence",
+            command=lambda: self.show_analysis_subtab("persistence"),
+            height=35, width=150,
+            fg_color="transparent",
+            hover_color=self.colors["navy"],
+            border_width=2,
+            border_color=self.colors["red"],
+            font=Fonts.body_bold
+        )
+        self.btn_persistence.pack(side="left", padx=5)
+
         # Content area for sub-tabs
         self.analysis_content = ctk.CTkFrame(frame, corner_radius=10, fg_color=self.colors["navy"])
         self.analysis_content.pack(fill="both", expand=True, padx=20, pady=10)
@@ -998,6 +1016,7 @@ class ForensicAnalysisGUI:
         self.create_processes_subtab()
         self.create_network_subtab()
         self.create_live_events_subtab()
+        self.create_persistence_subtab()
         
         self.tabs["analysis"] = frame
         self.show_analysis_subtab("processes")
@@ -2217,6 +2236,371 @@ class ForensicAnalysisGUI:
 
         self.analysis_subtabs["live_events"] = frame
 
+    # ==================== PERSISTENCE SUBTAB ====================
+    def create_persistence_subtab(self):
+        """Create Persistence sub-tab for registry and scheduled task monitoring"""
+        frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
+
+        # Header
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=10)
+
+        title = ctk.CTkLabel(header, text="Persistence Monitor",
+                              font=Fonts.title_large,
+                              text_color="white")
+        title.pack(side="left")
+
+        # Change badge
+        self.persistence_badge = ctk.CTkLabel(
+            header, text="CHANGES: 0",
+            font=Fonts.helper,
+            text_color="#9ca3af",
+            fg_color="#374151",
+            corner_radius=8,
+            width=100, height=26
+        )
+        self.persistence_badge.pack(side="left", padx=(15, 5))
+
+        # Monitor toggle
+        self.btn_toggle_persistence = ctk.CTkButton(
+            header, text="▶ Start Monitoring",
+            command=self.toggle_persistence_monitoring,
+            height=35, width=170,
+            fg_color=self.colors["red"],
+            hover_color=self.colors["red_dark"],
+            font=Fonts.body_bold
+        )
+        self.btn_toggle_persistence.pack(side="right", padx=5)
+
+        # Baseline button
+        btn_baseline = ctk.CTkButton(
+            header, text="📸 Take Baseline",
+            command=self.take_persistence_baseline,
+            height=35, width=150,
+            fg_color=self.colors["navy"],
+            hover_color=self.colors["dark_blue"],
+            font=Fonts.body_bold
+        )
+        btn_baseline.pack(side="right", padx=5)
+
+        # Refresh button
+        btn_refresh = ctk.CTkButton(
+            header, text="🔄 Refresh",
+            command=self.refresh_persistence_view,
+            height=35, width=100,
+            fg_color=self.colors["navy"],
+            hover_color=self.colors["dark_blue"],
+            font=Fonts.body_bold
+        )
+        btn_refresh.pack(side="right", padx=5)
+
+        # Stats bar
+        stats_frame = ctk.CTkFrame(frame, fg_color="gray20", corner_radius=10)
+        stats_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        self.persistence_stats_label = ctk.CTkLabel(
+            stats_frame,
+            text="Persistence Monitor: Click 'Start Monitoring' to baseline and begin watching for changes",
+            font=Fonts.helper,
+            justify="left"
+        )
+        self.persistence_stats_label.pack(padx=15, pady=10, anchor="w")
+
+        # Filter row
+        filter_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        filter_frame.pack(fill="x", padx=20, pady=(0, 5))
+
+        ctk.CTkLabel(filter_frame, text="Filter:", font=Fonts.body_bold,
+                      text_color="white").pack(side="left", padx=(0, 5))
+
+        self.persistence_filter_var = tk.StringVar(value="all")
+        for text, val in [("All", "all"), ("Registry", "registry"),
+                          ("Tasks", "scheduled_task"), ("Changes Only", "changes")]:
+            rb = ctk.CTkRadioButton(
+                filter_frame, text=text, variable=self.persistence_filter_var,
+                value=val, command=self.refresh_persistence_view,
+                fg_color=self.colors["red"],
+                hover_color=self.colors["red_dark"],
+                font=Fonts.body
+            )
+            rb.pack(side="left", padx=8)
+
+        # Search
+        self.persistence_search_var = tk.StringVar()
+        search_entry = ctk.CTkEntry(
+            filter_frame, textvariable=self.persistence_search_var,
+            placeholder_text="Search name, value, path...",
+            width=250, height=30,
+            font=Fonts.body
+        )
+        search_entry.pack(side="right", padx=5)
+        search_entry.bind("<Return>", lambda e: self.refresh_persistence_view())
+
+        # Treeview
+        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
+        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        vsb = tk.Scrollbar(tree_frame, orient="vertical")
+        vsb.pack(side="right", fill="y")
+
+        columns = ("Type", "Source", "Name", "Value", "Severity", "Status")
+        self.persistence_tree = ttk.Treeview(
+            tree_frame, columns=columns, show="headings",
+            yscrollcommand=vsb.set, style="Process.Treeview"
+        )
+        self.persistence_tree.pack(side="left", fill="both", expand=True)
+        vsb.config(command=self.persistence_tree.yview)
+
+        self.persistence_tree.heading("Type", text="Type")
+        self.persistence_tree.column("Type", width=100, minwidth=80)
+        self.persistence_tree.heading("Source", text="Source / Location")
+        self.persistence_tree.column("Source", width=220, minwidth=150)
+        self.persistence_tree.heading("Name", text="Name")
+        self.persistence_tree.column("Name", width=200, minwidth=120)
+        self.persistence_tree.heading("Value", text="Value / Command")
+        self.persistence_tree.column("Value", width=350, minwidth=200)
+        self.persistence_tree.heading("Severity", text="Severity")
+        self.persistence_tree.column("Severity", width=80, minwidth=60)
+        self.persistence_tree.heading("Status", text="Status")
+        self.persistence_tree.column("Status", width=90, minwidth=70)
+
+        # Tag colours
+        self.persistence_tree.tag_configure("critical", background="#7f1d1d", foreground="#fca5a5")
+        self.persistence_tree.tag_configure("high", background="#5c1c1c", foreground="#ff6b6b")
+        self.persistence_tree.tag_configure("medium", background="#78350f", foreground="#fbbf24")
+        self.persistence_tree.tag_configure("low", background="#1a1a1a", foreground="white")
+        self.persistence_tree.tag_configure("added", background="#065f46", foreground="#6ee7b7")
+        self.persistence_tree.tag_configure("removed", background="#7f1d1d", foreground="#fca5a5")
+        self.persistence_tree.tag_configure("modified", background="#4c1d95", foreground="#c084fc")
+
+        # Right-click context menu
+        self.persistence_context_menu = tk.Menu(
+            self.persistence_tree, tearoff=0,
+            bg="#1a1a1a", fg="white",
+            activebackground="#dc2626", activeforeground="white",
+            borderwidth=0, relief="flat"
+        )
+        self.persistence_context_menu.add_command(
+            label="📋 Copy Name",
+            command=lambda: self._copy_persistence_cell(2)
+        )
+        self.persistence_context_menu.add_command(
+            label="📋 Copy Value",
+            command=lambda: self._copy_persistence_cell(3)
+        )
+        self.persistence_context_menu.add_separator(background="#444444")
+        self.persistence_context_menu.add_command(
+            label="📋 Copy Entire Row",
+            command=self._copy_persistence_row
+        )
+        self.persistence_context_menu.add_separator(background="#444444")
+        self.persistence_context_menu.add_command(
+            label="➕ Add Value to IOCs",
+            command=self._add_persistence_ioc
+        )
+
+        self.persistence_tree.bind("<Button-3>", self._show_persistence_context_menu)
+
+        self.analysis_subtabs["persistence"] = frame
+
+    def toggle_persistence_monitoring(self):
+        """Start or stop the persistence monitor."""
+        if not self.persistence_monitor_active:
+            self.persistence_monitor.start_monitoring()
+            self.persistence_monitor_active = True
+            self.btn_toggle_persistence.configure(text="⏹ Stop Monitoring")
+            self.persistence_stats_label.configure(
+                text="Persistence Monitor: Baselining and monitoring...",
+                text_color="#4ade80"
+            )
+            # Start auto-refresh
+            self._persistence_auto_refresh()
+        else:
+            self.persistence_monitor.stop_monitoring()
+            self.persistence_monitor_active = False
+            self.btn_toggle_persistence.configure(text="▶ Start Monitoring")
+            self.persistence_stats_label.configure(
+                text="Persistence Monitor: Stopped",
+                text_color="#9ca3af"
+            )
+
+    def take_persistence_baseline(self):
+        """Manually take a new baseline snapshot."""
+        self.persistence_stats_label.configure(
+            text="Taking baseline snapshot...", text_color="#fbbf24"
+        )
+        self.root.update_idletasks()
+
+        def _baseline():
+            counts = self.persistence_monitor.take_baseline()
+            self.root.after(0, lambda: self._on_baseline_done(counts))
+
+        threading.Thread(target=_baseline, daemon=True).start()
+
+    def _on_baseline_done(self, counts):
+        self.persistence_stats_label.configure(
+            text=f"Baseline captured: {counts['registry']} registry entries, "
+                 f"{counts['tasks']} scheduled tasks",
+            text_color="#4ade80"
+        )
+        self.refresh_persistence_view()
+
+    def _persistence_auto_refresh(self):
+        """Periodic refresh while monitoring is active."""
+        if not self.persistence_monitor_active:
+            return
+        self.refresh_persistence_view()
+        self.root.after(3000, self._persistence_auto_refresh)
+
+    def refresh_persistence_view(self):
+        """Rebuild the persistence treeview based on current filter."""
+        if not hasattr(self, 'persistence_tree'):
+            return
+
+        self.persistence_tree.delete(*self.persistence_tree.get_children())
+        filter_type = self.persistence_filter_var.get()
+        search = self.persistence_search_var.get().lower().strip()
+
+        # Update stats
+        stats = self.persistence_monitor.stats
+        stat_text = (
+            f"Registry: {stats['registry_entries']}  |  "
+            f"Tasks: {stats['scheduled_tasks']}  |  "
+            f"Changes: {stats['total_changes']} "
+            f"(+{stats['added']}  ~{stats['modified']}  -{stats['removed']})  |  "
+            f"Last scan: {stats['last_scan'] or 'N/A'}"
+        )
+        self.persistence_stats_label.configure(text=stat_text)
+
+        if filter_type == "changes":
+            # Show only detected changes
+            for change in self.persistence_monitor.get_changes():
+                entry = change["entry"]
+                if search and not self._persistence_matches_search(entry, search):
+                    continue
+                type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
+                tag = change["change_type"]  # added / removed / modified
+                self.persistence_tree.insert("", "end", values=(
+                    type_label, entry.source, entry.name,
+                    entry.value[:200], entry.severity.upper(),
+                    change["change_type"].upper()
+                ), tags=(tag,))
+        else:
+            # Show full baseline
+            for entry in self.persistence_monitor.get_all_entries():
+                if filter_type not in ("all", entry.entry_type):
+                    continue
+                if search and not self._persistence_matches_search(entry, search):
+                    continue
+                type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
+                self.persistence_tree.insert("", "end", values=(
+                    type_label, entry.source, entry.name,
+                    entry.value[:200], entry.severity.upper(), "baseline"
+                ), tags=(entry.severity,))
+
+    @staticmethod
+    def _persistence_matches_search(entry, search: str) -> bool:
+        return (search in entry.name.lower() or
+                search in entry.value.lower() or
+                search in entry.source.lower() or
+                search in entry.location.lower())
+
+    def on_persistence_change_detected(self, change_type, entry):
+        """Callback fired from PersistenceMonitor thread when a change is found."""
+        self.persistence_change_count += 1
+        self.root.after(0, self._update_persistence_badge)
+        # Show alert popup for high/critical changes
+        if entry.severity in ("high", "critical"):
+            self.root.after(0, lambda: self._show_persistence_alert(change_type, entry))
+
+    def _update_persistence_badge(self):
+        count = self.persistence_change_count
+        if count == 0:
+            color, bg = "#9ca3af", "#374151"
+        elif count <= 5:
+            color, bg = "#fbbf24", "#78350f"
+        elif count <= 15:
+            color, bg = "#fb923c", "#7c2d12"
+        else:
+            color, bg = "#f87171", "#7f1d1d"
+        self.persistence_badge.configure(
+            text=f"CHANGES: {count}", text_color=color, fg_color=bg
+        )
+
+    def _show_persistence_alert(self, change_type, entry):
+        """Show a popup alert for a significant persistence change."""
+        alert = ctk.CTkToplevel(self.root)
+        alert.title("⚠️ Persistence Change Detected")
+        alert.geometry("520x300")
+        alert.configure(fg_color="#1a1a1a")
+        alert.attributes("-topmost", True)
+        alert.after(200, lambda: alert.focus_force())
+
+        # Header
+        severity_colors = {
+            "critical": "#ef4444", "high": "#f97316",
+            "medium": "#eab308", "low": "#9ca3af"
+        }
+        header_color = severity_colors.get(entry.severity, "#9ca3af")
+
+        ctk.CTkLabel(
+            alert, text=f"🔒 {change_type.upper()}: {entry.entry_type.replace('_', ' ').title()}",
+            font=Fonts.title_medium, text_color=header_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        details = (
+            f"Source:   {entry.source}\n"
+            f"Name:     {entry.name}\n"
+            f"Value:    {entry.value[:300]}\n"
+            f"Severity: {entry.severity.upper()}"
+        )
+        if entry.extra.get("previous_value"):
+            details += f"\nPrevious: {entry.extra['previous_value'][:200]}"
+
+        text_widget = ctk.CTkTextbox(alert, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", details)
+        text_widget.configure(state="disabled")
+
+        ctk.CTkButton(
+            alert, text="Dismiss", command=alert.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(pady=(0, 15))
+
+    def _show_persistence_context_menu(self, event):
+        item = self.persistence_tree.identify_row(event.y)
+        if item:
+            self.persistence_tree.selection_set(item)
+            self.persistence_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy_persistence_cell(self, col_index):
+        sel = self.persistence_tree.selection()
+        if sel:
+            values = self.persistence_tree.item(sel[0], "values")
+            if col_index < len(values):
+                self.root.clipboard_clear()
+                self.root.clipboard_append(values[col_index])
+
+    def _copy_persistence_row(self):
+        sel = self.persistence_tree.selection()
+        if sel:
+            values = self.persistence_tree.item(sel[0], "values")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(" | ".join(str(v) for v in values))
+
+    def _add_persistence_ioc(self):
+        sel = self.persistence_tree.selection()
+        if not sel or not self.current_case:
+            return
+        values = self.persistence_tree.item(sel[0], "values")
+        if len(values) >= 4:
+            ioc_value = values[3]  # Value / Command column
+            ioc_entry = f"[Persistence] {values[2]}: {ioc_value}"
+            if hasattr(self.current_case, 'iocs') and isinstance(self.current_case.get('iocs'), list):
+                self.current_case['iocs'].append(ioc_entry)
+
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
         """Switch between main tabs"""
@@ -2305,6 +2689,11 @@ class ForensicAnalysisGUI:
             border_width=2,
             border_color=self.colors["red"]
         )
+        self.btn_persistence.configure(
+            fg_color="transparent",
+            border_width=2,
+            border_color=self.colors["red"]
+        )
 
         # Show selected subtab
         self.analysis_subtabs[subtab_name].pack(fill="both", expand=True)
@@ -2329,6 +2718,11 @@ class ForensicAnalysisGUI:
             if self.live_events_toggle_monitoring and not self.system_monitor_active:
                 print("[GUI] Auto-starting Live Events monitoring...")
                 self.live_events_toggle_monitoring()
+        elif subtab_name == "persistence":
+            self.btn_persistence.configure(
+                fg_color=self.colors["red"],
+                border_width=0
+            )
     
     # ==================== EVENT HANDLERS ====================
     def _sync_clock_before_case(self):
