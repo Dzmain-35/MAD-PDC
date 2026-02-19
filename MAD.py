@@ -1186,7 +1186,7 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "File Path", "Private Bytes", "Connections", "Detection Status")
+        columns = ("PID", "File Path", "Bytes", "Connections", "Detection Status")
         self.process_tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1203,7 +1203,7 @@ class ForensicAnalysisGUI:
         self.process_tree.column("#0", width=250, minwidth=180)  # Tree hierarchy (name shown here)
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
         self.process_tree.column("File Path", width=350, minwidth=200)
-        self.process_tree.column("Private Bytes", width=120, minwidth=80, anchor="e")
+        self.process_tree.column("Bytes", width=120, minwidth=80, anchor="e")
         self.process_tree.column("Connections", width=200, minwidth=120, anchor="center")
         self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
 
@@ -1211,7 +1211,7 @@ class ForensicAnalysisGUI:
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
         self.process_tree.heading("File Path", text="File Path")
-        self.process_tree.heading("Private Bytes", text="Private Bytes")
+        self.process_tree.heading("Bytes", text="Bytes")
         self.process_tree.heading("Connections", text="Network Connections")
         self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
