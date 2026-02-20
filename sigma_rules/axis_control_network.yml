@@ -1,0 +1,28 @@
+title: Suspicious Network Connection - 45.85.147.75
+id: 3c91e8e4-2b74-4df1-8b7b-6e6a9b5d7c42
+status: experimental
+description: Detects outbound network connections to known suspicious IP 45.85.147.75.
+references:
+  - internal IOC tracking
+
+author: Dylan
+date: 2026-02-20
+tags:
+  - attack.command_and_control
+  - attack.t1071
+
+logsource:
+  product: windows
+  service: sysmon
+  category: network_connection
+
+detection:
+  selection:
+    EventID: 3
+    DestinationIp: 45.85.147.75
+
+  condition: selection
+
+falsepositives:
+  - Legitimate infrastructure reuse (unlikely)
+level: high
