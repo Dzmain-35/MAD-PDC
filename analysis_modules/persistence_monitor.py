@@ -312,115 +312,193 @@ class PersistenceMonitor:
     # ── snapshot: scheduled tasks ────────────────────────────────────
     def _snapshot_scheduled_tasks(self) -> Dict[str, PersistenceEntry]:
         entries: Dict[str, PersistenceEntry] = OrderedDict()
+        # Try XML format first (richer data), fall back to LIST format
         try:
             result = subprocess.run(
                 ["schtasks", "/query", "/fo", "XML", "/v"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            if result.returncode != 0:
-                return entries
-            self._parse_schtasks_xml(result.stdout, entries)
+            if result.returncode == 0 and result.stdout.strip():
+                self._parse_schtasks_xml(result.stdout, entries)
         except FileNotFoundError:
-            # schtasks not available (non-Windows)
             pass
         except subprocess.TimeoutExpired:
-            print("[PersistenceMonitor] schtasks query timed out")
+            print("[PersistenceMonitor] schtasks XML query timed out")
         except Exception as e:
-            print(f"[PersistenceMonitor] schtasks error: {e}")
+            print(f"[PersistenceMonitor] schtasks XML error: {e}")
+
+        # If XML parsing yielded nothing, fall back to LIST format
+        if not entries:
+            try:
+                result = subprocess.run(
+                    ["schtasks", "/query", "/fo", "LIST", "/v"],
+                    capture_output=True, text=True, timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    self._parse_schtasks_list(result.stdout, entries)
+            except FileNotFoundError:
+                pass
+            except subprocess.TimeoutExpired:
+                print("[PersistenceMonitor] schtasks LIST query timed out")
+            except Exception as e:
+                print(f"[PersistenceMonitor] schtasks LIST error: {e}")
+
         return entries
 
     @staticmethod
     def _parse_schtasks_xml(xml_str: str, entries: Dict[str, PersistenceEntry]):
-        """Parse the XML output of schtasks /query /fo XML /v."""
-        # schtasks returns multiple XML documents concatenated — wrap them
-        wrapped = f"<root>{xml_str}</root>"
-        try:
-            root = ET.fromstring(wrapped)
-        except ET.ParseError:
-            # Try cleaning up common issues
-            try:
-                # Remove XML declarations that appear mid-stream
-                import re
-                cleaned = re.sub(r'<\?xml[^?]*\?>', '', xml_str)
-                wrapped = f"<root>{cleaned}</root>"
-                root = ET.fromstring(wrapped)
-            except ET.ParseError as e:
-                print(f"[PersistenceMonitor] XML parse error: {e}")
-                return
+        """Parse the XML output of schtasks /query /fo XML /v.
 
-        # Namespace used by schtasks XML
+        schtasks outputs multiple complete XML documents concatenated
+        together, each starting with <?xml ...?>.  We split on those
+        declarations and parse each one individually.
+        """
+        import re
+        # Split on XML declarations — each chunk is one task definition
+        chunks = re.split(r'<\?xml[^?]*\?>\s*', xml_str)
+
         ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 
-        for task_el in root.iter():
-            # Look for Task elements in the namespace
-            if task_el.tag.endswith("}Task") or task_el.tag == "Task":
-                task_name = "Unknown"
-                command = ""
-                arguments = ""
-                author = ""
-                state = ""
-                trigger_info = ""
+        for chunk in chunks:
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            try:
+                task_el = ET.fromstring(chunk)
+            except ET.ParseError:
+                continue
 
-                # Try to extract URI (task name) from RegistrationInfo
-                uri_el = task_el.find(".//t:RegistrationInfo/t:URI", ns)
-                if uri_el is not None and uri_el.text:
-                    task_name = uri_el.text
+            task_name = "Unknown"
+            command = ""
+            arguments = ""
+            author = ""
+            trigger_info = ""
 
-                author_el = task_el.find(".//t:RegistrationInfo/t:Author", ns)
-                if author_el is not None and author_el.text:
-                    author = author_el.text
+            # RegistrationInfo/URI is the task path
+            uri_el = task_el.find(".//t:RegistrationInfo/t:URI", ns)
+            if uri_el is None:
+                uri_el = task_el.find(".//RegistrationInfo/URI")
+            if uri_el is not None and uri_el.text:
+                task_name = uri_el.text
 
-                # Extract command from Actions/Exec
-                cmd_el = task_el.find(".//t:Actions/t:Exec/t:Command", ns)
-                if cmd_el is not None and cmd_el.text:
-                    command = cmd_el.text
+            author_el = task_el.find(".//t:RegistrationInfo/t:Author", ns)
+            if author_el is None:
+                author_el = task_el.find(".//RegistrationInfo/Author")
+            if author_el is not None and author_el.text:
+                author = author_el.text
 
-                args_el = task_el.find(".//t:Actions/t:Exec/t:Arguments", ns)
-                if args_el is not None and args_el.text:
-                    arguments = args_el.text
+            # Actions/Exec/Command
+            cmd_el = task_el.find(".//t:Actions/t:Exec/t:Command", ns)
+            if cmd_el is None:
+                cmd_el = task_el.find(".//Actions/Exec/Command")
+            if cmd_el is not None and cmd_el.text:
+                command = cmd_el.text
 
-                # Extract triggers summary
-                triggers = task_el.find(".//t:Triggers", ns)
-                if triggers is not None:
-                    trigger_types = []
-                    for child in triggers:
-                        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                        trigger_types.append(tag)
-                    trigger_info = ", ".join(trigger_types)
+            args_el = task_el.find(".//t:Actions/t:Exec/t:Arguments", ns)
+            if args_el is None:
+                args_el = task_el.find(".//Actions/Exec/Arguments")
+            if args_el is not None and args_el.text:
+                arguments = args_el.text
 
-                full_command = f"{command} {arguments}".strip() if command else "(no action)"
+            # Triggers summary
+            triggers = task_el.find(".//t:Triggers", ns)
+            if triggers is None:
+                triggers = task_el.find(".//Triggers")
+            if triggers is not None:
+                trigger_types = []
+                for child in triggers:
+                    tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                    trigger_types.append(tag)
+                trigger_info = ", ".join(trigger_types)
 
-                # Determine severity based on heuristics
-                severity = "low"
-                cmd_lower = full_command.lower()
-                if any(s in cmd_lower for s in [
-                    "powershell", "cmd.exe /c", "mshta", "wscript",
-                    "cscript", "rundll32", "regsvr32", "certutil",
-                    "bitsadmin", "\\temp\\", "\\tmp\\", "\\appdata\\",
-                    "base64", "-enc", "-nop", "-w hidden",
-                ]):
-                    severity = "high"
-                elif any(s in cmd_lower for s in [
-                    "\\users\\", "\\programdata\\", ".bat", ".vbs", ".js",
-                ]):
-                    severity = "medium"
+            full_command = f"{command} {arguments}".strip() if command else ""
+            if not full_command:
+                continue
 
-                if not command:
-                    continue
+            severity = PersistenceMonitor._score_task_severity(full_command)
 
-                entry = PersistenceEntry(
-                    source="Task Scheduler",
-                    location=task_name,
-                    name=task_name.rsplit("\\", 1)[-1] if "\\" in task_name else task_name,
-                    value=full_command,
-                    severity=severity,
-                    entry_type="scheduled_task",
-                    extra={
-                        "author": author,
-                        "triggers": trigger_info,
-                        "state": state,
-                        "full_path": task_name,
-                    },
-                )
-                entries[entry.key] = entry
+            entry = PersistenceEntry(
+                source="Task Scheduler",
+                location=task_name,
+                name=task_name.rsplit("\\", 1)[-1] if "\\" in task_name else task_name,
+                value=full_command,
+                severity=severity,
+                entry_type="scheduled_task",
+                extra={
+                    "author": author,
+                    "triggers": trigger_info,
+                    "full_path": task_name,
+                },
+            )
+            entries[entry.key] = entry
+
+    @staticmethod
+    def _parse_schtasks_list(list_str: str, entries: Dict[str, PersistenceEntry]):
+        """Parse the LIST output of schtasks /query /fo LIST /v.
+
+        LIST format is line-oriented key: value pairs separated by
+        blank lines between tasks.  This is the reliable fallback.
+        """
+        current: Dict[str, str] = {}
+
+        def _flush(task: Dict[str, str]):
+            task_name = task.get("TaskName", "").strip()
+            task_to_run = task.get("Task To Run", "").strip()
+            if not task_name or not task_to_run or task_to_run == "N/A":
+                return
+            author = task.get("Author", "").strip()
+            severity = PersistenceMonitor._score_task_severity(task_to_run)
+            entry = PersistenceEntry(
+                source="Task Scheduler",
+                location=task_name,
+                name=task_name.rsplit("\\", 1)[-1] if "\\" in task_name else task_name,
+                value=task_to_run,
+                severity=severity,
+                entry_type="scheduled_task",
+                extra={
+                    "author": author,
+                    "triggers": task.get("Schedule Type", ""),
+                    "full_path": task_name,
+                    "status": task.get("Status", ""),
+                    "next_run": task.get("Next Run Time", ""),
+                    "last_run": task.get("Last Run Time", ""),
+                },
+            )
+            entries[entry.key] = entry
+
+        for line in list_str.splitlines():
+            line = line.rstrip()
+            if not line:
+                if current:
+                    _flush(current)
+                    current = {}
+                continue
+            # Lines look like "HostName:    DESKTOP-ABC"
+            # or             "Task To Run:  C:\Windows\..."
+            colon_idx = line.find(":")
+            if colon_idx > 0:
+                key = line[:colon_idx].strip()
+                value = line[colon_idx + 1:].strip()
+                current[key] = value
+
+        # Flush last task
+        if current:
+            _flush(current)
+
+    @staticmethod
+    def _score_task_severity(command: str) -> str:
+        cmd_lower = command.lower()
+        if any(s in cmd_lower for s in [
+            "powershell", "cmd.exe /c", "mshta", "wscript",
+            "cscript", "rundll32", "regsvr32", "certutil",
+            "bitsadmin", "\\temp\\", "\\tmp\\", "\\appdata\\",
+            "base64", "-enc", "-nop", "-w hidden",
+        ]):
+            return "high"
+        if any(s in cmd_lower for s in [
+            "\\users\\", "\\programdata\\", ".bat", ".vbs", ".js",
+        ]):
+            return "medium"
+        return "low"
