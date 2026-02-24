@@ -5,9 +5,11 @@ rule Yangtu_RAT
         description = "IDs Yangtu/SysAid RMM abused malware"
 
     strings:
-        $string1 = "yangtusoft.cn"
+        $name = "yangtusoft"
+	    $str1 = "[YTSTATUS]"
+	    $str2 = "YTSysConfig.ini"
 
 
     condition:
-        any of them
+        $name or 2 of ($str*)
 }
