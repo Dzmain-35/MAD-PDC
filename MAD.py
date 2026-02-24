@@ -12,6 +12,7 @@ import platform
 import webbrowser
 from analysis_modules.process_monitor import ProcessMonitor
 from analysis_modules.persistence_monitor import PersistenceMonitor
+from analysis_modules.http_monitor import HttpTrafficMonitor
 from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
@@ -124,6 +125,10 @@ class ForensicAnalysisGUI:
         )
 
         self.persistence_monitor = PersistenceMonitor(poll_interval=5.0)
+
+        # HTTP traffic monitor
+        self.http_monitor = HttpTrafficMonitor(poll_interval=1.5)
+        self.http_monitor_active = False
 
         # Register callbacks for real-time updates
         self.process_monitor.register_process_callback(self.on_new_process_detected)
@@ -1111,9 +1116,47 @@ class ForensicAnalysisGUI:
         )
         self.sigma_match_badge.pack(side="left", padx=5)
 
+        # HTTP Traffic alert badge (updated when HTTP monitor finds alerts)
+        self.http_alert_badge = ctk.CTkLabel(
+            search_frame,
+            text="HTTP: 0",
+            font=("Segoe UI", 15, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            corner_radius=6,
+            padx=12,
+            pady=6
+        )
+        self.http_alert_badge.pack(side="left", padx=5)
+
+        # HTTP Traffic toggle button
+        self.http_panel_visible = False
+        self.btn_toggle_http = ctk.CTkButton(
+            search_frame, text="HTTP Traffic ▾",
+            command=self._toggle_http_panel,
+            height=30, width=140,
+            fg_color="transparent",
+            border_width=2,
+            border_color="#a78bfa",
+            hover_color="#4c1d95",
+            font=Fonts.body_bold
+        )
+        self.btn_toggle_http.pack(side="right", padx=5)
+
+        # ── Paned container for process tree + HTTP panel ──
+        paned_container = ctk.CTkFrame(frame, fg_color="transparent")
+        paned_container.pack(fill="both", expand=True, padx=20, pady=10)
+
+        self._process_paned = tk.PanedWindow(
+            paned_container, orient=tk.VERTICAL,
+            bg="#0d1520", sashwidth=6, sashrelief="flat",
+            borderwidth=0
+        )
+        self._process_paned.pack(fill="both", expand=True)
+
         # Process tree area with parent-child hierarchy
-        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        tree_frame = tk.Frame(self._process_paned, bg="#1a1a1a")
+        self._process_paned.add(tree_frame, stretch="always")
         
         # Scrollbars
         vsb = tk.Scrollbar(tree_frame, orient="vertical", bg="#1a1a1a", troughcolor="#0d1520")
@@ -1252,12 +1295,377 @@ class ForensicAnalysisGUI:
         self.process_tree.tag_configure('system', foreground='#888888')
         self.process_tree.tag_configure('suspended', background='#3a3a3a', foreground='#808080')  # Grey for suspended processes
         self.process_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')  # Purple for Sigma matches
-        
+
+        # ── HTTP Traffic Panel (collapsible) ──────────────────────────
+        self._http_panel = tk.Frame(self._process_paned, bg="#111827")
+
+        # HTTP header bar
+        http_header = tk.Frame(self._http_panel, bg="#1e1b4b", height=36)
+        http_header.pack(fill="x")
+        http_header.pack_propagate(False)
+
+        tk.Label(http_header, text="HTTP Traffic",
+                 bg="#1e1b4b", fg="#a78bfa",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=10)
+
+        self.http_stats_label = tk.Label(
+            http_header, text="Sessions: 0  |  Alerts: 0",
+            bg="#1e1b4b", fg="#9ca3af",
+            font=("Segoe UI", 10))
+        self.http_stats_label.pack(side="left", padx=15)
+
+        # PID filter indicator
+        self.http_pid_filter_label = tk.Label(
+            http_header, text="",
+            bg="#1e1b4b", fg="#22d3ee",
+            font=("Segoe UI", 10))
+        self.http_pid_filter_label.pack(side="left", padx=5)
+
+        # Alerts only checkbox
+        self.http_alerts_only_var = tk.BooleanVar(value=False)
+        self.http_alerts_check = tk.Checkbutton(
+            http_header, text="Alerts Only",
+            variable=self.http_alerts_only_var,
+            command=self._refresh_http_tree,
+            bg="#1e1b4b", fg="#fbbf24", selectcolor="#374151",
+            activebackground="#1e1b4b", activeforeground="#fbbf24",
+            font=("Segoe UI", 10))
+        self.http_alerts_check.pack(side="right", padx=10)
+
+        # Clear button
+        tk.Button(http_header, text="Clear", bg="#374151", fg="white",
+                  activebackground="#4b5563", activeforeground="white",
+                  relief="flat", bd=0, padx=8, font=("Segoe UI", 9),
+                  command=self._clear_http_sessions).pack(side="right", padx=5)
+
+        # HTTP Treeview
+        http_tree_frame = tk.Frame(self._http_panel, bg="#111827")
+        http_tree_frame.pack(fill="both", expand=True)
+
+        http_vsb = tk.Scrollbar(http_tree_frame, orient="vertical")
+        http_vsb.pack(side="right", fill="y")
+
+        http_columns = ("#", "Time", "PID", "Process", "Protocol",
+                        "Host", "Remote", "Status", "Alert")
+        self.http_tree = ttk.Treeview(
+            http_tree_frame, columns=http_columns, show="headings",
+            yscrollcommand=http_vsb.set, style="Process.Treeview"
+        )
+        self.http_tree.pack(side="left", fill="both", expand=True)
+        http_vsb.config(command=self.http_tree.yview)
+
+        # Column widths
+        col_widths = {"#": 50, "Time": 100, "PID": 60, "Process": 130,
+                      "Protocol": 70, "Host": 250, "Remote": 150,
+                      "Status": 100, "Alert": 80}
+        for col in http_columns:
+            self.http_tree.heading(col, text=col)
+            self.http_tree.column(col, width=col_widths.get(col, 100),
+                                  minwidth=40)
+
+        # Alert-level tag colours
+        self.http_tree.tag_configure("high", background="#7f1d1d", foreground="#fca5a5")
+        self.http_tree.tag_configure("medium", background="#78350f", foreground="#fbbf24")
+        self.http_tree.tag_configure("low", background="#1e1b4b", foreground="#c4b5fd")
+
+        # Right-click context menu
+        self.http_context_menu = tk.Menu(
+            self.http_tree, tearoff=0,
+            bg="#1a1a1a", fg="white",
+            activebackground="#dc2626", activeforeground="white",
+            borderwidth=0, relief="flat"
+        )
+        self.http_context_menu.add_command(
+            label="📋 Copy Host",
+            command=lambda: self._copy_http_cell("Host"))
+        self.http_context_menu.add_command(
+            label="📋 Copy Remote Address",
+            command=lambda: self._copy_http_cell("Remote"))
+        self.http_context_menu.add_command(
+            label="📋 Copy Row",
+            command=self._copy_http_row)
+        self.http_context_menu.add_separator(background="#444444")
+        self.http_context_menu.add_command(
+            label="➕ Add Host to IOCs",
+            command=lambda: self._add_http_ioc("host"))
+        self.http_context_menu.add_command(
+            label="➕ Add IP to IOCs",
+            command=lambda: self._add_http_ioc("ip"))
+        self.http_context_menu.add_separator(background="#444444")
+        self.http_context_menu.add_command(
+            label="🔍 Focus Process in Tree",
+            command=self._focus_http_process)
+
+        self.http_tree.bind("<Button-3>", self._show_http_context_menu)
+        self.http_tree.bind("<Double-1>", lambda e: self._show_http_session_detail())
+
+        # Store session data for detail view
+        self._http_session_data: Dict = {}
+
+        # Auto-filter when process tree selection changes
+        self.process_tree.bind("<<TreeviewSelect>>", self._on_process_select_for_http)
+
+        # The panel starts hidden — _toggle_http_panel will add it to the paned window
+
         self.analysis_subtabs["processes"] = frame
-        
+
         # Initial load
         self.refresh_process_list()
         
+    # ==================== HTTP TRAFFIC PANEL METHODS ====================
+    def _toggle_http_panel(self):
+        """Show or hide the HTTP traffic panel in the Processes tab."""
+        if self.http_panel_visible:
+            # Collapse
+            self._process_paned.forget(self._http_panel)
+            self.http_panel_visible = False
+            self.btn_toggle_http.configure(text="HTTP Traffic ▾")
+            # Stop monitoring
+            if self.http_monitor_active:
+                self.http_monitor.stop_monitoring()
+                self.http_monitor_active = False
+                if hasattr(self, '_http_refresh_job'):
+                    self.root.after_cancel(self._http_refresh_job)
+        else:
+            # Expand
+            self._process_paned.add(self._http_panel, stretch="always")
+            self._process_paned.paneconfigure(self._http_panel, height=250)
+            self.http_panel_visible = True
+            self.btn_toggle_http.configure(text="HTTP Traffic ▴")
+            # Start monitoring
+            if not self.http_monitor_active:
+                self.http_monitor.start_monitoring()
+                self.http_monitor_active = True
+                self._http_auto_refresh()
+
+    def _http_auto_refresh(self):
+        """Periodically refresh the HTTP tree while monitoring is active."""
+        if not self.http_monitor_active or not self.http_panel_visible:
+            return
+        self._refresh_http_tree()
+        self._http_refresh_job = self.root.after(1500, self._http_auto_refresh)
+
+    def _refresh_http_tree(self):
+        """Rebuild the HTTP tree from current sessions."""
+        if not hasattr(self, 'http_tree'):
+            return
+
+        self.http_tree.delete(*self.http_tree.get_children())
+        self._http_session_data.clear()
+
+        # Determine PID filter (from selected process)
+        pid_filter = self._http_selected_pid if hasattr(self, '_http_selected_pid') else None
+        alert_only = self.http_alerts_only_var.get()
+
+        sessions = self.http_monitor.get_sessions(
+            pid_filter=pid_filter,
+            alert_only=alert_only
+        )
+
+        alert_count = 0
+        for sess in sessions:
+            tag = (sess.alert,) if sess.alert else ()
+            if sess.alert:
+                alert_count += 1
+            alert_text = sess.alert.upper() if sess.alert else ""
+
+            iid = self.http_tree.insert("", "end", values=(
+                sess.id,
+                sess.timestamp,
+                sess.pid,
+                sess.process_name[:20],
+                sess.protocol,
+                sess.host or sess.remote_ip,
+                f"{sess.remote_ip}:{sess.remote_port}",
+                sess.status,
+                alert_text,
+            ), tags=tag)
+            self._http_session_data[iid] = sess
+
+        # Update stats
+        stats = self.http_monitor.stats
+        self.http_stats_label.configure(
+            text=f"Sessions: {stats['total_sessions']}  |  "
+                 f"Active: {stats['active_sessions']}  |  "
+                 f"Alerts: {stats['alerts']}")
+
+        # Update PID filter label
+        if pid_filter:
+            self.http_pid_filter_label.configure(
+                text=f"Filtered: PID {pid_filter}")
+        else:
+            self.http_pid_filter_label.configure(text="All Processes")
+
+        # Update alert badge
+        total_alerts = stats.get("alerts", 0)
+        if total_alerts == 0:
+            self.http_alert_badge.configure(
+                text="HTTP: 0", text_color="#9ca3af", fg_color="#374151")
+        elif total_alerts <= 5:
+            self.http_alert_badge.configure(
+                text=f"HTTP: {total_alerts}", text_color="#fbbf24", fg_color="#78350f")
+        else:
+            self.http_alert_badge.configure(
+                text=f"HTTP: {total_alerts}", text_color="#f87171", fg_color="#7f1d1d")
+
+    def _on_process_select_for_http(self, event=None):
+        """When a process is selected in the tree, auto-filter HTTP panel to that PID."""
+        sel = self.process_tree.selection()
+        if sel:
+            try:
+                values = self.process_tree.item(sel[0], "values")
+                pid = int(values[0])
+                self._http_selected_pid = pid
+            except (ValueError, IndexError):
+                self._http_selected_pid = None
+        else:
+            self._http_selected_pid = None
+
+        if self.http_panel_visible:
+            self._refresh_http_tree()
+
+    def _clear_http_sessions(self):
+        """Clear all HTTP sessions."""
+        self.http_monitor.clear()
+        self._http_selected_pid = None
+        self._refresh_http_tree()
+
+    def _show_http_context_menu(self, event):
+        item = self.http_tree.identify_row(event.y)
+        if item:
+            self.http_tree.selection_set(item)
+            self.http_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy_http_cell(self, col_name):
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        val = ""
+        if col_name == "Host":
+            val = sess.host or sess.remote_ip
+        elif col_name == "Remote":
+            val = f"{sess.remote_ip}:{sess.remote_port}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(val)
+
+    def _copy_http_row(self):
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        values = self.http_tree.item(sel[0], "values")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(" | ".join(str(v) for v in values))
+
+    def _add_http_ioc(self, field_type):
+        if not self.current_case:
+            messagebox.showwarning("No Active Case",
+                                   "No active case to add IOC to.")
+            return
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        if field_type == "host" and sess.host:
+            self.case_manager.add_ioc("domains", sess.host)
+            self.refresh_iocs_display()
+            messagebox.showinfo("Success", f"Added domain '{sess.host}' to case IOCs!")
+        elif field_type == "ip":
+            self.case_manager.add_ioc("ips", sess.remote_ip)
+            self.refresh_iocs_display()
+            messagebox.showinfo("Success", f"Added IP '{sess.remote_ip}' to case IOCs!")
+
+    def _focus_http_process(self):
+        """Select the process in the tree that matches the selected HTTP session."""
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        self.focus_process_by_pid(sess.pid)
+
+    def _show_http_session_detail(self):
+        """Show full detail popup for a double-clicked HTTP session."""
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+
+        detail = ctk.CTkToplevel(self.root)
+        detail.title(f"HTTP Session #{sess.id} — {sess.host or sess.remote_ip}")
+        detail.geometry("640x450")
+        detail.configure(fg_color="#1a1a1a")
+        detail.attributes("-topmost", True)
+        detail.after(200, lambda: detail.focus_force())
+
+        # Header
+        proto_color = "#a78bfa" if sess.protocol == "HTTPS" else "#4ade80"
+        ctk.CTkLabel(
+            detail,
+            text=f"{sess.protocol}  |  {sess.host or sess.remote_ip}:{sess.remote_port}",
+            font=Fonts.title_medium, text_color=proto_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        # Alert banner
+        if sess.alert:
+            alert_colors = {"high": "#ef4444", "medium": "#f59e0b", "low": "#a78bfa"}
+            ctk.CTkLabel(
+                detail,
+                text=f"ALERT [{sess.alert.upper()}]: " + " | ".join(sess.alert_reasons),
+                font=Fonts.body_bold,
+                text_color=alert_colors.get(sess.alert, "#9ca3af"),
+                fg_color="#374151", corner_radius=6
+            ).pack(padx=15, pady=(0, 5), anchor="w")
+
+        # Detail text
+        lines = [
+            f"Session:    #{sess.id}",
+            f"Time:       {sess.timestamp}",
+            f"PID:        {sess.pid}",
+            f"Process:    {sess.process_name}",
+            f"Protocol:   {sess.protocol}",
+            f"Host:       {sess.host or '(unresolved)'}",
+            f"Remote:     {sess.remote_ip}:{sess.remote_port}",
+            f"Local Port: {sess.local_port}",
+            f"Status:     {sess.status}",
+            f"First Seen: {sess.first_seen.strftime('%H:%M:%S')}",
+            f"Last Seen:  {sess.last_seen.strftime('%H:%M:%S')}",
+            f"Hit Count:  {sess.hit_count}",
+        ]
+        if sess.alert_reasons:
+            lines += ["", "Alert Reasons:", "=" * 50]
+            for reason in sess.alert_reasons:
+                lines.append(f"  - {reason}")
+
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", "\n".join(lines))
+        text_widget.configure(state="disabled")
+
+        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Host", height=32, width=120,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(),
+                             self.root.clipboard_append(sess.host or sess.remote_ip))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Close", command=detail.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(side="right", padx=5)
+
     # ==================== LIVE EVENTS SUBTAB ====================
     def create_live_events_subtab(self):
         """Create the Live Events subtab for system-wide monitoring"""
