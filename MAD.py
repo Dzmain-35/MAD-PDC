@@ -1316,10 +1316,21 @@ class ForensicAnalysisGUI:
 
         # PID filter indicator
         self.http_pid_filter_label = tk.Label(
-            http_header, text="",
+            http_header, text="All Processes",
             bg="#1e1b4b", fg="#22d3ee",
             font=("Segoe UI", 10))
         self.http_pid_filter_label.pack(side="left", padx=5)
+
+        # Filter to selected PID checkbox (off by default — shows all traffic)
+        self.http_pid_lock_var = tk.BooleanVar(value=False)
+        self.http_pid_lock_check = tk.Checkbutton(
+            http_header, text="Filter to PID",
+            variable=self.http_pid_lock_var,
+            command=self._refresh_http_tree,
+            bg="#1e1b4b", fg="#22d3ee", selectcolor="#374151",
+            activebackground="#1e1b4b", activeforeground="#22d3ee",
+            font=("Segoe UI", 10))
+        self.http_pid_lock_check.pack(side="right", padx=5)
 
         # Alerts only checkbox
         self.http_alerts_only_var = tk.BooleanVar(value=False)
@@ -1453,8 +1464,10 @@ class ForensicAnalysisGUI:
         self.http_tree.delete(*self.http_tree.get_children())
         self._http_session_data.clear()
 
-        # Determine PID filter (from selected process)
-        pid_filter = self._http_selected_pid if hasattr(self, '_http_selected_pid') else None
+        # Only apply PID filter when the "Filter to PID" checkbox is checked
+        pid_filter = None
+        if self.http_pid_lock_var.get() and hasattr(self, '_http_selected_pid'):
+            pid_filter = self._http_selected_pid
         alert_only = self.http_alerts_only_var.get()
 
         sessions = self.http_monitor.get_sessions(
@@ -1492,9 +1505,10 @@ class ForensicAnalysisGUI:
         # Update PID filter label
         if pid_filter:
             self.http_pid_filter_label.configure(
-                text=f"Filtered: PID {pid_filter}")
+                text=f"PID {pid_filter}", fg="#22d3ee")
         else:
-            self.http_pid_filter_label.configure(text="All Processes")
+            self.http_pid_filter_label.configure(
+                text="All Processes", fg="#9ca3af")
 
         # Update alert badge
         total_alerts = stats.get("alerts", 0)
@@ -1509,19 +1523,19 @@ class ForensicAnalysisGUI:
                 text=f"HTTP: {total_alerts}", text_color="#f87171", fg_color="#7f1d1d")
 
     def _on_process_select_for_http(self, event=None):
-        """When a process is selected in the tree, auto-filter HTTP panel to that PID."""
+        """Track the selected PID for optional HTTP filtering."""
         sel = self.process_tree.selection()
         if sel:
             try:
                 values = self.process_tree.item(sel[0], "values")
-                pid = int(values[0])
-                self._http_selected_pid = pid
+                self._http_selected_pid = int(values[0])
             except (ValueError, IndexError):
                 self._http_selected_pid = None
         else:
             self._http_selected_pid = None
 
-        if self.http_panel_visible:
+        # Only refresh if PID filtering is active
+        if self.http_panel_visible and self.http_pid_lock_var.get():
             self._refresh_http_tree()
 
     def _clear_http_sessions(self):
