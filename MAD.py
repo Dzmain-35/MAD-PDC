@@ -5292,6 +5292,19 @@ File Size: {file_info['file_size']} bytes"""
             # Start auto-refresh
             self.start_auto_refresh()
 
+        # Auto-start persistence monitoring
+        if not self.persistence_monitor_active:
+            self.persistence_monitor.start_monitoring()
+            self.persistence_monitor_active = True
+            if hasattr(self, 'btn_toggle_persistence'):
+                self.btn_toggle_persistence.configure(text="⏹ Stop Monitoring")
+            if hasattr(self, 'persistence_stats_label'):
+                self.persistence_stats_label.configure(
+                    text="Persistence Monitor: Baselining and monitoring...",
+                    text_color="#4ade80"
+                )
+            self._persistence_auto_refresh()
+
     # ==================== PROCESS MONITOR METHODS ====================
     def toggle_process_monitoring(self):
         """Toggle process monitoring on/off"""
