@@ -6,8 +6,9 @@ rule Yangtu_RAT
 
     strings:
         $name = "yangtusoft"
-	    $str1 = "[YTSTATUS]"
-	    $str2 = "YTSysConfig.ini"
+		$str1 = "[YTSTATUS]"
+		$str2 = "YTSysConfig.ini"
+		$str3 = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}ClientSetup.exe/
 
 
     condition:
