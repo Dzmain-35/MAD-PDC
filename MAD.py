@@ -11,7 +11,6 @@ import subprocess
 import platform
 import webbrowser
 from analysis_modules.process_monitor import ProcessMonitor
-from analysis_modules.network_monitor import NetworkMonitor
 from analysis_modules.persistence_monitor import PersistenceMonitor
 from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
@@ -124,18 +123,14 @@ class ForensicAnalysisGUI:
             yara_rules_path=self.case_manager.yara_rules_path
         )
 
-        self.network_monitor = NetworkMonitor()
-
         self.persistence_monitor = PersistenceMonitor(poll_interval=5.0)
 
         # Register callbacks for real-time updates
         self.process_monitor.register_process_callback(self.on_new_process_detected)
-        self.network_monitor.register_connection_callback(self.on_new_connection_detected)
         self.persistence_monitor.register_callback(self.on_persistence_change_detected)
 
         # Monitoring states (from settings)
         self.process_monitor_active = False
-        self.network_monitor_active = False
         self.persistence_monitor_active = False
         self.persistence_change_count = 0
 
@@ -971,18 +966,6 @@ class ForensicAnalysisGUI:
         )
         self.btn_processes.pack(side="left", padx=5)
         
-        self.btn_network = ctk.CTkButton(
-            subtab_frame, text="🌐 Network",
-            command=lambda: self.show_analysis_subtab("network"),
-            height=35, width=150,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["red"],
-            font=Fonts.body_bold
-        )
-        self.btn_network.pack(side="left", padx=5)
-
         self.btn_live_events = ctk.CTkButton(
             subtab_frame, text="📡 Live Events",
             command=lambda: self.show_analysis_subtab("live_events"),
@@ -995,18 +978,6 @@ class ForensicAnalysisGUI:
         )
         self.btn_live_events.pack(side="left", padx=5)
 
-        self.btn_persistence = ctk.CTkButton(
-            subtab_frame, text="🔒 Persistence",
-            command=lambda: self.show_analysis_subtab("persistence"),
-            height=35, width=150,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["red"],
-            font=Fonts.body_bold
-        )
-        self.btn_persistence.pack(side="left", padx=5)
-
         # Content area for sub-tabs
         self.analysis_content = ctk.CTkFrame(frame, corner_radius=10, fg_color=self.colors["navy"])
         self.analysis_content.pack(fill="both", expand=True, padx=20, pady=10)
@@ -1014,10 +985,8 @@ class ForensicAnalysisGUI:
         # Create sub-tab frames
         self.analysis_subtabs = {}
         self.create_processes_subtab()
-        self.create_network_subtab()
         self.create_live_events_subtab()
-        self.create_persistence_subtab()
-        
+
         self.tabs["analysis"] = frame
         self.show_analysis_subtab("processes")
         
@@ -1289,129 +1258,6 @@ class ForensicAnalysisGUI:
         # Initial load
         self.refresh_process_list()
         
-    def create_network_subtab(self):
-        """Create Network sub-tab"""
-        frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
-        
-        # Header
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=10)
-        
-        title = ctk.CTkLabel(header, text="Network Analysis",
-                            font=Fonts.title_large,
-                            text_color="white")
-        title.pack(side="left")
-        
-        # Monitor toggle
-        self.btn_toggle_network_monitor = ctk.CTkButton(
-            header, text="▶ Start Monitoring",
-            command=self.toggle_network_monitoring,
-            height=35, width=150,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"]
-        )
-        self.btn_toggle_network_monitor.pack(side="right", padx=5)
-        
-        # Refresh button
-        btn_refresh = ctk.CTkButton(
-            header, text="🔄 Refresh",
-            command=self.refresh_network_list,
-            height=35, width=100,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"]
-        )
-        btn_refresh.pack(side="right", padx=5)
-        
-        # Stats frame
-        stats_frame = ctk.CTkFrame(frame, fg_color="gray20", corner_radius=10)
-        stats_frame.pack(fill="x", padx=20, pady=10)
-        
-        self.network_stats_label = ctk.CTkLabel(
-            stats_frame,
-            text="Network Statistics: Not monitoring",
-            font=Fonts.helper,
-            justify="left"
-        )
-        self.network_stats_label.pack(padx=15, pady=10, anchor="w")
-        
-        # Connection list
-        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        vsb = tk.Scrollbar(tree_frame, orient="vertical")
-        vsb.pack(side="right", fill="y")
-
-        columns = ("Type", "Local", "Remote", "Hostname", "Status", "Process", "Suspicious")
-        self.network_tree = ttk.Treeview(tree_frame, columns=columns,
-                                        show="headings", yscrollcommand=vsb.set)
-        self.network_tree.pack(side="left", fill="both", expand=True)
-        vsb.config(command=self.network_tree.yview)
-
-        # Configure columns with specific widths
-        self.network_tree.heading("Type", text="Type")
-        self.network_tree.column("Type", width=80, minwidth=60)
-        self.network_tree.heading("Local", text="Local")
-        self.network_tree.column("Local", width=150, minwidth=100)
-        self.network_tree.heading("Remote", text="Remote")
-        self.network_tree.column("Remote", width=150, minwidth=100)
-        self.network_tree.heading("Hostname", text="Hostname")
-        self.network_tree.column("Hostname", width=200, minwidth=120)
-        self.network_tree.heading("Status", text="Status")
-        self.network_tree.column("Status", width=100, minwidth=80)
-        self.network_tree.heading("Process", text="Process")
-        self.network_tree.column("Process", width=150, minwidth=100)
-        self.network_tree.heading("Suspicious", text="Suspicious")
-        self.network_tree.column("Suspicious", width=80, minwidth=60)
-
-        # Configure tag colors
-        self.network_tree.tag_configure('suspicious', background='#5c1c1c')
-
-        # Right-click context menu for network tree
-        self.network_context_menu = tk.Menu(
-            self.network_tree,
-            tearoff=0,
-            bg="#1a1a1a",
-            fg="white",
-            activebackground="#dc2626",
-            activeforeground="white",
-            borderwidth=0,
-            relief="flat"
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Local Address",
-            command=lambda: self.copy_network_cell(1)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Remote Address",
-            command=lambda: self.copy_network_cell(2)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Hostname",
-            command=lambda: self.copy_network_cell(3)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Process Name",
-            command=lambda: self.copy_network_cell(5)
-        )
-        self.network_context_menu.add_separator(background="#444444")
-        self.network_context_menu.add_command(
-            label="📋 Copy Entire Row",
-            command=self.copy_network_row
-        )
-        self.network_context_menu.add_separator(background="#444444")
-        self.network_context_menu.add_command(
-            label="➕ Add Remote IP to IOCs",
-            command=lambda: self.add_network_ioc_to_case("remote_ip")
-        )
-        self.network_context_menu.add_command(
-            label="➕ Add Hostname to IOCs",
-            command=lambda: self.add_network_ioc_to_case("hostname")
-        )
-
-        self.network_tree.bind("<Button-3>", self.show_network_context_menu)
-
-        self.analysis_subtabs["network"] = frame
-
     # ==================== LIVE EVENTS SUBTAB ====================
     def create_live_events_subtab(self):
         """Create the Live Events subtab for system-wide monitoring"""
@@ -1427,7 +1273,7 @@ class ForensicAnalysisGUI:
         title.pack(side="left")
 
         subtitle = ctk.CTkLabel(header,
-                               text="Real-time monitoring: File • Registry • Network • Process • DNS",
+                               text="Real-time monitoring: File • Registry • Network • Process • DNS • Persistence",
                                font=Fonts.helper, text_color="gray60")
         subtitle.pack(side="left", padx=20)
 
@@ -1436,7 +1282,7 @@ class ForensicAnalysisGUI:
         content.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         # ===== CONTROL PANEL =====
-        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"], height=120)
+        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"], height=150)
         control_panel.pack(fill="x", pady=(0, 10))
         control_panel.pack_propagate(False)
 
@@ -1501,13 +1347,38 @@ class ForensicAnalysisGUI:
         )
         clear_btn.pack(side="right", padx=5)
 
-        # Row 2: Statistics
+        # Row 2: Persistence controls + Statistics
         row2 = ctk.CTkFrame(control_panel, fg_color="transparent")
         row2.pack(fill="x", padx=10, pady=5)
 
+        # Persistence baseline button
+        baseline_btn = ctk.CTkButton(
+            row2,
+            text="📸 Persistence Baseline",
+            command=None,  # Will be set later
+            height=30,
+            width=180,
+            fg_color="transparent",
+            border_width=2,
+            border_color="#f97316",
+            hover_color="#78350f"
+        )
+        baseline_btn.pack(side="left", padx=(0, 10))
+
+        # Persistence change badge
+        self.persistence_badge = ctk.CTkLabel(
+            row2, text="CHANGES: 0",
+            font=Fonts.helper,
+            text_color="#9ca3af",
+            fg_color="#374151",
+            corner_radius=8,
+            width=100, height=26
+        )
+        self.persistence_badge.pack(side="left", padx=(0, 15))
+
         stats_label = ctk.CTkLabel(
             row2,
-            text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0",
+            text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0 | Persistence: 0",
             font=Fonts.body,
             text_color="gray60"
         )
@@ -1529,7 +1400,7 @@ class ForensicAnalysisGUI:
         filter_label1.pack(side="left", padx=(0, 10))
 
         # Event type filter buttons
-        filter_types = ["All", "File", "Registry", "Network", "Process", "Thread", "DNS"]
+        filter_types = ["All", "File", "Registry", "Network", "Process", "Thread", "DNS", "Persistence"]
         event_type_buttons = {}
 
         for ftype in filter_types:
@@ -1701,6 +1572,8 @@ class ForensicAnalysisGUI:
         events_tree.tag_configure('suspicious', background='#5c1c1c', foreground='#ff6b6b')
         # Tag for Sigma rule matches (higher priority - purple/magenta)
         events_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')
+        # Tag for persistence changes (orange)
+        events_tree.tag_configure('persistence', background='#78350f', foreground='#fbbf24')
 
         events_tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         events_vsb.config(command=events_tree.yview)
@@ -1781,6 +1654,11 @@ class ForensicAnalysisGUI:
                     monitor_state["monitoring"] = True
                     self.system_monitor_active = True
 
+                    # Also start persistence monitoring (feeds into Live Events)
+                    if not self.persistence_monitor_active:
+                        self.persistence_monitor.start_monitoring()
+                        self.persistence_monitor_active = True
+
                     monitor_btn_text.set("⏸ Stop Monitoring")
                     monitor_btn.configure(fg_color="#059669")  # Green
                     status_label.configure(text="● Monitoring: Active", text_color="#10b981")
@@ -1797,6 +1675,11 @@ class ForensicAnalysisGUI:
                 if monitor_state["monitor"]:
                     monitor_state["monitor"].stop_monitoring()
                     self.system_wide_monitor = None
+
+                # Also stop persistence monitoring
+                if self.persistence_monitor_active:
+                    self.persistence_monitor.stop_monitoring()
+                    self.persistence_monitor_active = False
 
                 monitor_state["monitoring"] = False
                 monitor_state["monitor"] = None
@@ -1865,11 +1748,14 @@ class ForensicAnalysisGUI:
                 if not event_filter.matches(event):
                     continue
 
-                # Check if suspicious or sigma match for highlighting
+                # Determine row highlighting
                 has_sigma = bool(event.get('sigma_matches'))
+                is_persistence = event.get('event_type') == 'Persistence'
                 is_suspicious = event_filter.is_suspicious(event)
                 if has_sigma:
                     tags = ('sigma_match',)
+                elif is_persistence:
+                    tags = ('persistence',)
                 elif is_suspicious:
                     tags = ('suspicious',)
                 else:
@@ -1928,11 +1814,14 @@ class ForensicAnalysisGUI:
             all_events = monitor.get_recent_events(count=5000)
 
             for event in all_events:
-                # Check if sigma match or suspicious for highlighting
+                # Determine row highlighting
                 has_sigma = bool(event.get('sigma_matches'))
+                is_persistence = event.get('event_type') == 'Persistence'
                 is_suspicious = event_filter.is_suspicious(event)
                 if has_sigma:
                     tags = ('sigma_match',)
+                elif is_persistence:
+                    tags = ('persistence',)
                 elif is_suspicious:
                     tags = ('suspicious',)
                 else:
@@ -2034,11 +1923,14 @@ class ForensicAnalysisGUI:
                     if not event_filter.matches(event):
                         continue
 
-                    # Check if sigma match or suspicious for highlighting
+                    # Determine row highlighting
                     has_sigma = bool(event.get('sigma_matches'))
+                    is_persistence = event.get('event_type') == 'Persistence'
                     is_suspicious = event_filter.is_suspicious(event)
                     if has_sigma:
                         tags = ('sigma_match',)
+                    elif is_persistence:
+                        tags = ('persistence',)
                     elif is_suspicious:
                         tags = ('suspicious',)
                     else:
@@ -2081,13 +1973,16 @@ class ForensicAnalysisGUI:
                     if monitor_state["current_filter"] and not monitor_state["current_filter"].matches(event):
                         continue
 
-                    # Check if sigma match or suspicious for highlighting
+                    # Determine row highlighting
                     has_sigma = bool(event.get('sigma_matches'))
+                    is_persistence = event.get('event_type') == 'Persistence'
                     is_suspicious = False
                     if monitor_state["current_filter"]:
                         is_suspicious = monitor_state["current_filter"].is_suspicious(event)
                     if has_sigma:
                         tags = ('sigma_match',)
+                    elif is_persistence:
+                        tags = ('persistence',)
                     elif is_suspicious:
                         tags = ('suspicious',)
                     else:
@@ -2102,7 +1997,7 @@ class ForensicAnalysisGUI:
                     iid = events_tree.insert("", "end", values=(
                         event.get('timestamp', ''),
                         event.get('pid', 0),
-                        event.get('process_name', '')[:20],  # Truncate process name
+                        event.get('process_name', '')[:20],
                         event.get('event_type', ''),
                         event.get('operation', ''),
                         path,
@@ -2122,7 +2017,9 @@ class ForensicAnalysisGUI:
                 # Update statistics
                 stats = monitor.get_stats()
                 sigma_count = stats.get('sigma_matches', 0)
+                persist_count = stats.get('persistence_events', 0)
                 sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
+                persist_text = f" | Persist: {persist_count}" if persist_count > 0 else ""
                 stats_label.configure(
                     text=f"Total: {stats['total_events']} | "
                          f"File: {stats['file_events']} | "
@@ -2130,8 +2027,11 @@ class ForensicAnalysisGUI:
                          f"Network: {stats['network_events']} | "
                          f"Process: {stats['process_events']} | "
                          f"DNS: {stats.get('dns_events', 0)}"
-                         f"{sigma_text}"
+                         f"{persist_text}{sigma_text}"
                 )
+
+                # Update persistence badge
+                self._update_persistence_badge()
 
                 # Update last update time
                 monitor_state["last_update_time"] = datetime.now()
@@ -2229,6 +2129,7 @@ class ForensicAnalysisGUI:
         monitor_btn.configure(command=toggle_monitoring)
         export_btn.configure(command=export_events_to_csv)
         clear_btn.configure(command=clear_events_display)
+        baseline_btn.configure(command=self.take_persistence_baseline)
         apply_filter_btn.configure(command=apply_filters)
         clear_filter_btn.configure(command=clear_filters)
         suspicious_check.configure(command=lambda: apply_filters() if monitor_state["monitoring"] else None)
@@ -2270,6 +2171,7 @@ class ForensicAnalysisGUI:
             "Process": "#22d3ee", "Registry": "#f97316",
             "File": "#4ade80", "Network": "#a78bfa",
             "DNS": "#fbbf24", "ImageLoad": "#f472b6",
+            "Persistence": "#fbbf24",
         }
         header_color = type_colors.get(etype, "#9ca3af")
 
@@ -2305,14 +2207,42 @@ class ForensicAnalysisGUI:
             str(event.get('path', '')),
         ]
 
+        # Network events: resolve hostname for the remote IP
+        if etype == 'Network':
+            remote_path = str(event.get('path', ''))
+            if remote_path and ':' in remote_path:
+                remote_ip = remote_path.split(':')[0]
+                hostname = self.resolve_hostname(remote_ip)
+                if hostname and hostname != '-':
+                    lines.append(f"Hostname:   {hostname}")
+
         detail_field = event.get('detail', '')
         if detail_field:
             lines += ["", "Detail / Command Line:", "=" * 60, str(detail_field)]
 
+        # Persistence events: show entry-specific detail
+        persist_entry = event.get('persistence_entry')
+        if persist_entry and isinstance(persist_entry, dict):
+            lines += [
+                "",
+                "Persistence Entry:",
+                "=" * 60,
+                f"  Type:     {persist_entry.get('entry_type', '')}",
+                f"  Source:   {persist_entry.get('source', '')}",
+                f"  Location: {persist_entry.get('location', '')}",
+                f"  Name:     {persist_entry.get('name', '')}",
+                f"  Severity: {persist_entry.get('severity', '').upper()}",
+                f"  Value:    {persist_entry.get('value', '')}",
+            ]
+            prev = persist_entry.get('extra', {}).get('previous_value')
+            if prev:
+                lines.append(f"  Previous: {prev}")
+
         # Show any extra raw fields
         skip_keys = {'timestamp', 'time_full', 'event_type', 'operation', 'path',
                      'result', 'detail', 'pid', 'tid', 'process_name', 'user',
-                     'event_id', 'sigma_matches'}
+                     'event_id', 'sigma_matches', 'persistence_entry',
+                     'persistence_change_type'}
         extra = {k: v for k, v in event.items() if k not in skip_keys and v}
         if extra:
             lines += ["", "Additional Fields:", "=" * 60]
@@ -2349,311 +2279,65 @@ class ForensicAnalysisGUI:
             height=32, width=100
         ).pack(side="right", padx=5)
 
-    # ==================== PERSISTENCE SUBTAB ====================
-    def create_persistence_subtab(self):
-        """Create Persistence sub-tab for registry and scheduled task monitoring"""
-        frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
-
-        # Header
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=10)
-
-        title = ctk.CTkLabel(header, text="Persistence Monitor",
-                              font=Fonts.title_large,
-                              text_color="white")
-        title.pack(side="left")
-
-        # Change badge
-        self.persistence_badge = ctk.CTkLabel(
-            header, text="CHANGES: 0",
-            font=Fonts.helper,
-            text_color="#9ca3af",
-            fg_color="#374151",
-            corner_radius=8,
-            width=100, height=26
-        )
-        self.persistence_badge.pack(side="left", padx=(15, 5))
-
-        # Monitor toggle
-        self.btn_toggle_persistence = ctk.CTkButton(
-            header, text="▶ Start Monitoring",
-            command=self.toggle_persistence_monitoring,
-            height=35, width=170,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"],
-            font=Fonts.body_bold
-        )
-        self.btn_toggle_persistence.pack(side="right", padx=5)
-
-        # Baseline button
-        btn_baseline = ctk.CTkButton(
-            header, text="📸 Take Baseline",
-            command=self.take_persistence_baseline,
-            height=35, width=150,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"],
-            font=Fonts.body_bold
-        )
-        btn_baseline.pack(side="right", padx=5)
-
-        # Refresh button
-        btn_refresh = ctk.CTkButton(
-            header, text="🔄 Refresh",
-            command=self.refresh_persistence_view,
-            height=35, width=100,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"],
-            font=Fonts.body_bold
-        )
-        btn_refresh.pack(side="right", padx=5)
-
-        # Stats bar
-        stats_frame = ctk.CTkFrame(frame, fg_color="gray20", corner_radius=10)
-        stats_frame.pack(fill="x", padx=20, pady=(0, 10))
-
-        self.persistence_stats_label = ctk.CTkLabel(
-            stats_frame,
-            text="Persistence Monitor: Click 'Start Monitoring' to baseline and begin watching for changes",
-            font=Fonts.helper,
-            justify="left"
-        )
-        self.persistence_stats_label.pack(padx=15, pady=10, anchor="w")
-
-        # Filter row
-        filter_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        filter_frame.pack(fill="x", padx=20, pady=(0, 5))
-
-        ctk.CTkLabel(filter_frame, text="Filter:", font=Fonts.body_bold,
-                      text_color="white").pack(side="left", padx=(0, 5))
-
-        self.persistence_filter_var = tk.StringVar(value="all")
-        for text, val in [("All", "all"), ("Registry", "registry"),
-                          ("Tasks", "scheduled_task"), ("Changes Only", "changes")]:
-            rb = ctk.CTkRadioButton(
-                filter_frame, text=text, variable=self.persistence_filter_var,
-                value=val, command=self.refresh_persistence_view,
-                fg_color=self.colors["red"],
-                hover_color=self.colors["red_dark"],
-                font=Fonts.body
-            )
-            rb.pack(side="left", padx=8)
-
-        # Search
-        self.persistence_search_var = tk.StringVar()
-        search_entry = ctk.CTkEntry(
-            filter_frame, textvariable=self.persistence_search_var,
-            placeholder_text="Search name, value, path...",
-            width=250, height=30,
-            font=Fonts.body
-        )
-        search_entry.pack(side="right", padx=5)
-        search_entry.bind("<Return>", lambda e: self.refresh_persistence_view())
-
-        # Treeview
-        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
-
-        vsb = tk.Scrollbar(tree_frame, orient="vertical")
-        vsb.pack(side="right", fill="y")
-
-        columns = ("Type", "Source", "Name", "Value", "Severity", "Status")
-        self.persistence_tree = ttk.Treeview(
-            tree_frame, columns=columns, show="headings",
-            yscrollcommand=vsb.set, style="Process.Treeview"
-        )
-        self.persistence_tree.pack(side="left", fill="both", expand=True)
-        vsb.config(command=self.persistence_tree.yview)
-
-        self.persistence_tree.heading("Type", text="Type")
-        self.persistence_tree.column("Type", width=100, minwidth=80)
-        self.persistence_tree.heading("Source", text="Source / Location")
-        self.persistence_tree.column("Source", width=220, minwidth=150)
-        self.persistence_tree.heading("Name", text="Name")
-        self.persistence_tree.column("Name", width=200, minwidth=120)
-        self.persistence_tree.heading("Value", text="Value / Command")
-        self.persistence_tree.column("Value", width=350, minwidth=200)
-        self.persistence_tree.heading("Severity", text="Severity")
-        self.persistence_tree.column("Severity", width=80, minwidth=60)
-        self.persistence_tree.heading("Status", text="Status")
-        self.persistence_tree.column("Status", width=90, minwidth=70)
-
-        # Tag colours
-        self.persistence_tree.tag_configure("critical", background="#7f1d1d", foreground="#fca5a5")
-        self.persistence_tree.tag_configure("high", background="#5c1c1c", foreground="#ff6b6b")
-        self.persistence_tree.tag_configure("medium", background="#78350f", foreground="#fbbf24")
-        self.persistence_tree.tag_configure("low", background="#1a1a1a", foreground="white")
-        self.persistence_tree.tag_configure("added", background="#065f46", foreground="#6ee7b7")
-        self.persistence_tree.tag_configure("removed", background="#7f1d1d", foreground="#fca5a5")
-        self.persistence_tree.tag_configure("modified", background="#4c1d95", foreground="#c084fc")
-
-        # Right-click context menu
-        self.persistence_context_menu = tk.Menu(
-            self.persistence_tree, tearoff=0,
-            bg="#1a1a1a", fg="white",
-            activebackground="#dc2626", activeforeground="white",
-            borderwidth=0, relief="flat"
-        )
-        self.persistence_context_menu.add_command(
-            label="📋 Copy Name",
-            command=lambda: self._copy_persistence_cell(2)
-        )
-        self.persistence_context_menu.add_command(
-            label="📋 Copy Value",
-            command=lambda: self._copy_persistence_cell(3)
-        )
-        self.persistence_context_menu.add_separator(background="#444444")
-        self.persistence_context_menu.add_command(
-            label="📋 Copy Entire Row",
-            command=self._copy_persistence_row
-        )
-        self.persistence_context_menu.add_separator(background="#444444")
-        self.persistence_context_menu.add_command(
-            label="➕ Add Value to IOCs",
-            command=self._add_persistence_ioc
-        )
-
-        self.persistence_tree.bind("<Button-3>", self._show_persistence_context_menu)
-        self.persistence_tree.bind("<Double-1>", lambda e: self._show_persistence_entry_detail())
-
-        self.analysis_subtabs["persistence"] = frame
-
-    def toggle_persistence_monitoring(self):
-        """Start or stop the persistence monitor."""
-        if not self.persistence_monitor_active:
-            self.persistence_monitor.start_monitoring()
-            self.persistence_monitor_active = True
-            self.btn_toggle_persistence.configure(text="⏹ Stop Monitoring")
-            self.persistence_stats_label.configure(
-                text="Persistence Monitor: Baselining and monitoring...",
-                text_color="#4ade80"
-            )
-            # Start auto-refresh
-            self._persistence_auto_refresh()
-        else:
-            self.persistence_monitor.stop_monitoring()
-            self.persistence_monitor_active = False
-            self.btn_toggle_persistence.configure(text="▶ Start Monitoring")
-            self.persistence_stats_label.configure(
-                text="Persistence Monitor: Stopped",
-                text_color="#9ca3af"
-            )
-
-    def take_persistence_baseline(self):
-        """Manually take a new baseline snapshot."""
-        self.persistence_stats_label.configure(
-            text="Taking baseline snapshot...", text_color="#fbbf24"
-        )
-        self.root.update_idletasks()
-
-        def _baseline():
-            counts = self.persistence_monitor.take_baseline()
-            self.root.after(0, lambda: self._on_baseline_done(counts))
-
-        threading.Thread(target=_baseline, daemon=True).start()
-
-    def _on_baseline_done(self, counts):
-        self.persistence_stats_label.configure(
-            text=f"Baseline captured: {counts['registry']} registry entries, "
-                 f"{counts['tasks']} scheduled tasks",
-            text_color="#4ade80"
-        )
-        self.refresh_persistence_view()
-
-    def _persistence_auto_refresh(self):
-        """Periodic refresh while monitoring is active."""
-        if not self.persistence_monitor_active:
-            return
-        self.refresh_persistence_view()
-        self.root.after(3000, self._persistence_auto_refresh)
-
-    def refresh_persistence_view(self):
-        """Rebuild the persistence treeview based on current filter."""
-        if not hasattr(self, 'persistence_tree'):
-            return
-
-        self.persistence_tree.delete(*self.persistence_tree.get_children())
-        self._persistence_entry_map = {}  # iid -> PersistenceEntry (full, untruncated)
-        filter_type = self.persistence_filter_var.get()
-        search = self.persistence_search_var.get().lower().strip()
-
-        # Update stats
-        stats = self.persistence_monitor.stats
-        stat_text = (
-            f"Registry: {stats['registry_entries']}  |  "
-            f"Tasks: {stats['scheduled_tasks']}  |  "
-            f"Changes: {stats['total_changes']} "
-            f"(+{stats['added']}  ~{stats['modified']}  -{stats['removed']})  |  "
-            f"Last scan: {stats['last_scan'] or 'N/A'}"
-        )
-        self.persistence_stats_label.configure(text=stat_text)
-
-        if filter_type == "changes":
-            # Show only detected changes
-            for change in self.persistence_monitor.get_changes():
-                entry = change["entry"]
-                if search and not self._persistence_matches_search(entry, search):
-                    continue
-                type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
-                tag = change["change_type"]  # added / removed / modified
-                iid = self.persistence_tree.insert("", "end", values=(
-                    type_label, entry.source, entry.name,
-                    entry.value[:200], entry.severity.upper(),
-                    change["change_type"].upper()
-                ), tags=(tag,))
-                self._persistence_entry_map[iid] = entry
-        else:
-            # Show full baseline
-            for entry in self.persistence_monitor.get_all_entries():
-                if filter_type not in ("all", entry.entry_type):
-                    continue
-                if search and not self._persistence_matches_search(entry, search):
-                    continue
-                type_label = "Registry" if entry.entry_type == "registry" else "Sched Task"
-                iid = self.persistence_tree.insert("", "end", values=(
-                    type_label, entry.source, entry.name,
-                    entry.value[:200], entry.severity.upper(), "baseline"
-                ), tags=(entry.severity,))
-                self._persistence_entry_map[iid] = entry
-
-    @staticmethod
-    def _persistence_matches_search(entry, search: str) -> bool:
-        return (search in entry.name.lower() or
-                search in entry.value.lower() or
-                search in entry.source.lower() or
-                search in entry.location.lower())
+    # ==================== PERSISTENCE (integrated into Live Events) ====================
+    # The former standalone Persistence subtab has been merged into the
+    # Live Events tab.  The PersistenceMonitor still runs independently
+    # and its changes are injected into the Live Events timeline as
+    # "Persistence" event types.
+    #
+    # Baseline / snapshot controls are available in the Live Events
+    # control panel.  The persistence change badge is shown in the
+    # Live Events stats bar.
 
     def on_persistence_change_detected(self, change_type, entry):
-        """Callback fired from PersistenceMonitor thread when a change is found."""
+        """Callback fired from PersistenceMonitor when a change is found.
+
+        Injects the change into the Live Events timeline as a Persistence
+        event and shows a popup alert for high/critical severity changes.
+        """
         self.persistence_change_count += 1
-        self.root.after(0, self._update_persistence_badge)
+        # Inject as a Live Events event via the system-wide monitor
+        self.root.after(0, lambda: self._inject_persistence_event(change_type, entry))
         # Show alert popup for high/critical changes
         if entry.severity in ("high", "critical"):
             self.root.after(0, lambda: self._show_persistence_alert(change_type, entry))
 
-    def _update_persistence_badge(self):
-        count = self.persistence_change_count
-        if count == 0:
-            color, bg = "#9ca3af", "#374151"
-        elif count <= 5:
-            color, bg = "#fbbf24", "#78350f"
-        elif count <= 15:
-            color, bg = "#fb923c", "#7c2d12"
-        else:
-            color, bg = "#f87171", "#7f1d1d"
-        self.persistence_badge.configure(
-            text=f"CHANGES: {count}", text_color=color, fg_color=bg
-        )
+    def _inject_persistence_event(self, change_type, entry):
+        """Push a persistence change into the Live Events timeline."""
+        if self.system_wide_monitor is None:
+            return
+        now = datetime.now()
+        severity_tag = f"[{entry.severity.upper()}]"
+        operation = f"Persistence{change_type.capitalize()}"  # PersistenceAdded / PersistenceRemoved / PersistenceModified
+        detail_parts = [f"Name: {entry.name}", f"Value: {entry.value[:200]}"]
+        if entry.extra.get("previous_value"):
+            detail_parts.append(f"Previous: {entry.extra['previous_value'][:200]}")
+        event = {
+            'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
+            'time_full': now.isoformat(),
+            'event_type': 'Persistence',
+            'operation': operation,
+            'path': entry.source,
+            'result': f"{severity_tag} {change_type.upper()}",
+            'detail': " | ".join(detail_parts),
+            'pid': 0,
+            'tid': 0,
+            'process_name': 'PersistenceMonitor',
+            # Extra fields for the detail popup
+            'persistence_entry': entry.to_dict(),
+            'persistence_change_type': change_type,
+        }
+        self.system_wide_monitor._add_event(event)
 
     def _show_persistence_alert(self, change_type, entry):
         """Show a popup alert for a significant persistence change."""
         alert = ctk.CTkToplevel(self.root)
-        alert.title("⚠️ Persistence Change Detected")
+        alert.title("Persistence Change Detected")
         alert.geometry("520x300")
         alert.configure(fg_color="#1a1a1a")
         alert.attributes("-topmost", True)
         alert.after(200, lambda: alert.focus_force())
 
-        # Header
         severity_colors = {
             "critical": "#ef4444", "high": "#f97316",
             "medium": "#eab308", "low": "#9ca3af"
@@ -2661,7 +2345,7 @@ class ForensicAnalysisGUI:
         header_color = severity_colors.get(entry.severity, "#9ca3af")
 
         ctk.CTkLabel(
-            alert, text=f"🔒 {change_type.upper()}: {entry.entry_type.replace('_', ' ').title()}",
+            alert, text=f"{change_type.upper()}: {entry.entry_type.replace('_', ' ').title()}",
             font=Fonts.title_medium, text_color=header_color
         ).pack(pady=(15, 5), padx=15, anchor="w")
 
@@ -2686,118 +2370,34 @@ class ForensicAnalysisGUI:
             height=32, width=100
         ).pack(pady=(0, 15))
 
-    def _show_persistence_context_menu(self, event):
-        item = self.persistence_tree.identify_row(event.y)
-        if item:
-            self.persistence_tree.selection_set(item)
-            self.persistence_context_menu.tk_popup(event.x_root, event.y_root)
+    def take_persistence_baseline(self):
+        """Manually take a new persistence baseline snapshot."""
+        def _baseline():
+            counts = self.persistence_monitor.take_baseline()
+            self.root.after(0, lambda: self._on_baseline_done(counts))
+        threading.Thread(target=_baseline, daemon=True).start()
 
-    def _copy_persistence_cell(self, col_index):
-        sel = self.persistence_tree.selection()
-        if sel:
-            values = self.persistence_tree.item(sel[0], "values")
-            if col_index < len(values):
-                self.root.clipboard_clear()
-                self.root.clipboard_append(values[col_index])
+    def _on_baseline_done(self, counts):
+        """Update status after persistence baseline is captured."""
+        print(f"[Persistence] Baseline captured: {counts['registry']} registry entries, "
+              f"{counts['tasks']} scheduled tasks")
 
-    def _copy_persistence_row(self):
-        sel = self.persistence_tree.selection()
-        if sel:
-            values = self.persistence_tree.item(sel[0], "values")
-            self.root.clipboard_clear()
-            self.root.clipboard_append(" | ".join(str(v) for v in values))
-
-    def _add_persistence_ioc(self):
-        sel = self.persistence_tree.selection()
-        if not sel or not self.current_case:
+    def _update_persistence_badge(self):
+        """Update the persistence change badge in Live Events control panel."""
+        if not hasattr(self, 'persistence_badge'):
             return
-        values = self.persistence_tree.item(sel[0], "values")
-        if len(values) >= 4:
-            ioc_value = values[3]  # Value / Command column
-            ioc_entry = f"[Persistence] {values[2]}: {ioc_value}"
-            if hasattr(self.current_case, 'iocs') and isinstance(self.current_case.get('iocs'), list):
-                self.current_case['iocs'].append(ioc_entry)
-
-    def _show_persistence_entry_detail(self):
-        """Show full untruncated details for the selected persistence entry."""
-        sel = self.persistence_tree.selection()
-        if not sel:
-            return
-        iid = sel[0]
-        entry = getattr(self, '_persistence_entry_map', {}).get(iid)
-        if not entry:
-            return
-
-        detail = ctk.CTkToplevel(self.root)
-        detail.title(f"Persistence Entry: {entry.name}")
-        detail.geometry("700x480")
-        detail.configure(fg_color="#1a1a1a")
-        detail.attributes("-topmost", True)
-        detail.after(200, lambda: detail.focus_force())
-
-        severity_colors = {
-            "critical": "#ef4444", "high": "#f97316",
-            "medium": "#eab308", "low": "#9ca3af"
-        }
-        header_color = severity_colors.get(entry.severity, "#9ca3af")
-
-        ctk.CTkLabel(
-            detail,
-            text=f"{'Registry' if entry.entry_type == 'registry' else 'Scheduled Task'}"
-                 f"  [{entry.severity.upper()}]",
-            font=Fonts.title_medium, text_color=header_color
-        ).pack(pady=(15, 5), padx=15, anchor="w")
-
-        # Build full detail text
-        lines = [
-            f"Source:    {entry.source}",
-            f"Location:  {entry.location}",
-            f"Name:      {entry.name}",
-            f"Severity:  {entry.severity.upper()}",
-            f"First seen: {entry.first_seen.strftime('%Y-%m-%d %H:%M:%S')}",
-            "",
-            "Full Value / Command:",
-            "=" * 60,
-            entry.value,
-        ]
-
-        if entry.extra.get("previous_value"):
-            lines += ["", "Previous Value:", "=" * 60, entry.extra["previous_value"]]
-
-        if entry.entry_type == "scheduled_task":
-            lines.append("")
-            if entry.extra.get("author"):
-                lines.append(f"Author:   {entry.extra['author']}")
-            if entry.extra.get("triggers"):
-                lines.append(f"Triggers: {entry.extra['triggers']}")
-            if entry.extra.get("full_path"):
-                lines.append(f"Task Path: {entry.extra['full_path']}")
-
-        if entry.entry_type == "registry" and entry.extra.get("reg_type") is not None:
-            reg_type_names = {1: "REG_SZ", 2: "REG_EXPAND_SZ", 3: "REG_BINARY",
-                              4: "REG_DWORD", 7: "REG_MULTI_SZ", 11: "REG_QWORD"}
-            lines.append(f"\nRegistry Type: {reg_type_names.get(entry.extra['reg_type'], entry.extra['reg_type'])}")
-
-        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
-                                      text_color="white", wrap="word")
-        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
-        text_widget.insert("1.0", "\n".join(lines))
-        text_widget.configure(state="disabled")
-
-        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
-
-        ctk.CTkButton(
-            btn_frame, text="📋 Copy Command", height=32, width=140,
-            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
-            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(entry.value))
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            btn_frame, text="Close", command=detail.destroy,
-            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
-            height=32, width=100
-        ).pack(side="right", padx=5)
+        count = self.persistence_change_count
+        if count == 0:
+            color, bg = "#9ca3af", "#374151"
+        elif count <= 5:
+            color, bg = "#fbbf24", "#78350f"
+        elif count <= 15:
+            color, bg = "#fb923c", "#7c2d12"
+        else:
+            color, bg = "#f87171", "#7f1d1d"
+        self.persistence_badge.configure(
+            text=f"CHANGES: {count}", text_color=color, fg_color=bg
+        )
 
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
@@ -2870,24 +2470,14 @@ class ForensicAnalysisGUI:
         # Hide all subtabs
         for subtab in self.analysis_subtabs.values():
             subtab.pack_forget()
-        
+
         # Reset button colors
         self.btn_processes.configure(
             fg_color="transparent",
             border_width=2,
             border_color=self.colors["red"]
         )
-        self.btn_network.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["red"]
-        )
         self.btn_live_events.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["red"]
-        )
-        self.btn_persistence.configure(
             fg_color="transparent",
             border_width=2,
             border_color=self.colors["red"]
@@ -2902,11 +2492,6 @@ class ForensicAnalysisGUI:
                 fg_color=self.colors["red"],
                 border_width=0
             )
-        elif subtab_name == "network":
-            self.btn_network.configure(
-                fg_color=self.colors["red"],
-                border_width=0
-            )
         elif subtab_name == "live_events":
             self.btn_live_events.configure(
                 fg_color=self.colors["red"],
@@ -2916,11 +2501,6 @@ class ForensicAnalysisGUI:
             if self.live_events_toggle_monitoring and not self.system_monitor_active:
                 print("[GUI] Auto-starting Live Events monitoring...")
                 self.live_events_toggle_monitoring()
-        elif subtab_name == "persistence":
-            self.btn_persistence.configure(
-                fg_color=self.colors["red"],
-                border_width=0
-            )
     
     # ==================== EVENT HANDLERS ====================
     def _sync_clock_before_case(self):
@@ -5292,18 +4872,10 @@ File Size: {file_info['file_size']} bytes"""
             # Start auto-refresh
             self.start_auto_refresh()
 
-        # Auto-start persistence monitoring
+        # Auto-start persistence monitoring (feeds into Live Events)
         if not self.persistence_monitor_active:
             self.persistence_monitor.start_monitoring()
             self.persistence_monitor_active = True
-            if hasattr(self, 'btn_toggle_persistence'):
-                self.btn_toggle_persistence.configure(text="⏹ Stop Monitoring")
-            if hasattr(self, 'persistence_stats_label'):
-                self.persistence_stats_label.configure(
-                    text="Persistence Monitor: Baselining and monitoring...",
-                    text_color="#4ade80"
-                )
-            self._persistence_auto_refresh()
 
     # ==================== PROCESS MONITOR METHODS ====================
     def toggle_process_monitoring(self):
@@ -5729,14 +5301,16 @@ File Size: {file_info['file_size']} bytes"""
                     'status': conn.status,
                     'pid': pid,
                 }
-                # Check suspicious via network monitor
-                if self.network_monitor._is_suspicious_connection(conn_info):
+                # Check suspicious ports inline
+                remote_port = conn_info.get('remote_port')
+                if remote_port and remote_port in (4444, 4445, 5555, 6666, 7777, 8888, 31337, 12345):
                     conn_info['suspicious'] = True
-                # Try hostname from network monitor's active_connections cache
-                conn_id = self.network_monitor._get_connection_id(conn_info)
-                cached = self.network_monitor.active_connections.get(conn_id)
-                if cached:
-                    conn_info['remote_hostname'] = cached.get('remote_hostname', '')
+                # Resolve hostname
+                remote_ip = conn_info.get('remote_ip', '')
+                if remote_ip:
+                    hostname = self.resolve_hostname(remote_ip)
+                    if hostname and hostname != '-':
+                        conn_info['remote_hostname'] = hostname
                 connections.append(conn_info)
             return connections
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -8196,111 +7770,6 @@ Risk Level: {risk_level}"""
 
             self.root.after(0, show_alert)
     
-    # FIXED: Added network callback stub
-    def on_new_connection_detected(self, conn_info):
-        """Callback when new network connection is detected"""
-        if not conn_info:
-            return
-        
-        if conn_info.get('suspicious'):
-            # Could add network alerts here
-            pass
-    
-    # ==================== NETWORK MONITOR METHODS ====================
-    def toggle_network_monitoring(self):
-        """Toggle network monitoring on/off"""
-        if not self.network_monitor_active:
-            self.network_monitor.start_monitoring()
-            self.network_monitor_active = True
-            self.btn_toggle_network_monitor.configure(text="⏸ Stop Monitoring")
-        else:
-            self.network_monitor.stop_monitoring()
-            self.network_monitor_active = False
-            self.btn_toggle_network_monitor.configure(text="▶ Start Monitoring")
-    
-    def show_network_context_menu(self, event):
-        """Show right-click context menu for network connections"""
-        try:
-            self.network_context_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self.network_context_menu.grab_release()
-
-    def copy_network_cell(self, column_index):
-        """Copy a specific cell from selected network row to clipboard"""
-        selection = self.network_tree.selection()
-        if not selection:
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']
-            if values and len(values) > column_index:
-                cell_value = str(values[column_index])
-                self.root.clipboard_clear()
-                self.root.clipboard_append(cell_value)
-                self.root.update()  # Keep clipboard after window closes
-        except Exception as e:
-            pass
-
-    def copy_network_row(self):
-        """Copy entire row from selected network connection to clipboard"""
-        selection = self.network_tree.selection()
-        if not selection:
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']
-            if values:
-                # Format: Type | Local | Remote | Hostname | Status | Process | Suspicious
-                row_text = " | ".join(str(v) for v in values)
-                self.root.clipboard_clear()
-                self.root.clipboard_append(row_text)
-                self.root.update()  # Keep clipboard after window closes
-        except Exception as e:
-            pass
-
-    def add_network_ioc_to_case(self, field_type):
-        """Add selected network IOC to current case"""
-        if not self.current_case:
-            messagebox.showwarning("No Active Case", "No active case to add IOC to. Please create or load a case first.")
-            return
-
-        selection = self.network_tree.selection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a network connection first.")
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']  # [Type, Local, Remote, Hostname, Status, Process, Suspicious]
-
-            if field_type == "remote_ip" and len(values) > 2:
-                # Extract IP from "IP:Port" format in Remote column (index 2)
-                remote_addr = str(values[2])
-                remote_ip = remote_addr.split(':')[0] if ':' in remote_addr else remote_addr
-
-                # Validate it's not empty or just a dash
-                if remote_ip and remote_ip != '-':
-                    self.case_manager.add_ioc("ips", remote_ip)
-                    self.refresh_iocs_display()
-                    messagebox.showinfo("Success", f"Added IP '{remote_ip}' to case IOCs!")
-                else:
-                    messagebox.showwarning("Invalid IP", "No valid IP address found in the selected connection.")
-
-            elif field_type == "hostname" and len(values) > 3:
-                hostname = str(values[3])
-                # Validate hostname is not empty or dash
-                if hostname and hostname != '-':
-                    self.case_manager.add_ioc("domains", hostname)
-                    self.refresh_iocs_display()
-                    messagebox.showinfo("Success", f"Added domain '{hostname}' to case IOCs!")
-                else:
-                    messagebox.showwarning("Invalid Hostname", "No valid hostname found in the selected connection.")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to add IOC: {str(e)}")
-
     def add_process_conn_ioc_to_case(self, field_type):
         """Add network connection IOCs from the selected process to the current case"""
         if not self.current_case:
@@ -8504,48 +7973,6 @@ Risk Level: {risk_level}"""
             # If resolution fails, just use the IP
             self.hostname_cache[ip_address] = '-'
             return '-'
-
-    def refresh_network_list(self):
-        """Refresh network connections list"""
-        # Clear existing
-        for item in self.network_tree.get_children():
-            self.network_tree.delete(item)
-
-        # Get connections
-        connections = self.network_monitor.get_all_connections()
-
-        for conn in connections:
-            local_addr = f"{conn.get('local_ip', '')}:{conn.get('local_port', '')}"
-            remote_addr = f"{conn.get('remote_ip', '')}:{conn.get('remote_port', '')}"
-
-            # Resolve hostname for remote IP
-            remote_ip = conn.get('remote_ip', '')
-            hostname = self.resolve_hostname(remote_ip) if remote_ip else '-'
-
-            suspicious_text = "Yes" if conn.get('suspicious', False) else "No"
-            tags = ('suspicious',) if conn.get('suspicious', False) else ()
-
-            self.network_tree.insert(
-                "", "end",
-                values=(
-                    conn.get('type', ''),
-                    local_addr,
-                    remote_addr,
-                    hostname,
-                    conn.get('status', ''),
-                    conn.get('process_name', 'Unknown'),
-                    suspicious_text
-                ),
-                tags=tags
-            )
-        
-        # Update stats
-        if self.network_monitor_active:
-            summary = self.network_monitor.get_connection_summary()
-            stats_text = f"""Network Statistics:
-Active: {summary['active_connections']} | Total: {summary['total_connections']} | Suspicious: {summary['suspicious_connections']}
-Unique IPs: {summary['unique_remote_ips']} | Unique Ports: {summary['unique_local_ports']}"""
-            self.network_stats_label.configure(text=stats_text)
 
     # ==================== FILE VIEWER AND EXECUTOR ====================
     def view_file_hex(self, file_path, file_name):
