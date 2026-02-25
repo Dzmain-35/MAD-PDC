@@ -1090,58 +1090,48 @@ class ForensicAnalysisGUI:
         )
         self.process_filter_dropdown.pack(side="left", padx=3)
 
-        # YARA match counter badge
-        self.yara_match_badge = ctk.CTkLabel(
+        # YARA match counter badge (clickable — shows matched rules)
+        self.yara_match_badge = ctk.CTkButton(
             search_frame,
-            text="⚠️ YARA: 0",
-            font=("Segoe UI", 15, "bold"),
-            text_color="#fbbf24",  # Amber color
-            fg_color="#78350f",     # Dark amber background
+            text="YARA: 0",
+            command=self._show_yara_matches_popup,
+            font=("Segoe UI", 14, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            hover_color="#374151",
             corner_radius=6,
-            padx=12,
-            pady=6
+            height=30, width=100
         )
         self.yara_match_badge.pack(side="left", padx=(8, 3))
 
-        # Sigma match counter badge
-        self.sigma_match_badge = ctk.CTkLabel(
+        # Sigma match counter badge (clickable — shows matched rules)
+        self.sigma_match_badge = ctk.CTkButton(
             search_frame,
             text="SIGMA: 0",
-            font=("Segoe UI", 15, "bold"),
+            command=self._show_sigma_matches_popup,
+            font=("Segoe UI", 14, "bold"),
             text_color="#9ca3af",
             fg_color="#374151",
+            hover_color="#374151",
             corner_radius=6,
-            padx=12,
-            pady=6
+            height=30, width=110
         )
         self.sigma_match_badge.pack(side="left", padx=3)
 
-        # HTTP Traffic alert badge (updated when HTTP monitor finds alerts)
-        self.http_alert_badge = ctk.CTkLabel(
+        # HTTP Traffic badge (clickable — toggles HTTP panel)
+        self.http_panel_visible = False
+        self.http_alert_badge = ctk.CTkButton(
             search_frame,
-            text="HTTP: 0",
-            font=("Segoe UI", 15, "bold"),
+            text="HTTP ▾",
+            command=self._toggle_http_panel,
+            font=("Segoe UI", 14, "bold"),
             text_color="#9ca3af",
             fg_color="#374151",
+            hover_color="#374151",
             corner_radius=6,
-            padx=12,
-            pady=6
+            height=30, width=90
         )
         self.http_alert_badge.pack(side="left", padx=3)
-
-        # HTTP Traffic toggle button
-        self.http_panel_visible = False
-        self.btn_toggle_http = ctk.CTkButton(
-            search_frame, text="HTTP Traffic ▾",
-            command=self._toggle_http_panel,
-            height=30, width=140,
-            fg_color="transparent",
-            border_width=2,
-            border_color="#a78bfa",
-            hover_color="#4c1d95",
-            font=Fonts.body_bold
-        )
-        self.btn_toggle_http.pack(side="right", padx=5)
 
         # ── Paned container for process tree + HTTP panel ──
         paned_container = ctk.CTkFrame(frame, fg_color="transparent")
@@ -1433,7 +1423,9 @@ class ForensicAnalysisGUI:
             # Collapse
             self._process_paned.forget(self._http_panel)
             self.http_panel_visible = False
-            self.btn_toggle_http.configure(text="HTTP Traffic ▾")
+            self.http_alert_badge.configure(
+                text="HTTP ▾" if not self.http_monitor_active else
+                self.http_alert_badge.cget("text").replace("▴", "▾"))
             # Stop monitoring
             if self.http_monitor_active:
                 self.http_monitor.stop_monitoring()
@@ -1445,12 +1437,122 @@ class ForensicAnalysisGUI:
             self._process_paned.add(self._http_panel, stretch="always")
             self._process_paned.paneconfigure(self._http_panel, height=250)
             self.http_panel_visible = True
-            self.btn_toggle_http.configure(text="HTTP Traffic ▴")
+            self.http_alert_badge.configure(
+                text=self.http_alert_badge.cget("text").replace("▾", "▴"))
             # Start monitoring
             if not self.http_monitor_active:
                 self.http_monitor.start_monitoring()
                 self.http_monitor_active = True
                 self._http_auto_refresh()
+
+    def _show_yara_matches_popup(self):
+        """Show a popup listing all processes with YARA matches."""
+        processes = self.process_monitor.get_all_processes()
+        matched = []
+        for proc in processes:
+            if proc.get('threat_detected') and proc.get('yara_rule') and proc['yara_rule'] != 'No_YARA_Hit':
+                scan_results = proc.get('scan_results', {})
+                all_rules = scan_results.get('all_rules', [proc.get('yara_rule', 'Unknown')])
+                matched.append({
+                    'pid': proc['pid'],
+                    'name': proc['name'],
+                    'exe': proc.get('exe', 'N/A'),
+                    'rules': all_rules
+                })
+
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("YARA Matches")
+        popup.geometry("650x420")
+        popup.attributes('-topmost', True)
+
+        main = ctk.CTkFrame(popup, fg_color=self.colors["navy"])
+        main.pack(fill="both", expand=True, padx=2, pady=2)
+
+        header = ctk.CTkLabel(main, text=f"YARA Matches ({len(matched)} processes)",
+                              font=Fonts.title_large, text_color="#fbbf24")
+        header.pack(padx=15, pady=(15, 10))
+
+        if not matched:
+            ctk.CTkLabel(main, text="No YARA matches found.",
+                         font=Fonts.body, text_color="gray60").pack(pady=20)
+        else:
+            text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
+            text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+            text_box = ctk.CTkTextbox(text_frame, fg_color=self.colors["dark_blue"],
+                                      text_color="white", font=Fonts.body,
+                                      wrap="word")
+            text_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+            for m in sorted(matched, key=lambda x: len(x['rules']), reverse=True):
+                text_box.insert("end", f"PID {m['pid']}  {m['name']}\n", "proc")
+                text_box.insert("end", f"  {m['exe']}\n", "path")
+                for rule in m['rules']:
+                    text_box.insert("end", f"    ⚠️ {rule}\n", "rule")
+                text_box.insert("end", "\n")
+
+            text_box.tag_config("proc", foreground="#fbbf24")
+            text_box.tag_config("path", foreground="#9ca3af")
+            text_box.tag_config("rule", foreground="#f87171")
+            text_box.configure(state="disabled")
+
+        ctk.CTkButton(main, text="Close", command=popup.destroy,
+                      fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+                      height=32, width=100).pack(pady=(0, 15))
+
+    def _show_sigma_matches_popup(self):
+        """Show a popup listing all processes with Sigma matches."""
+        processes = self.process_monitor.get_all_processes()
+        matched = []
+        for proc in processes:
+            sigma_titles = self.evaluate_process_sigma(proc)
+            if sigma_titles:
+                matched.append({
+                    'pid': proc['pid'],
+                    'name': proc['name'],
+                    'exe': proc.get('exe', 'N/A'),
+                    'rules': sigma_titles
+                })
+
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("Sigma Matches")
+        popup.geometry("650x420")
+        popup.attributes('-topmost', True)
+
+        main = ctk.CTkFrame(popup, fg_color=self.colors["navy"])
+        main.pack(fill="both", expand=True, padx=2, pady=2)
+
+        header = ctk.CTkLabel(main, text=f"Sigma Matches ({len(matched)} processes)",
+                              font=Fonts.title_large, text_color="#a78bfa")
+        header.pack(padx=15, pady=(15, 10))
+
+        if not matched:
+            ctk.CTkLabel(main, text="No Sigma matches found.",
+                         font=Fonts.body, text_color="gray60").pack(pady=20)
+        else:
+            text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
+            text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+            text_box = ctk.CTkTextbox(text_frame, fg_color=self.colors["dark_blue"],
+                                      text_color="white", font=Fonts.body,
+                                      wrap="word")
+            text_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+            for m in sorted(matched, key=lambda x: len(x['rules']), reverse=True):
+                text_box.insert("end", f"PID {m['pid']}  {m['name']}\n", "proc")
+                text_box.insert("end", f"  {m['exe']}\n", "path")
+                for rule in m['rules']:
+                    text_box.insert("end", f"    🔷 {rule}\n", "rule")
+                text_box.insert("end", "\n")
+
+            text_box.tag_config("proc", foreground="#a78bfa")
+            text_box.tag_config("path", foreground="#9ca3af")
+            text_box.tag_config("rule", foreground="#c084fc")
+            text_box.configure(state="disabled")
+
+        ctk.CTkButton(main, text="Close", command=popup.destroy,
+                      fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+                      height=32, width=100).pack(pady=(0, 15))
 
     def _http_auto_refresh(self):
         """Periodically refresh the HTTP tree while monitoring is active."""
@@ -1514,16 +1616,20 @@ class ForensicAnalysisGUI:
                 text="All Processes", fg="#9ca3af")
 
         # Update alert badge
+        arrow = "▴" if self.http_panel_visible else "▾"
         total_alerts = stats.get("alerts", 0)
         if total_alerts == 0:
             self.http_alert_badge.configure(
-                text="HTTP: 0", text_color="#9ca3af", fg_color="#374151")
+                text=f"HTTP {arrow}", text_color="#9ca3af",
+                fg_color="#374151", hover_color="#374151")
         elif total_alerts <= 5:
             self.http_alert_badge.configure(
-                text=f"HTTP: {total_alerts}", text_color="#fbbf24", fg_color="#78350f")
+                text=f"HTTP: {total_alerts} {arrow}", text_color="#fbbf24",
+                fg_color="#78350f", hover_color="#92400e")
         else:
             self.http_alert_badge.configure(
-                text=f"HTTP: {total_alerts}", text_color="#f87171", fg_color="#7f1d1d")
+                text=f"HTTP: {total_alerts} {arrow}", text_color="#f87171",
+                fg_color="#7f1d1d", hover_color="#991b1b")
 
     def _on_process_select_for_http(self, event=None):
         """Track the selected PID for optional HTTP filtering."""
@@ -5740,33 +5846,21 @@ File Size: {file_info['file_size']} bytes"""
         count = self.total_yara_matches
 
         # Update text
-        self.yara_match_badge.configure(text=f"⚠️ YARA: {count}")
+        self.yara_match_badge.configure(text=f"YARA: {count}")
 
         # Color code based on count
         if count == 0:
-            # Gray for no matches
             self.yara_match_badge.configure(
-                text_color="#9ca3af",
-                fg_color="#374151"
-            )
+                text_color="#9ca3af", fg_color="#374151", hover_color="#374151")
         elif count <= 10:
-            # Yellow for low count
             self.yara_match_badge.configure(
-                text_color="#fbbf24",
-                fg_color="#78350f"
-            )
+                text_color="#fbbf24", fg_color="#78350f", hover_color="#92400e")
         elif count <= 25:
-            # Orange for medium count
             self.yara_match_badge.configure(
-                text_color="#fb923c",
-                fg_color="#7c2d12"
-            )
+                text_color="#fb923c", fg_color="#7c2d12", hover_color="#9a3412")
         else:
-            # Red for high count
             self.yara_match_badge.configure(
-                text_color="#f87171",
-                fg_color="#7f1d1d"
-            )
+                text_color="#f87171", fg_color="#7f1d1d", hover_color="#991b1b")
 
     def update_sigma_match_badge(self):
         """Update the Sigma match counter badge with current count and color coding."""
@@ -5775,13 +5869,17 @@ File Size: {file_info['file_size']} bytes"""
         self.sigma_match_badge.configure(text=f"SIGMA: {count}")
 
         if count == 0:
-            self.sigma_match_badge.configure(text_color="#9ca3af", fg_color="#374151")
+            self.sigma_match_badge.configure(
+                text_color="#9ca3af", fg_color="#374151", hover_color="#374151")
         elif count <= 10:
-            self.sigma_match_badge.configure(text_color="#a78bfa", fg_color="#4c1d95")
+            self.sigma_match_badge.configure(
+                text_color="#a78bfa", fg_color="#4c1d95", hover_color="#5b21b6")
         elif count <= 25:
-            self.sigma_match_badge.configure(text_color="#c084fc", fg_color="#581c87")
+            self.sigma_match_badge.configure(
+                text_color="#c084fc", fg_color="#581c87", hover_color="#6b21a8")
         else:
-            self.sigma_match_badge.configure(text_color="#e879f9", fg_color="#701a75")
+            self.sigma_match_badge.configure(
+                text_color="#e879f9", fg_color="#701a75", hover_color="#86198f")
 
     def evaluate_process_sigma(self, proc):
         """
