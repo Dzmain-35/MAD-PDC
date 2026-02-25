@@ -1,0 +1,35 @@
+title: Coronet / Coro Agent Execution
+id: 3f6a7e8d-4c2a-4c90-b1c7-9e3f8a6d2b51
+status: experimental
+description: Detects execution of Coronet (Coro Cyber Security Ltd) agent binaries which may be abused for RMM-based persistence or lateral movement.
+references:
+  - https://www.coro.net/
+
+author: Dylan
+date: 2026-02-25
+tags:
+  - attack.execution
+  - attack.persistence
+  - attack.t1219
+
+logsource:
+  product: windows
+  service: sysmon
+  category: process_creation
+
+detection:
+  selection:
+    EventID: 1
+    Image|endswith:
+      - '\coronet-agent.exe'
+      - '\csagent.exe'
+      - '\coro-agent-s.exe'
+      - '\coro-agent-w.exe'
+
+  condition: selection
+
+falsepositives:
+  - Approved Coro Cyber Security deployments
+  - Managed IT environments using Coro legitimately
+
+level: medium
