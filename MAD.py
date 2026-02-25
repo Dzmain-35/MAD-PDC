@@ -1049,14 +1049,14 @@ class ForensicAnalysisGUI:
 
         self.process_search_entry = ctk.CTkEntry(
             search_frame,
-            placeholder_text="Enter PID or Process Name...",
+            placeholder_text="PID or Process Name...",
             height=35,
-            width=350 if self._is_large_screen else 180,
+            width=220 if self._is_large_screen else 140,
             fg_color="gray20",
             border_color=self.colors["navy"],
             border_width=2
         )
-        self.process_search_entry.pack(side="left", padx=5, fill="x", expand=True)
+        self.process_search_entry.pack(side="left", padx=5)
         self.process_search_entry.bind("<KeyRelease>", lambda e: self.filter_processes())
 
         # Clear search button
@@ -1073,7 +1073,7 @@ class ForensicAnalysisGUI:
         filter_label = ctk.CTkLabel(search_frame, text="Filter:",
                                     font=Fonts.body,
                                     text_color="white")
-        filter_label.pack(side="left", padx=(20, 10))
+        filter_label.pack(side="left", padx=(10, 5))
 
         self.process_filter_var = ctk.StringVar(value="All Processes")
         self.process_filter_dropdown = ctk.CTkComboBox(
@@ -1082,13 +1082,13 @@ class ForensicAnalysisGUI:
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
-            width=200 if self._is_large_screen else 145,
+            width=170 if self._is_large_screen else 130,
             fg_color="gray20",
             border_color=self.colors["navy"],
             button_color=self.colors["navy"],
             button_hover_color=self.colors["dark_blue"]
         )
-        self.process_filter_dropdown.pack(side="left", padx=5)
+        self.process_filter_dropdown.pack(side="left", padx=3)
 
         # YARA match counter badge
         self.yara_match_badge = ctk.CTkLabel(
@@ -1101,7 +1101,7 @@ class ForensicAnalysisGUI:
             padx=12,
             pady=6
         )
-        self.yara_match_badge.pack(side="left", padx=(15, 5))
+        self.yara_match_badge.pack(side="left", padx=(8, 3))
 
         # Sigma match counter badge
         self.sigma_match_badge = ctk.CTkLabel(
@@ -1114,7 +1114,7 @@ class ForensicAnalysisGUI:
             padx=12,
             pady=6
         )
-        self.sigma_match_badge.pack(side="left", padx=5)
+        self.sigma_match_badge.pack(side="left", padx=3)
 
         # HTTP Traffic alert badge (updated when HTTP monitor finds alerts)
         self.http_alert_badge = ctk.CTkLabel(
@@ -1127,7 +1127,7 @@ class ForensicAnalysisGUI:
             padx=12,
             pady=6
         )
-        self.http_alert_badge.pack(side="left", padx=5)
+        self.http_alert_badge.pack(side="left", padx=3)
 
         # HTTP Traffic toggle button
         self.http_panel_visible = False
