@@ -1149,7 +1149,7 @@ class ForensicAnalysisGUI:
 
         self._process_paned = tk.PanedWindow(
             paned_container, orient=tk.VERTICAL,
-            bg="#0d1520", sashwidth=6, sashrelief="flat",
+            bg=self.colors["navy"], sashwidth=6, sashrelief="flat",
             borderwidth=0
         )
         self._process_paned.pack(fill="both", expand=True)
@@ -1297,27 +1297,27 @@ class ForensicAnalysisGUI:
         self.process_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')  # Purple for Sigma matches
 
         # ── HTTP Traffic Panel (collapsible) ──────────────────────────
-        self._http_panel = tk.Frame(self._process_paned, bg="#111827")
+        self._http_panel = tk.Frame(self._process_paned, bg=self.colors["navy"])
 
         # HTTP header bar
-        http_header = tk.Frame(self._http_panel, bg="#1e1b4b", height=36)
+        http_header = tk.Frame(self._http_panel, bg=self.colors["dark_blue"], height=36)
         http_header.pack(fill="x")
         http_header.pack_propagate(False)
 
         tk.Label(http_header, text="HTTP Traffic",
-                 bg="#1e1b4b", fg="#a78bfa",
+                 bg=self.colors["dark_blue"], fg="#a78bfa",
                  font=("Segoe UI", 12, "bold")).pack(side="left", padx=10)
 
         self.http_stats_label = tk.Label(
             http_header, text="Sessions: 0  |  Alerts: 0",
-            bg="#1e1b4b", fg="#9ca3af",
+            bg=self.colors["dark_blue"], fg="#9ca3af",
             font=("Segoe UI", 10))
         self.http_stats_label.pack(side="left", padx=15)
 
         # PID filter indicator
         self.http_pid_filter_label = tk.Label(
             http_header, text="All Processes",
-            bg="#1e1b4b", fg="#22d3ee",
+            bg=self.colors["dark_blue"], fg="#22d3ee",
             font=("Segoe UI", 10))
         self.http_pid_filter_label.pack(side="left", padx=5)
 
@@ -1327,8 +1327,9 @@ class ForensicAnalysisGUI:
             http_header, text="Filter to PID",
             variable=self.http_pid_lock_var,
             command=self._refresh_http_tree,
-            bg="#1e1b4b", fg="#22d3ee", selectcolor="#374151",
-            activebackground="#1e1b4b", activeforeground="#22d3ee",
+            bg=self.colors["dark_blue"], fg="#22d3ee",
+            selectcolor=self.colors["navy"],
+            activebackground=self.colors["dark_blue"], activeforeground="#22d3ee",
             font=("Segoe UI", 10))
         self.http_pid_lock_check.pack(side="right", padx=5)
 
@@ -1338,19 +1339,21 @@ class ForensicAnalysisGUI:
             http_header, text="Alerts Only",
             variable=self.http_alerts_only_var,
             command=self._refresh_http_tree,
-            bg="#1e1b4b", fg="#fbbf24", selectcolor="#374151",
-            activebackground="#1e1b4b", activeforeground="#fbbf24",
+            bg=self.colors["dark_blue"], fg="#fbbf24",
+            selectcolor=self.colors["navy"],
+            activebackground=self.colors["dark_blue"], activeforeground="#fbbf24",
             font=("Segoe UI", 10))
         self.http_alerts_check.pack(side="right", padx=10)
 
         # Clear button
-        tk.Button(http_header, text="Clear", bg="#374151", fg="white",
-                  activebackground="#4b5563", activeforeground="white",
+        tk.Button(http_header, text="Clear",
+                  bg=self.colors["dark_blue"], fg="white",
+                  activebackground=self.colors["red_dark"], activeforeground="white",
                   relief="flat", bd=0, padx=8, font=("Segoe UI", 9),
                   command=self._clear_http_sessions).pack(side="right", padx=5)
 
         # HTTP Treeview
-        http_tree_frame = tk.Frame(self._http_panel, bg="#111827")
+        http_tree_frame = tk.Frame(self._http_panel, bg=self.colors["navy"])
         http_tree_frame.pack(fill="both", expand=True)
 
         http_vsb = tk.Scrollbar(http_tree_frame, orient="vertical")
@@ -1377,13 +1380,13 @@ class ForensicAnalysisGUI:
         # Alert-level tag colours
         self.http_tree.tag_configure("high", background="#7f1d1d", foreground="#fca5a5")
         self.http_tree.tag_configure("medium", background="#78350f", foreground="#fbbf24")
-        self.http_tree.tag_configure("low", background="#1e1b4b", foreground="#c4b5fd")
+        self.http_tree.tag_configure("low", background=self.colors["dark_blue"], foreground="#c4b5fd")
 
         # Right-click context menu
         self.http_context_menu = tk.Menu(
             self.http_tree, tearoff=0,
-            bg="#1a1a1a", fg="white",
-            activebackground="#dc2626", activeforeground="white",
+            bg=self.colors["navy"], fg="white",
+            activebackground=self.colors["red"], activeforeground="white",
             borderwidth=0, relief="flat"
         )
         self.http_context_menu.add_command(
@@ -1685,32 +1688,17 @@ class ForensicAnalysisGUI:
         """Create the Live Events subtab for system-wide monitoring"""
         frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
 
-        # Header with title
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=10)
-
-        title = ctk.CTkLabel(header, text="Live System Events",
-                            font=Fonts.title_large,
-                            text_color="white")
-        title.pack(side="left")
-
-        subtitle = ctk.CTkLabel(header,
-                               text="Real-time monitoring: File • Registry • Network • Process • DNS • Persistence",
-                               font=Fonts.helper, text_color="gray60")
-        subtitle.pack(side="left", padx=20)
-
         # Main content area
         content = ctk.CTkFrame(frame, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        content.pack(fill="both", expand=True, padx=20, pady=(0, 5))
 
         # ===== CONTROL PANEL =====
-        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"], height=150)
-        control_panel.pack(fill="x", pady=(0, 10))
-        control_panel.pack_propagate(False)
+        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"])
+        control_panel.pack(fill="x", pady=(0, 5))
 
         # Row 1: Start/Stop and Status
         row1 = ctk.CTkFrame(control_panel, fg_color="transparent")
-        row1.pack(fill="x", padx=10, pady=(10, 5))
+        row1.pack(fill="x", padx=10, pady=(5, 3))
 
         # Start/Stop button
         monitor_btn_text = tk.StringVar(value="▶ Start Monitoring")
@@ -1769,34 +1757,9 @@ class ForensicAnalysisGUI:
         )
         clear_btn.pack(side="right", padx=5)
 
-        # Row 2: Persistence controls + Statistics
+        # Row 2: Statistics
         row2 = ctk.CTkFrame(control_panel, fg_color="transparent")
-        row2.pack(fill="x", padx=10, pady=5)
-
-        # Persistence baseline button
-        baseline_btn = ctk.CTkButton(
-            row2,
-            text="📸 Persistence Baseline",
-            command=None,  # Will be set later
-            height=30,
-            width=180,
-            fg_color="transparent",
-            border_width=2,
-            border_color="#f97316",
-            hover_color="#78350f"
-        )
-        baseline_btn.pack(side="left", padx=(0, 10))
-
-        # Persistence change badge
-        self.persistence_badge = ctk.CTkLabel(
-            row2, text="CHANGES: 0",
-            font=Fonts.helper,
-            text_color="#9ca3af",
-            fg_color="#374151",
-            corner_radius=8,
-            width=100, height=26
-        )
-        self.persistence_badge.pack(side="left", padx=(0, 15))
+        row2.pack(fill="x", padx=10, pady=(0, 5))
 
         stats_label = ctk.CTkLabel(
             row2,
@@ -1808,11 +1771,11 @@ class ForensicAnalysisGUI:
 
         # ===== FILTER PANEL =====
         filter_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"])
-        filter_panel.pack(fill="x", pady=(0, 10))
+        filter_panel.pack(fill="x", pady=(0, 5))
 
         # Filter row 1: Event types
         filter_row1 = ctk.CTkFrame(filter_panel, fg_color="transparent")
-        filter_row1.pack(fill="x", padx=10, pady=(10, 5))
+        filter_row1.pack(fill="x", padx=10, pady=(5, 3))
 
         filter_label1 = ctk.CTkLabel(
             filter_row1,
@@ -1855,7 +1818,7 @@ class ForensicAnalysisGUI:
 
         # Filter row 2: PID and regex
         filter_row2 = ctk.CTkFrame(filter_panel, fg_color="transparent")
-        filter_row2.pack(fill="x", padx=10, pady=(5, 10))
+        filter_row2.pack(fill="x", padx=10, pady=(3, 5))
 
         # PID filter
         pid_filter_label = ctk.CTkLabel(
@@ -1945,6 +1908,27 @@ class ForensicAnalysisGUI:
         events_hsb = tk.Scrollbar(events_frame, orient="horizontal", bg="#1a1a1a")
         events_hsb.pack(side="bottom", fill="x")
 
+        # Style the Live Events tree with slightly larger font
+        _le_font_size = 13 if self._is_large_screen else 11
+        _le_heading_size = 14 if self._is_large_screen else 12
+        _le_row_height = 28 if self._is_large_screen else 22
+
+        style = ttk.Style()
+        style.configure("LiveEvents.Treeview",
+                       background="#1a1a1a",
+                       foreground="white",
+                       fieldbackground="#1a1a1a",
+                       borderwidth=0,
+                       font=('Segoe UI', _le_font_size),
+                       rowheight=_le_row_height)
+        style.configure("LiveEvents.Treeview.Heading",
+                       background="#0d1520",
+                       foreground="white",
+                       borderwidth=1,
+                       font=('Segoe UI', _le_heading_size, 'bold'))
+        style.map("LiveEvents.Treeview",
+                 background=[("selected", "#dc2626")])
+
         # TreeView for events
         columns = ("time", "pid", "process", "type", "operation", "path", "result")
         events_tree = ttk.Treeview(
@@ -1953,7 +1937,8 @@ class ForensicAnalysisGUI:
             show="headings",
             height=25,
             yscrollcommand=events_vsb.set,
-            xscrollcommand=events_hsb.set
+            xscrollcommand=events_hsb.set,
+            style="LiveEvents.Treeview"
         )
         self.live_events_tree = events_tree
         self._live_event_data = {}  # iid -> full event dict
@@ -1969,26 +1954,11 @@ class ForensicAnalysisGUI:
 
         events_tree.column("time", width=100, minwidth=100)
         events_tree.column("pid", width=60, minwidth=60)
-        events_tree.column("process", width=120, minwidth=100)
-        events_tree.column("type", width=80, minwidth=80)
-        events_tree.column("operation", width=150, minwidth=120)
+        events_tree.column("process", width=130, minwidth=100)
+        events_tree.column("type", width=85, minwidth=80)
+        events_tree.column("operation", width=160, minwidth=120)
         events_tree.column("path", width=400, minwidth=200)
         events_tree.column("result", width=100, minwidth=80)
-
-        # Style the tree
-        style = ttk.Style()
-        style.theme_use("default")
-        style.configure("Treeview",
-                       background="#1a1a1a",
-                       foreground="white",
-                       fieldbackground="#1a1a1a",
-                       borderwidth=0)
-        style.configure("Treeview.Heading",
-                       background="#0d1520",
-                       foreground="white",
-                       borderwidth=1)
-        style.map("Treeview",
-                 background=[("selected", "#dc2626")])
 
         # Tag for suspicious events
         events_tree.tag_configure('suspicious', background='#5c1c1c', foreground='#ff6b6b')
@@ -2452,9 +2422,6 @@ class ForensicAnalysisGUI:
                          f"{persist_text}{sigma_text}"
                 )
 
-                # Update persistence badge
-                self._update_persistence_badge()
-
                 # Update last update time
                 monitor_state["last_update_time"] = datetime.now()
 
@@ -2551,7 +2518,6 @@ class ForensicAnalysisGUI:
         monitor_btn.configure(command=toggle_monitoring)
         export_btn.configure(command=export_events_to_csv)
         clear_btn.configure(command=clear_events_display)
-        baseline_btn.configure(command=self.take_persistence_baseline)
         apply_filter_btn.configure(command=apply_filters)
         clear_filter_btn.configure(command=clear_filters)
         suspicious_check.configure(command=lambda: apply_filters() if monitor_state["monitoring"] else None)
@@ -2791,35 +2757,6 @@ class ForensicAnalysisGUI:
             fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
             height=32, width=100
         ).pack(pady=(0, 15))
-
-    def take_persistence_baseline(self):
-        """Manually take a new persistence baseline snapshot."""
-        def _baseline():
-            counts = self.persistence_monitor.take_baseline()
-            self.root.after(0, lambda: self._on_baseline_done(counts))
-        threading.Thread(target=_baseline, daemon=True).start()
-
-    def _on_baseline_done(self, counts):
-        """Update status after persistence baseline is captured."""
-        print(f"[Persistence] Baseline captured: {counts['registry']} registry entries, "
-              f"{counts['tasks']} scheduled tasks")
-
-    def _update_persistence_badge(self):
-        """Update the persistence change badge in Live Events control panel."""
-        if not hasattr(self, 'persistence_badge'):
-            return
-        count = self.persistence_change_count
-        if count == 0:
-            color, bg = "#9ca3af", "#374151"
-        elif count <= 5:
-            color, bg = "#fbbf24", "#78350f"
-        elif count <= 15:
-            color, bg = "#fb923c", "#7c2d12"
-        else:
-            color, bg = "#f87171", "#7f1d1d"
-        self.persistence_badge.configure(
-            text=f"CHANGES: {count}", text_color=color, fg_color=bg
-        )
 
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
