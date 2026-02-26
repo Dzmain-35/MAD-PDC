@@ -5,12 +5,14 @@ from datetime import datetime
 from case_manager import CaseManager
 from PIL import Image
 import os
+import socket
 import threading
 import subprocess
 import platform
 import webbrowser
 from analysis_modules.process_monitor import ProcessMonitor
-from analysis_modules.network_monitor import NetworkMonitor
+from analysis_modules.persistence_monitor import PersistenceMonitor
+from analysis_modules.http_monitor import HttpTrafficMonitor
 from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
@@ -122,15 +124,20 @@ class ForensicAnalysisGUI:
             yara_rules_path=self.case_manager.yara_rules_path
         )
 
-        self.network_monitor = NetworkMonitor()
+        self.persistence_monitor = PersistenceMonitor(poll_interval=5.0)
+
+        # HTTP traffic monitor
+        self.http_monitor = HttpTrafficMonitor(poll_interval=1.5)
+        self.http_monitor_active = False
 
         # Register callbacks for real-time updates
         self.process_monitor.register_process_callback(self.on_new_process_detected)
-        self.network_monitor.register_connection_callback(self.on_new_connection_detected)
+        self.persistence_monitor.register_callback(self.on_persistence_change_detected)
 
         # Monitoring states (from settings)
         self.process_monitor_active = False
-        self.network_monitor_active = False
+        self.persistence_monitor_active = False
+        self.persistence_change_count = 0
 
         # Auto-refresh state (from settings)
         self.auto_refresh_enabled = True
@@ -964,18 +971,6 @@ class ForensicAnalysisGUI:
         )
         self.btn_processes.pack(side="left", padx=5)
         
-        self.btn_network = ctk.CTkButton(
-            subtab_frame, text="🌐 Network",
-            command=lambda: self.show_analysis_subtab("network"),
-            height=35, width=150,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["red"],
-            font=Fonts.body_bold
-        )
-        self.btn_network.pack(side="left", padx=5)
-
         self.btn_live_events = ctk.CTkButton(
             subtab_frame, text="📡 Live Events",
             command=lambda: self.show_analysis_subtab("live_events"),
@@ -995,9 +990,8 @@ class ForensicAnalysisGUI:
         # Create sub-tab frames
         self.analysis_subtabs = {}
         self.create_processes_subtab()
-        self.create_network_subtab()
         self.create_live_events_subtab()
-        
+
         self.tabs["analysis"] = frame
         self.show_analysis_subtab("processes")
         
@@ -1055,14 +1049,14 @@ class ForensicAnalysisGUI:
 
         self.process_search_entry = ctk.CTkEntry(
             search_frame,
-            placeholder_text="Enter PID or Process Name...",
+            placeholder_text="PID or Process Name...",
             height=35,
-            width=350 if self._is_large_screen else 180,
+            width=220 if self._is_large_screen else 140,
             fg_color="gray20",
             border_color=self.colors["navy"],
             border_width=2
         )
-        self.process_search_entry.pack(side="left", padx=5, fill="x", expand=True)
+        self.process_search_entry.pack(side="left", padx=5)
         self.process_search_entry.bind("<KeyRelease>", lambda e: self.filter_processes())
 
         # Clear search button
@@ -1079,7 +1073,7 @@ class ForensicAnalysisGUI:
         filter_label = ctk.CTkLabel(search_frame, text="Filter:",
                                     font=Fonts.body,
                                     text_color="white")
-        filter_label.pack(side="left", padx=(20, 10))
+        filter_label.pack(side="left", padx=(10, 5))
 
         self.process_filter_var = ctk.StringVar(value="All Processes")
         self.process_filter_dropdown = ctk.CTkComboBox(
@@ -1088,43 +1082,71 @@ class ForensicAnalysisGUI:
             variable=self.process_filter_var,
             command=lambda choice: self.filter_processes(),
             height=35,
-            width=200 if self._is_large_screen else 145,
+            width=170 if self._is_large_screen else 130,
             fg_color="gray20",
             border_color=self.colors["navy"],
             button_color=self.colors["navy"],
             button_hover_color=self.colors["dark_blue"]
         )
-        self.process_filter_dropdown.pack(side="left", padx=5)
+        self.process_filter_dropdown.pack(side="left", padx=3)
 
-        # YARA match counter badge
-        self.yara_match_badge = ctk.CTkLabel(
+        # YARA match counter badge (clickable — shows matched rules)
+        self.yara_match_badge = ctk.CTkButton(
             search_frame,
-            text="⚠️ YARA: 0",
-            font=("Segoe UI", 15, "bold"),
-            text_color="#fbbf24",  # Amber color
-            fg_color="#78350f",     # Dark amber background
-            corner_radius=6,
-            padx=12,
-            pady=6
-        )
-        self.yara_match_badge.pack(side="left", padx=(15, 5))
-
-        # Sigma match counter badge
-        self.sigma_match_badge = ctk.CTkLabel(
-            search_frame,
-            text="SIGMA: 0",
-            font=("Segoe UI", 15, "bold"),
+            text="YARA: 0",
+            command=self._show_yara_matches_popup,
+            font=("Segoe UI", 14, "bold"),
             text_color="#9ca3af",
             fg_color="#374151",
+            hover_color="#374151",
             corner_radius=6,
-            padx=12,
-            pady=6
+            height=30, width=100
         )
-        self.sigma_match_badge.pack(side="left", padx=5)
+        self.yara_match_badge.pack(side="left", padx=(8, 3))
+
+        # Sigma match counter badge (clickable — shows matched rules)
+        self.sigma_match_badge = ctk.CTkButton(
+            search_frame,
+            text="SIGMA: 0",
+            command=self._show_sigma_matches_popup,
+            font=("Segoe UI", 14, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            hover_color="#374151",
+            corner_radius=6,
+            height=30, width=110
+        )
+        self.sigma_match_badge.pack(side="left", padx=3)
+
+        # HTTP Traffic badge (clickable — toggles HTTP panel)
+        self.http_panel_visible = False
+        self.http_alert_badge = ctk.CTkButton(
+            search_frame,
+            text="HTTP ▾",
+            command=self._toggle_http_panel,
+            font=("Segoe UI", 14, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151",
+            hover_color="#374151",
+            corner_radius=6,
+            height=30, width=90
+        )
+        self.http_alert_badge.pack(side="left", padx=3)
+
+        # ── Paned container for process tree + HTTP panel ──
+        paned_container = ctk.CTkFrame(frame, fg_color="transparent")
+        paned_container.pack(fill="both", expand=True, padx=20, pady=10)
+
+        self._process_paned = tk.PanedWindow(
+            paned_container, orient=tk.VERTICAL,
+            bg=self.colors["navy"], sashwidth=6, sashrelief="flat",
+            borderwidth=0
+        )
+        self._process_paned.pack(fill="both", expand=True)
 
         # Process tree area with parent-child hierarchy
-        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        tree_frame = tk.Frame(self._process_paned, bg="#1a1a1a")
+        self._process_paned.add(tree_frame, stretch="always")
         
         # Scrollbars
         vsb = tk.Scrollbar(tree_frame, orient="vertical", bg="#1a1a1a", troughcolor="#0d1520")
@@ -1166,7 +1188,7 @@ class ForensicAnalysisGUI:
                  background=[('active', '#1a2332')])
         
         # Treeview with hierarchy support
-        columns = ("PID", "File Path", "Private Bytes", "Connections", "Detection Status")
+        columns = ("PID", "File Path", "Bytes", "Connections", "Detection Status")
         self.process_tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1183,7 +1205,7 @@ class ForensicAnalysisGUI:
         self.process_tree.column("#0", width=250, minwidth=180)  # Tree hierarchy (name shown here)
         self.process_tree.column("PID", width=80, minwidth=60, anchor="center")
         self.process_tree.column("File Path", width=350, minwidth=200)
-        self.process_tree.column("Private Bytes", width=120, minwidth=80, anchor="e")
+        self.process_tree.column("Bytes", width=120, minwidth=80, anchor="e")
         self.process_tree.column("Connections", width=200, minwidth=120, anchor="center")
         self.process_tree.column("Detection Status", width=300, minwidth=180, anchor="center")
 
@@ -1191,7 +1213,7 @@ class ForensicAnalysisGUI:
         self.process_tree.heading("#0", text="Process Tree")
         self.process_tree.heading("PID", text="PID")
         self.process_tree.heading("File Path", text="File Path")
-        self.process_tree.heading("Private Bytes", text="Private Bytes")
+        self.process_tree.heading("Bytes", text="Bytes")
         self.process_tree.heading("Connections", text="Network Connections")
         self.process_tree.heading("Detection Status", text="YARA / Sigma")
         
@@ -1263,166 +1285,526 @@ class ForensicAnalysisGUI:
         self.process_tree.tag_configure('system', foreground='#888888')
         self.process_tree.tag_configure('suspended', background='#3a3a3a', foreground='#808080')  # Grey for suspended processes
         self.process_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')  # Purple for Sigma matches
-        
+
+        # ── HTTP Traffic Panel (collapsible) ──────────────────────────
+        self._http_panel = tk.Frame(self._process_paned, bg=self.colors["navy"])
+
+        # HTTP header bar
+        http_header = tk.Frame(self._http_panel, bg=self.colors["dark_blue"], height=36)
+        http_header.pack(fill="x")
+        http_header.pack_propagate(False)
+
+        tk.Label(http_header, text="HTTP Traffic",
+                 bg=self.colors["dark_blue"], fg="#a78bfa",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=10)
+
+        self.http_stats_label = tk.Label(
+            http_header, text="Sessions: 0  |  Alerts: 0",
+            bg=self.colors["dark_blue"], fg="#9ca3af",
+            font=("Segoe UI", 10))
+        self.http_stats_label.pack(side="left", padx=15)
+
+        # PID filter indicator
+        self.http_pid_filter_label = tk.Label(
+            http_header, text="All Processes",
+            bg=self.colors["dark_blue"], fg="#22d3ee",
+            font=("Segoe UI", 10))
+        self.http_pid_filter_label.pack(side="left", padx=5)
+
+        # Filter to selected PID checkbox (off by default — shows all traffic)
+        self.http_pid_lock_var = tk.BooleanVar(value=False)
+        self.http_pid_lock_check = tk.Checkbutton(
+            http_header, text="Filter to PID",
+            variable=self.http_pid_lock_var,
+            command=self._refresh_http_tree,
+            bg=self.colors["dark_blue"], fg="#22d3ee",
+            selectcolor=self.colors["navy"],
+            activebackground=self.colors["dark_blue"], activeforeground="#22d3ee",
+            font=("Segoe UI", 10))
+        self.http_pid_lock_check.pack(side="right", padx=5)
+
+        # Alerts only checkbox
+        self.http_alerts_only_var = tk.BooleanVar(value=False)
+        self.http_alerts_check = tk.Checkbutton(
+            http_header, text="Alerts Only",
+            variable=self.http_alerts_only_var,
+            command=self._refresh_http_tree,
+            bg=self.colors["dark_blue"], fg="#fbbf24",
+            selectcolor=self.colors["navy"],
+            activebackground=self.colors["dark_blue"], activeforeground="#fbbf24",
+            font=("Segoe UI", 10))
+        self.http_alerts_check.pack(side="right", padx=10)
+
+        # Clear button
+        tk.Button(http_header, text="Clear",
+                  bg=self.colors["dark_blue"], fg="white",
+                  activebackground=self.colors["red_dark"], activeforeground="white",
+                  relief="flat", bd=0, padx=8, font=("Segoe UI", 9),
+                  command=self._clear_http_sessions).pack(side="right", padx=5)
+
+        # HTTP Treeview
+        http_tree_frame = tk.Frame(self._http_panel, bg=self.colors["navy"])
+        http_tree_frame.pack(fill="both", expand=True)
+
+        http_vsb = tk.Scrollbar(http_tree_frame, orient="vertical")
+        http_vsb.pack(side="right", fill="y")
+
+        http_columns = ("#", "Time", "PID", "Process", "Protocol",
+                        "Host", "Remote", "Status", "Alert")
+        self.http_tree = ttk.Treeview(
+            http_tree_frame, columns=http_columns, show="headings",
+            yscrollcommand=http_vsb.set, style="Process.Treeview"
+        )
+        self.http_tree.pack(side="left", fill="both", expand=True)
+        http_vsb.config(command=self.http_tree.yview)
+
+        # Column widths
+        col_widths = {"#": 50, "Time": 100, "PID": 60, "Process": 130,
+                      "Protocol": 70, "Host": 250, "Remote": 150,
+                      "Status": 100, "Alert": 80}
+        for col in http_columns:
+            self.http_tree.heading(col, text=col)
+            self.http_tree.column(col, width=col_widths.get(col, 100),
+                                  minwidth=40)
+
+        # Alert-level tag colours
+        self.http_tree.tag_configure("high", background="#7f1d1d", foreground="#fca5a5")
+        self.http_tree.tag_configure("medium", background="#78350f", foreground="#fbbf24")
+        self.http_tree.tag_configure("low", background=self.colors["dark_blue"], foreground="#c4b5fd")
+
+        # Right-click context menu
+        self.http_context_menu = tk.Menu(
+            self.http_tree, tearoff=0,
+            bg=self.colors["navy"], fg="white",
+            activebackground=self.colors["red"], activeforeground="white",
+            borderwidth=0, relief="flat"
+        )
+        self.http_context_menu.add_command(
+            label="📋 Copy Host",
+            command=lambda: self._copy_http_cell("Host"))
+        self.http_context_menu.add_command(
+            label="📋 Copy Remote Address",
+            command=lambda: self._copy_http_cell("Remote"))
+        self.http_context_menu.add_command(
+            label="📋 Copy Row",
+            command=self._copy_http_row)
+        self.http_context_menu.add_separator(background="#444444")
+        self.http_context_menu.add_command(
+            label="➕ Add Host to IOCs",
+            command=lambda: self._add_http_ioc("host"))
+        self.http_context_menu.add_command(
+            label="➕ Add IP to IOCs",
+            command=lambda: self._add_http_ioc("ip"))
+        self.http_context_menu.add_separator(background="#444444")
+        self.http_context_menu.add_command(
+            label="🔍 Focus Process in Tree",
+            command=self._focus_http_process)
+
+        self.http_tree.bind("<Button-3>", self._show_http_context_menu)
+        self.http_tree.bind("<Double-1>", lambda e: self._show_http_session_detail())
+
+        # Store session data for detail view
+        self._http_session_data: Dict = {}
+
+        # Auto-filter when process tree selection changes
+        self.process_tree.bind("<<TreeviewSelect>>", self._on_process_select_for_http)
+
+        # The panel starts hidden — _toggle_http_panel will add it to the paned window
+
         self.analysis_subtabs["processes"] = frame
-        
+
         # Initial load
         self.refresh_process_list()
         
-    def create_network_subtab(self):
-        """Create Network sub-tab"""
-        frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
-        
+    # ==================== HTTP TRAFFIC PANEL METHODS ====================
+    def _toggle_http_panel(self):
+        """Show or hide the HTTP traffic panel in the Processes tab."""
+        if self.http_panel_visible:
+            # Collapse
+            self._process_paned.forget(self._http_panel)
+            self.http_panel_visible = False
+            self.http_alert_badge.configure(
+                text="HTTP ▾" if not self.http_monitor_active else
+                self.http_alert_badge.cget("text").replace("▴", "▾"))
+            # Stop monitoring
+            if self.http_monitor_active:
+                self.http_monitor.stop_monitoring()
+                self.http_monitor_active = False
+                if hasattr(self, '_http_refresh_job'):
+                    self.root.after_cancel(self._http_refresh_job)
+        else:
+            # Expand
+            self._process_paned.add(self._http_panel, stretch="always")
+            self._process_paned.paneconfigure(self._http_panel, height=250)
+            self.http_panel_visible = True
+            self.http_alert_badge.configure(
+                text=self.http_alert_badge.cget("text").replace("▾", "▴"))
+            # Start monitoring
+            if not self.http_monitor_active:
+                self.http_monitor.start_monitoring()
+                self.http_monitor_active = True
+                self._http_auto_refresh()
+
+    def _show_yara_matches_popup(self):
+        """Show a popup listing all processes with YARA matches."""
+        processes = self.process_monitor.get_all_processes()
+        matched = []
+        for proc in processes:
+            if proc.get('threat_detected') and proc.get('yara_rule') and proc['yara_rule'] != 'No_YARA_Hit':
+                scan_results = proc.get('scan_results', {})
+                all_rules = scan_results.get('all_rules', [proc.get('yara_rule', 'Unknown')])
+                matched.append({
+                    'pid': proc['pid'],
+                    'name': proc['name'],
+                    'exe': proc.get('exe', 'N/A'),
+                    'rules': all_rules
+                })
+
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("YARA Matches")
+        popup.geometry("650x420")
+        popup.attributes('-topmost', True)
+
+        main = ctk.CTkFrame(popup, fg_color=self.colors["navy"])
+        main.pack(fill="both", expand=True, padx=2, pady=2)
+
+        header = ctk.CTkLabel(main, text=f"YARA Matches ({len(matched)} processes)",
+                              font=Fonts.title_large, text_color="#fbbf24")
+        header.pack(padx=15, pady=(15, 10))
+
+        if not matched:
+            ctk.CTkLabel(main, text="No YARA matches found.",
+                         font=Fonts.body, text_color="gray60").pack(pady=20)
+        else:
+            text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
+            text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+            text_box = ctk.CTkTextbox(text_frame, fg_color=self.colors["dark_blue"],
+                                      text_color="white", font=Fonts.body,
+                                      wrap="word")
+            text_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+            for m in sorted(matched, key=lambda x: len(x['rules']), reverse=True):
+                text_box.insert("end", f"PID {m['pid']}  {m['name']}\n", "proc")
+                text_box.insert("end", f"  {m['exe']}\n", "path")
+                for rule in m['rules']:
+                    text_box.insert("end", f"    ⚠️ {rule}\n", "rule")
+                text_box.insert("end", "\n")
+
+            text_box.tag_config("proc", foreground="#fbbf24")
+            text_box.tag_config("path", foreground="#9ca3af")
+            text_box.tag_config("rule", foreground="#f87171")
+            text_box.configure(state="disabled")
+
+        ctk.CTkButton(main, text="Close", command=popup.destroy,
+                      fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+                      height=32, width=100).pack(pady=(0, 15))
+
+    def _show_sigma_matches_popup(self):
+        """Show a popup listing all processes with Sigma matches."""
+        processes = self.process_monitor.get_all_processes()
+        matched = []
+        for proc in processes:
+            sigma_titles = self.evaluate_process_sigma(proc)
+            if sigma_titles:
+                matched.append({
+                    'pid': proc['pid'],
+                    'name': proc['name'],
+                    'exe': proc.get('exe', 'N/A'),
+                    'rules': sigma_titles
+                })
+
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("Sigma Matches")
+        popup.geometry("650x420")
+        popup.attributes('-topmost', True)
+
+        main = ctk.CTkFrame(popup, fg_color=self.colors["navy"])
+        main.pack(fill="both", expand=True, padx=2, pady=2)
+
+        header = ctk.CTkLabel(main, text=f"Sigma Matches ({len(matched)} processes)",
+                              font=Fonts.title_large, text_color="#a78bfa")
+        header.pack(padx=15, pady=(15, 10))
+
+        if not matched:
+            ctk.CTkLabel(main, text="No Sigma matches found.",
+                         font=Fonts.body, text_color="gray60").pack(pady=20)
+        else:
+            text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
+            text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+            text_box = ctk.CTkTextbox(text_frame, fg_color=self.colors["dark_blue"],
+                                      text_color="white", font=Fonts.body,
+                                      wrap="word")
+            text_box.pack(fill="both", expand=True, padx=5, pady=5)
+
+            for m in sorted(matched, key=lambda x: len(x['rules']), reverse=True):
+                text_box.insert("end", f"PID {m['pid']}  {m['name']}\n", "proc")
+                text_box.insert("end", f"  {m['exe']}\n", "path")
+                for rule in m['rules']:
+                    text_box.insert("end", f"    🔷 {rule}\n", "rule")
+                text_box.insert("end", "\n")
+
+            text_box.tag_config("proc", foreground="#a78bfa")
+            text_box.tag_config("path", foreground="#9ca3af")
+            text_box.tag_config("rule", foreground="#c084fc")
+            text_box.configure(state="disabled")
+
+        ctk.CTkButton(main, text="Close", command=popup.destroy,
+                      fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+                      height=32, width=100).pack(pady=(0, 15))
+
+    def _http_auto_refresh(self):
+        """Periodically refresh the HTTP tree while monitoring is active."""
+        if not self.http_monitor_active or not self.http_panel_visible:
+            return
+        self._refresh_http_tree()
+        self._http_refresh_job = self.root.after(1500, self._http_auto_refresh)
+
+    def _refresh_http_tree(self):
+        """Rebuild the HTTP tree from current sessions."""
+        if not hasattr(self, 'http_tree'):
+            return
+
+        self.http_tree.delete(*self.http_tree.get_children())
+        self._http_session_data.clear()
+
+        # Only apply PID filter when the "Filter to PID" checkbox is checked
+        pid_filter = None
+        if self.http_pid_lock_var.get() and hasattr(self, '_http_selected_pid'):
+            pid_filter = self._http_selected_pid
+        alert_only = self.http_alerts_only_var.get()
+
+        sessions = self.http_monitor.get_sessions(
+            pid_filter=pid_filter,
+            alert_only=alert_only
+        )
+
+        alert_count = 0
+        for sess in sessions:
+            tag = (sess.alert,) if sess.alert else ()
+            if sess.alert:
+                alert_count += 1
+            alert_text = sess.alert.upper() if sess.alert else ""
+
+            iid = self.http_tree.insert("", "end", values=(
+                sess.id,
+                sess.timestamp,
+                sess.pid,
+                sess.process_name[:20],
+                sess.protocol,
+                sess.host or sess.remote_ip,
+                f"{sess.remote_ip}:{sess.remote_port}",
+                sess.status,
+                alert_text,
+            ), tags=tag)
+            self._http_session_data[iid] = sess
+
+        # Update stats
+        stats = self.http_monitor.stats
+        self.http_stats_label.configure(
+            text=f"Sessions: {stats['total_sessions']}  |  "
+                 f"Active: {stats['active_sessions']}  |  "
+                 f"Alerts: {stats['alerts']}")
+
+        # Update PID filter label
+        if pid_filter:
+            self.http_pid_filter_label.configure(
+                text=f"PID {pid_filter}", fg="#22d3ee")
+        else:
+            self.http_pid_filter_label.configure(
+                text="All Processes", fg="#9ca3af")
+
+        # Update alert badge
+        arrow = "▴" if self.http_panel_visible else "▾"
+        total_alerts = stats.get("alerts", 0)
+        if total_alerts == 0:
+            self.http_alert_badge.configure(
+                text=f"HTTP {arrow}", text_color="#9ca3af",
+                fg_color="#374151", hover_color="#374151")
+        elif total_alerts <= 5:
+            self.http_alert_badge.configure(
+                text=f"HTTP: {total_alerts} {arrow}", text_color="#fbbf24",
+                fg_color="#78350f", hover_color="#92400e")
+        else:
+            self.http_alert_badge.configure(
+                text=f"HTTP: {total_alerts} {arrow}", text_color="#f87171",
+                fg_color="#7f1d1d", hover_color="#991b1b")
+
+    def _on_process_select_for_http(self, event=None):
+        """Track the selected PID for optional HTTP filtering."""
+        sel = self.process_tree.selection()
+        if sel:
+            try:
+                values = self.process_tree.item(sel[0], "values")
+                self._http_selected_pid = int(values[0])
+            except (ValueError, IndexError):
+                self._http_selected_pid = None
+        else:
+            self._http_selected_pid = None
+
+        # Only refresh if PID filtering is active
+        if self.http_panel_visible and self.http_pid_lock_var.get():
+            self._refresh_http_tree()
+
+    def _clear_http_sessions(self):
+        """Clear all HTTP sessions."""
+        self.http_monitor.clear()
+        self._http_selected_pid = None
+        self._refresh_http_tree()
+
+    def _show_http_context_menu(self, event):
+        item = self.http_tree.identify_row(event.y)
+        if item:
+            self.http_tree.selection_set(item)
+            self.http_context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy_http_cell(self, col_name):
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        val = ""
+        if col_name == "Host":
+            val = sess.host or sess.remote_ip
+        elif col_name == "Remote":
+            val = f"{sess.remote_ip}:{sess.remote_port}"
+        self.root.clipboard_clear()
+        self.root.clipboard_append(val)
+
+    def _copy_http_row(self):
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        values = self.http_tree.item(sel[0], "values")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(" | ".join(str(v) for v in values))
+
+    def _add_http_ioc(self, field_type):
+        if not self.current_case:
+            messagebox.showwarning("No Active Case",
+                                   "No active case to add IOC to.")
+            return
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        if field_type == "host" and sess.host:
+            self.case_manager.add_ioc("domains", sess.host)
+            self.refresh_iocs_display()
+            messagebox.showinfo("Success", f"Added domain '{sess.host}' to case IOCs!")
+        elif field_type == "ip":
+            self.case_manager.add_ioc("ips", sess.remote_ip)
+            self.refresh_iocs_display()
+            messagebox.showinfo("Success", f"Added IP '{sess.remote_ip}' to case IOCs!")
+
+    def _focus_http_process(self):
+        """Select the process in the tree that matches the selected HTTP session."""
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+        self.focus_process_by_pid(sess.pid)
+
+    def _show_http_session_detail(self):
+        """Show full detail popup for a double-clicked HTTP session."""
+        sel = self.http_tree.selection()
+        if not sel:
+            return
+        sess = self._http_session_data.get(sel[0])
+        if not sess:
+            return
+
+        detail = ctk.CTkToplevel(self.root)
+        detail.title(f"HTTP Session #{sess.id} — {sess.host or sess.remote_ip}")
+        detail.geometry("640x450")
+        detail.configure(fg_color="#1a1a1a")
+        detail.attributes("-topmost", True)
+        detail.after(200, lambda: detail.focus_force())
+
         # Header
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=10)
-        
-        title = ctk.CTkLabel(header, text="Network Analysis",
-                            font=Fonts.title_large,
-                            text_color="white")
-        title.pack(side="left")
-        
-        # Monitor toggle
-        self.btn_toggle_network_monitor = ctk.CTkButton(
-            header, text="▶ Start Monitoring",
-            command=self.toggle_network_monitoring,
-            height=35, width=150,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"]
-        )
-        self.btn_toggle_network_monitor.pack(side="right", padx=5)
-        
-        # Refresh button
-        btn_refresh = ctk.CTkButton(
-            header, text="🔄 Refresh",
-            command=self.refresh_network_list,
-            height=35, width=100,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"]
-        )
-        btn_refresh.pack(side="right", padx=5)
-        
-        # Stats frame
-        stats_frame = ctk.CTkFrame(frame, fg_color="gray20", corner_radius=10)
-        stats_frame.pack(fill="x", padx=20, pady=10)
-        
-        self.network_stats_label = ctk.CTkLabel(
-            stats_frame,
-            text="Network Statistics: Not monitoring",
-            font=Fonts.helper,
-            justify="left"
-        )
-        self.network_stats_label.pack(padx=15, pady=10, anchor="w")
-        
-        # Connection list
-        tree_frame = ctk.CTkFrame(frame, fg_color="gray20")
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        vsb = tk.Scrollbar(tree_frame, orient="vertical")
-        vsb.pack(side="right", fill="y")
+        proto_color = "#a78bfa" if sess.protocol == "HTTPS" else "#4ade80"
+        ctk.CTkLabel(
+            detail,
+            text=f"{sess.protocol}  |  {sess.host or sess.remote_ip}:{sess.remote_port}",
+            font=Fonts.title_medium, text_color=proto_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
 
-        columns = ("Type", "Local", "Remote", "Hostname", "Status", "Process", "Suspicious")
-        self.network_tree = ttk.Treeview(tree_frame, columns=columns,
-                                        show="headings", yscrollcommand=vsb.set)
-        self.network_tree.pack(side="left", fill="both", expand=True)
-        vsb.config(command=self.network_tree.yview)
+        # Alert banner
+        if sess.alert:
+            alert_colors = {"high": "#ef4444", "medium": "#f59e0b", "low": "#a78bfa"}
+            ctk.CTkLabel(
+                detail,
+                text=f"ALERT [{sess.alert.upper()}]: " + " | ".join(sess.alert_reasons),
+                font=Fonts.body_bold,
+                text_color=alert_colors.get(sess.alert, "#9ca3af"),
+                fg_color="#374151", corner_radius=6
+            ).pack(padx=15, pady=(0, 5), anchor="w")
 
-        # Configure columns with specific widths
-        self.network_tree.heading("Type", text="Type")
-        self.network_tree.column("Type", width=80, minwidth=60)
-        self.network_tree.heading("Local", text="Local")
-        self.network_tree.column("Local", width=150, minwidth=100)
-        self.network_tree.heading("Remote", text="Remote")
-        self.network_tree.column("Remote", width=150, minwidth=100)
-        self.network_tree.heading("Hostname", text="Hostname")
-        self.network_tree.column("Hostname", width=200, minwidth=120)
-        self.network_tree.heading("Status", text="Status")
-        self.network_tree.column("Status", width=100, minwidth=80)
-        self.network_tree.heading("Process", text="Process")
-        self.network_tree.column("Process", width=150, minwidth=100)
-        self.network_tree.heading("Suspicious", text="Suspicious")
-        self.network_tree.column("Suspicious", width=80, minwidth=60)
+        # Detail text
+        lines = [
+            f"Session:    #{sess.id}",
+            f"Time:       {sess.timestamp}",
+            f"PID:        {sess.pid}",
+            f"Process:    {sess.process_name}",
+            f"Protocol:   {sess.protocol}",
+            f"Host:       {sess.host or '(unresolved)'}",
+            f"Remote:     {sess.remote_ip}:{sess.remote_port}",
+            f"Local Port: {sess.local_port}",
+            f"Status:     {sess.status}",
+            f"First Seen: {sess.first_seen.strftime('%H:%M:%S')}",
+            f"Last Seen:  {sess.last_seen.strftime('%H:%M:%S')}",
+            f"Hit Count:  {sess.hit_count}",
+        ]
+        if sess.alert_reasons:
+            lines += ["", "Alert Reasons:", "=" * 50]
+            for reason in sess.alert_reasons:
+                lines.append(f"  - {reason}")
 
-        # Configure tag colors
-        self.network_tree.tag_configure('suspicious', background='#5c1c1c')
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", "\n".join(lines))
+        text_widget.configure(state="disabled")
 
-        # Right-click context menu for network tree
-        self.network_context_menu = tk.Menu(
-            self.network_tree,
-            tearoff=0,
-            bg="#1a1a1a",
-            fg="white",
-            activebackground="#dc2626",
-            activeforeground="white",
-            borderwidth=0,
-            relief="flat"
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Local Address",
-            command=lambda: self.copy_network_cell(1)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Remote Address",
-            command=lambda: self.copy_network_cell(2)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Hostname",
-            command=lambda: self.copy_network_cell(3)
-        )
-        self.network_context_menu.add_command(
-            label="📋 Copy Process Name",
-            command=lambda: self.copy_network_cell(5)
-        )
-        self.network_context_menu.add_separator(background="#444444")
-        self.network_context_menu.add_command(
-            label="📋 Copy Entire Row",
-            command=self.copy_network_row
-        )
-        self.network_context_menu.add_separator(background="#444444")
-        self.network_context_menu.add_command(
-            label="➕ Add Remote IP to IOCs",
-            command=lambda: self.add_network_ioc_to_case("remote_ip")
-        )
-        self.network_context_menu.add_command(
-            label="➕ Add Hostname to IOCs",
-            command=lambda: self.add_network_ioc_to_case("hostname")
-        )
+        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
 
-        self.network_tree.bind("<Button-3>", self.show_network_context_menu)
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Host", height=32, width=120,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(),
+                             self.root.clipboard_append(sess.host or sess.remote_ip))
+        ).pack(side="left", padx=5)
 
-        self.analysis_subtabs["network"] = frame
+        ctk.CTkButton(
+            btn_frame, text="Close", command=detail.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(side="right", padx=5)
 
     # ==================== LIVE EVENTS SUBTAB ====================
     def create_live_events_subtab(self):
         """Create the Live Events subtab for system-wide monitoring"""
         frame = ctk.CTkFrame(self.analysis_content, fg_color="transparent")
 
-        # Header with title
-        header = ctk.CTkFrame(frame, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=10)
-
-        title = ctk.CTkLabel(header, text="Live System Events",
-                            font=Fonts.title_large,
-                            text_color="white")
-        title.pack(side="left")
-
-        subtitle = ctk.CTkLabel(header,
-                               text="Real-time monitoring: File • Registry • Network • Process • DNS",
-                               font=Fonts.helper, text_color="gray60")
-        subtitle.pack(side="left", padx=20)
-
         # Main content area
         content = ctk.CTkFrame(frame, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        content.pack(fill="both", expand=True, padx=20, pady=(0, 5))
 
         # ===== CONTROL PANEL =====
-        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"], height=120)
-        control_panel.pack(fill="x", pady=(0, 10))
-        control_panel.pack_propagate(False)
+        control_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"])
+        control_panel.pack(fill="x", pady=(0, 5))
 
         # Row 1: Start/Stop and Status
         row1 = ctk.CTkFrame(control_panel, fg_color="transparent")
-        row1.pack(fill="x", padx=10, pady=(10, 5))
+        row1.pack(fill="x", padx=10, pady=(5, 3))
 
         # Start/Stop button
         monitor_btn_text = tk.StringVar(value="▶ Start Monitoring")
@@ -1483,11 +1865,11 @@ class ForensicAnalysisGUI:
 
         # Row 2: Statistics
         row2 = ctk.CTkFrame(control_panel, fg_color="transparent")
-        row2.pack(fill="x", padx=10, pady=5)
+        row2.pack(fill="x", padx=10, pady=(0, 5))
 
         stats_label = ctk.CTkLabel(
             row2,
-            text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0",
+            text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0 | Persistence: 0",
             font=Fonts.body,
             text_color="gray60"
         )
@@ -1495,11 +1877,11 @@ class ForensicAnalysisGUI:
 
         # ===== FILTER PANEL =====
         filter_panel = ctk.CTkFrame(content, fg_color=self.colors["navy"])
-        filter_panel.pack(fill="x", pady=(0, 10))
+        filter_panel.pack(fill="x", pady=(0, 5))
 
         # Filter row 1: Event types
         filter_row1 = ctk.CTkFrame(filter_panel, fg_color="transparent")
-        filter_row1.pack(fill="x", padx=10, pady=(10, 5))
+        filter_row1.pack(fill="x", padx=10, pady=(5, 3))
 
         filter_label1 = ctk.CTkLabel(
             filter_row1,
@@ -1509,7 +1891,7 @@ class ForensicAnalysisGUI:
         filter_label1.pack(side="left", padx=(0, 10))
 
         # Event type filter buttons
-        filter_types = ["All", "File", "Registry", "Network", "Process", "Thread", "DNS"]
+        filter_types = ["All", "File", "Registry", "Network", "Process", "Thread", "DNS", "Persistence"]
         event_type_buttons = {}
 
         for ftype in filter_types:
@@ -1542,7 +1924,7 @@ class ForensicAnalysisGUI:
 
         # Filter row 2: PID and regex
         filter_row2 = ctk.CTkFrame(filter_panel, fg_color="transparent")
-        filter_row2.pack(fill="x", padx=10, pady=(5, 10))
+        filter_row2.pack(fill="x", padx=10, pady=(3, 5))
 
         # PID filter
         pid_filter_label = ctk.CTkLabel(
@@ -1632,6 +2014,27 @@ class ForensicAnalysisGUI:
         events_hsb = tk.Scrollbar(events_frame, orient="horizontal", bg="#1a1a1a")
         events_hsb.pack(side="bottom", fill="x")
 
+        # Style the Live Events tree with slightly larger font
+        _le_font_size = 13 if self._is_large_screen else 11
+        _le_heading_size = 14 if self._is_large_screen else 12
+        _le_row_height = 28 if self._is_large_screen else 22
+
+        style = ttk.Style()
+        style.configure("LiveEvents.Treeview",
+                       background="#1a1a1a",
+                       foreground="white",
+                       fieldbackground="#1a1a1a",
+                       borderwidth=0,
+                       font=('Segoe UI', _le_font_size),
+                       rowheight=_le_row_height)
+        style.configure("LiveEvents.Treeview.Heading",
+                       background="#0d1520",
+                       foreground="white",
+                       borderwidth=1,
+                       font=('Segoe UI', _le_heading_size, 'bold'))
+        style.map("LiveEvents.Treeview",
+                 background=[("selected", "#dc2626")])
+
         # TreeView for events
         columns = ("time", "pid", "process", "type", "operation", "path", "result")
         events_tree = ttk.Treeview(
@@ -1640,8 +2043,11 @@ class ForensicAnalysisGUI:
             show="headings",
             height=25,
             yscrollcommand=events_vsb.set,
-            xscrollcommand=events_hsb.set
+            xscrollcommand=events_hsb.set,
+            style="LiveEvents.Treeview"
         )
+        self.live_events_tree = events_tree
+        self._live_event_data = {}  # iid -> full event dict
 
         # Configure columns
         events_tree.heading("time", text="Time")
@@ -1654,31 +2060,18 @@ class ForensicAnalysisGUI:
 
         events_tree.column("time", width=100, minwidth=100)
         events_tree.column("pid", width=60, minwidth=60)
-        events_tree.column("process", width=120, minwidth=100)
-        events_tree.column("type", width=80, minwidth=80)
-        events_tree.column("operation", width=150, minwidth=120)
+        events_tree.column("process", width=130, minwidth=100)
+        events_tree.column("type", width=85, minwidth=80)
+        events_tree.column("operation", width=160, minwidth=120)
         events_tree.column("path", width=400, minwidth=200)
         events_tree.column("result", width=100, minwidth=80)
-
-        # Style the tree
-        style = ttk.Style()
-        style.theme_use("default")
-        style.configure("Treeview",
-                       background="#1a1a1a",
-                       foreground="white",
-                       fieldbackground="#1a1a1a",
-                       borderwidth=0)
-        style.configure("Treeview.Heading",
-                       background="#0d1520",
-                       foreground="white",
-                       borderwidth=1)
-        style.map("Treeview",
-                 background=[("selected", "#dc2626")])
 
         # Tag for suspicious events
         events_tree.tag_configure('suspicious', background='#5c1c1c', foreground='#ff6b6b')
         # Tag for Sigma rule matches (higher priority - purple/magenta)
         events_tree.tag_configure('sigma_match', background='#4c1d95', foreground='#c084fc')
+        # Tag for persistence changes (orange)
+        events_tree.tag_configure('persistence', background='#78350f', foreground='#fbbf24')
 
         events_tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         events_vsb.config(command=events_tree.yview)
@@ -1701,6 +2094,7 @@ class ForensicAnalysisGUI:
                 events_context_menu.grab_release()
 
         events_tree.bind("<Button-3>", show_context_menu)
+        events_tree.bind("<Double-1>", lambda e: self._show_live_event_detail())
 
         # Store state for monitoring
         from datetime import timedelta
@@ -1758,6 +2152,11 @@ class ForensicAnalysisGUI:
                     monitor_state["monitoring"] = True
                     self.system_monitor_active = True
 
+                    # Also start persistence monitoring (feeds into Live Events)
+                    if not self.persistence_monitor_active:
+                        self.persistence_monitor.start_monitoring()
+                        self.persistence_monitor_active = True
+
                     monitor_btn_text.set("⏸ Stop Monitoring")
                     monitor_btn.configure(fg_color="#059669")  # Green
                     status_label.configure(text="● Monitoring: Active", text_color="#10b981")
@@ -1774,6 +2173,11 @@ class ForensicAnalysisGUI:
                 if monitor_state["monitor"]:
                     monitor_state["monitor"].stop_monitoring()
                     self.system_wide_monitor = None
+
+                # Also stop persistence monitoring
+                if self.persistence_monitor_active:
+                    self.persistence_monitor.stop_monitoring()
+                    self.persistence_monitor_active = False
 
                 monitor_state["monitoring"] = False
                 monitor_state["monitor"] = None
@@ -1831,6 +2235,7 @@ class ForensicAnalysisGUI:
 
             # Clear and refresh display with filtered events
             events_tree.delete(*events_tree.get_children())
+            self._live_event_data.clear()
 
             # Get ALL events from monitor and filter them for display
             monitor = monitor_state["monitor"]
@@ -1841,11 +2246,14 @@ class ForensicAnalysisGUI:
                 if not event_filter.matches(event):
                     continue
 
-                # Check if suspicious or sigma match for highlighting
+                # Determine row highlighting
                 has_sigma = bool(event.get('sigma_matches'))
+                is_persistence = event.get('event_type') == 'Persistence'
                 is_suspicious = event_filter.is_suspicious(event)
                 if has_sigma:
                     tags = ('sigma_match',)
+                elif is_persistence:
+                    tags = ('persistence',)
                 elif is_suspicious:
                     tags = ('suspicious',)
                 else:
@@ -1857,7 +2265,7 @@ class ForensicAnalysisGUI:
                     path = str(path)[:97] + "..."
 
                 # Insert event
-                events_tree.insert("", "end", values=(
+                iid = events_tree.insert("", "end", values=(
                     event.get('timestamp', ''),
                     event.get('pid', 0),
                     event.get('process_name', '')[:20],
@@ -1866,6 +2274,7 @@ class ForensicAnalysisGUI:
                     path,
                     event.get('result', '')
                 ), tags=tags)
+                self._live_event_data[iid] = event
 
             # Update process info panel
             update_process_info()
@@ -1897,16 +2306,20 @@ class ForensicAnalysisGUI:
 
             # Clear and refresh display with ALL events
             events_tree.delete(*events_tree.get_children())
+            self._live_event_data.clear()
 
             monitor = monitor_state["monitor"]
             all_events = monitor.get_recent_events(count=5000)
 
             for event in all_events:
-                # Check if sigma match or suspicious for highlighting
+                # Determine row highlighting
                 has_sigma = bool(event.get('sigma_matches'))
+                is_persistence = event.get('event_type') == 'Persistence'
                 is_suspicious = event_filter.is_suspicious(event)
                 if has_sigma:
                     tags = ('sigma_match',)
+                elif is_persistence:
+                    tags = ('persistence',)
                 elif is_suspicious:
                     tags = ('suspicious',)
                 else:
@@ -1918,7 +2331,7 @@ class ForensicAnalysisGUI:
                     path = str(path)[:97] + "..."
 
                 # Insert event
-                events_tree.insert("", "end", values=(
+                iid = events_tree.insert("", "end", values=(
                     event.get('timestamp', ''),
                     event.get('pid', 0),
                     event.get('process_name', '')[:20],
@@ -1927,6 +2340,7 @@ class ForensicAnalysisGUI:
                     path,
                     event.get('result', '')
                 ), tags=tags)
+                self._live_event_data[iid] = event
 
             # Hide process info panel
             process_info_panel.pack_forget()
@@ -1996,6 +2410,7 @@ class ForensicAnalysisGUI:
 
                 # Clear and refresh display with filtered events
                 events_tree.delete(*events_tree.get_children())
+                self._live_event_data.clear()
 
                 # Get ALL events from monitor and filter them for display
                 monitor = monitor_state["monitor"]
@@ -2006,11 +2421,14 @@ class ForensicAnalysisGUI:
                     if not event_filter.matches(event):
                         continue
 
-                    # Check if sigma match or suspicious for highlighting
+                    # Determine row highlighting
                     has_sigma = bool(event.get('sigma_matches'))
+                    is_persistence = event.get('event_type') == 'Persistence'
                     is_suspicious = event_filter.is_suspicious(event)
                     if has_sigma:
                         tags = ('sigma_match',)
+                    elif is_persistence:
+                        tags = ('persistence',)
                     elif is_suspicious:
                         tags = ('suspicious',)
                     else:
@@ -2022,7 +2440,7 @@ class ForensicAnalysisGUI:
                         path = str(path)[:97] + "..."
 
                     # Insert event
-                    events_tree.insert("", "end", values=(
+                    iid = events_tree.insert("", "end", values=(
                         event.get('timestamp', ''),
                         event.get('pid', 0),
                         event.get('process_name', '')[:20],
@@ -2031,6 +2449,7 @@ class ForensicAnalysisGUI:
                         path,
                         event.get('result', '')
                     ), tags=tags)
+                    self._live_event_data[iid] = event
 
                 # Update process info panel
                 update_process_info()
@@ -2052,13 +2471,16 @@ class ForensicAnalysisGUI:
                     if monitor_state["current_filter"] and not monitor_state["current_filter"].matches(event):
                         continue
 
-                    # Check if sigma match or suspicious for highlighting
+                    # Determine row highlighting
                     has_sigma = bool(event.get('sigma_matches'))
+                    is_persistence = event.get('event_type') == 'Persistence'
                     is_suspicious = False
                     if monitor_state["current_filter"]:
                         is_suspicious = monitor_state["current_filter"].is_suspicious(event)
                     if has_sigma:
                         tags = ('sigma_match',)
+                    elif is_persistence:
+                        tags = ('persistence',)
                     elif is_suspicious:
                         tags = ('suspicious',)
                     else:
@@ -2070,15 +2492,16 @@ class ForensicAnalysisGUI:
                         path = str(path)[:97] + "..."
 
                     # Insert event
-                    events_tree.insert("", "end", values=(
+                    iid = events_tree.insert("", "end", values=(
                         event.get('timestamp', ''),
                         event.get('pid', 0),
-                        event.get('process_name', '')[:20],  # Truncate process name
+                        event.get('process_name', '')[:20],
                         event.get('event_type', ''),
                         event.get('operation', ''),
                         path,
                         event.get('result', '')
                     ), tags=tags)
+                    self._live_event_data[iid] = event
 
                     monitor_state["event_count"] += 1
 
@@ -2086,12 +2509,15 @@ class ForensicAnalysisGUI:
                 children = events_tree.get_children()
                 if len(children) > 5000:
                     for item in children[:len(children) - 5000]:
+                        self._live_event_data.pop(item, None)
                         events_tree.delete(item)
 
                 # Update statistics
                 stats = monitor.get_stats()
                 sigma_count = stats.get('sigma_matches', 0)
+                persist_count = stats.get('persistence_events', 0)
                 sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
+                persist_text = f" | Persist: {persist_count}" if persist_count > 0 else ""
                 stats_label.configure(
                     text=f"Total: {stats['total_events']} | "
                          f"File: {stats['file_events']} | "
@@ -2099,7 +2525,7 @@ class ForensicAnalysisGUI:
                          f"Network: {stats['network_events']} | "
                          f"Process: {stats['process_events']} | "
                          f"DNS: {stats.get('dns_events', 0)}"
-                         f"{sigma_text}"
+                         f"{persist_text}{sigma_text}"
                 )
 
                 # Update last update time
@@ -2216,6 +2642,228 @@ class ForensicAnalysisGUI:
 
         self.analysis_subtabs["live_events"] = frame
 
+    def _show_live_event_detail(self):
+        """Show full details for a double-clicked live event."""
+        sel = self.live_events_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        event = self._live_event_data.get(iid)
+        if not event:
+            return
+
+        detail = ctk.CTkToplevel(self.root)
+        detail.title(f"Event Detail: {event.get('operation', '')} - PID {event.get('pid', '')}")
+        detail.geometry("720x500")
+        detail.configure(fg_color="#1a1a1a")
+        detail.attributes("-topmost", True)
+        detail.after(200, lambda: detail.focus_force())
+
+        # Header with event type coloring
+        etype = event.get('event_type', 'Unknown')
+        type_colors = {
+            "Process": "#22d3ee", "Registry": "#f97316",
+            "File": "#4ade80", "Network": "#a78bfa",
+            "DNS": "#fbbf24", "ImageLoad": "#f472b6",
+            "Persistence": "#fbbf24",
+        }
+        header_color = type_colors.get(etype, "#9ca3af")
+
+        ctk.CTkLabel(
+            detail,
+            text=f"{etype}  |  {event.get('operation', '')}",
+            font=Fonts.title_medium, text_color=header_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        # Sigma match banner
+        sigma = event.get('sigma_matches')
+        if sigma:
+            sigma_text = "  |  ".join(sigma) if isinstance(sigma, list) else str(sigma)
+            ctk.CTkLabel(
+                detail, text=f"SIGMA: {sigma_text}",
+                font=Fonts.body_bold, text_color="#c084fc", fg_color="#4c1d95",
+                corner_radius=6
+            ).pack(padx=15, pady=(0, 5), anchor="w")
+
+        # Build detail text
+        lines = [
+            f"Time:       {event.get('timestamp', '')}",
+            f"PID:        {event.get('pid', '')}",
+            f"Process:    {event.get('process_name', '')}",
+            f"User:       {event.get('user', 'N/A')}",
+            f"Event Type: {etype}",
+            f"Operation:  {event.get('operation', '')}",
+            f"Result:     {event.get('result', '')}",
+            f"Event ID:   {event.get('event_id', 'N/A')}",
+            "",
+            "Path / Target:",
+            "=" * 60,
+            str(event.get('path', '')),
+        ]
+
+        # Network events: resolve hostname for the remote IP
+        if etype == 'Network':
+            remote_path = str(event.get('path', ''))
+            if remote_path and ':' in remote_path:
+                remote_ip = remote_path.split(':')[0]
+                hostname = self.resolve_hostname(remote_ip)
+                if hostname and hostname != '-':
+                    lines.append(f"Hostname:   {hostname}")
+
+        detail_field = event.get('detail', '')
+        if detail_field:
+            lines += ["", "Detail / Command Line:", "=" * 60, str(detail_field)]
+
+        # Persistence events: show entry-specific detail
+        persist_entry = event.get('persistence_entry')
+        if persist_entry and isinstance(persist_entry, dict):
+            lines += [
+                "",
+                "Persistence Entry:",
+                "=" * 60,
+                f"  Type:     {persist_entry.get('entry_type', '')}",
+                f"  Source:   {persist_entry.get('source', '')}",
+                f"  Location: {persist_entry.get('location', '')}",
+                f"  Name:     {persist_entry.get('name', '')}",
+                f"  Severity: {persist_entry.get('severity', '').upper()}",
+                f"  Value:    {persist_entry.get('value', '')}",
+            ]
+            prev = persist_entry.get('extra', {}).get('previous_value')
+            if prev:
+                lines.append(f"  Previous: {prev}")
+
+        # Show any extra raw fields
+        skip_keys = {'timestamp', 'time_full', 'event_type', 'operation', 'path',
+                     'result', 'detail', 'pid', 'tid', 'process_name', 'user',
+                     'event_id', 'sigma_matches', 'persistence_entry',
+                     'persistence_change_type'}
+        extra = {k: v for k, v in event.items() if k not in skip_keys and v}
+        if extra:
+            lines += ["", "Additional Fields:", "=" * 60]
+            for k, v in extra.items():
+                lines.append(f"  {k}: {v}")
+
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", "\n".join(lines))
+        text_widget.configure(state="disabled")
+
+        btn_frame = ctk.CTkFrame(detail, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
+        # Copy detail/command
+        copy_text = str(detail_field) if detail_field else str(event.get('path', ''))
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Detail", height=32, width=140,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(), self.root.clipboard_append(copy_text))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="📋 Copy Path", height=32, width=140,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: (self.root.clipboard_clear(),
+                             self.root.clipboard_append(str(event.get('path', ''))))
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Close", command=detail.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(side="right", padx=5)
+
+    # ==================== PERSISTENCE (integrated into Live Events) ====================
+    # The former standalone Persistence subtab has been merged into the
+    # Live Events tab.  The PersistenceMonitor still runs independently
+    # and its changes are injected into the Live Events timeline as
+    # "Persistence" event types.
+    #
+    # Baseline / snapshot controls are available in the Live Events
+    # control panel.  The persistence change badge is shown in the
+    # Live Events stats bar.
+
+    def on_persistence_change_detected(self, change_type, entry):
+        """Callback fired from PersistenceMonitor when a change is found.
+
+        Injects the change into the Live Events timeline as a Persistence
+        event and shows a popup alert for high/critical severity changes.
+        """
+        self.persistence_change_count += 1
+        # Inject as a Live Events event via the system-wide monitor
+        self.root.after(0, lambda: self._inject_persistence_event(change_type, entry))
+        # Show alert popup for high/critical changes
+        if entry.severity in ("high", "critical"):
+            self.root.after(0, lambda: self._show_persistence_alert(change_type, entry))
+
+    def _inject_persistence_event(self, change_type, entry):
+        """Push a persistence change into the Live Events timeline."""
+        if self.system_wide_monitor is None:
+            return
+        now = datetime.now()
+        severity_tag = f"[{entry.severity.upper()}]"
+        operation = f"Persistence{change_type.capitalize()}"  # PersistenceAdded / PersistenceRemoved / PersistenceModified
+        detail_parts = [f"Name: {entry.name}", f"Value: {entry.value[:200]}"]
+        if entry.extra.get("previous_value"):
+            detail_parts.append(f"Previous: {entry.extra['previous_value'][:200]}")
+        event = {
+            'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
+            'time_full': now.isoformat(),
+            'event_type': 'Persistence',
+            'operation': operation,
+            'path': entry.source,
+            'result': f"{severity_tag} {change_type.upper()}",
+            'detail': " | ".join(detail_parts),
+            'pid': 0,
+            'tid': 0,
+            'process_name': 'PersistenceMonitor',
+            # Extra fields for the detail popup
+            'persistence_entry': entry.to_dict(),
+            'persistence_change_type': change_type,
+        }
+        self.system_wide_monitor._add_event(event)
+
+    def _show_persistence_alert(self, change_type, entry):
+        """Show a popup alert for a significant persistence change."""
+        alert = ctk.CTkToplevel(self.root)
+        alert.title("Persistence Change Detected")
+        alert.geometry("520x300")
+        alert.configure(fg_color="#1a1a1a")
+        alert.attributes("-topmost", True)
+        alert.after(200, lambda: alert.focus_force())
+
+        severity_colors = {
+            "critical": "#ef4444", "high": "#f97316",
+            "medium": "#eab308", "low": "#9ca3af"
+        }
+        header_color = severity_colors.get(entry.severity, "#9ca3af")
+
+        ctk.CTkLabel(
+            alert, text=f"{change_type.upper()}: {entry.entry_type.replace('_', ' ').title()}",
+            font=Fonts.title_medium, text_color=header_color
+        ).pack(pady=(15, 5), padx=15, anchor="w")
+
+        details = (
+            f"Source:   {entry.source}\n"
+            f"Name:     {entry.name}\n"
+            f"Value:    {entry.value[:300]}\n"
+            f"Severity: {entry.severity.upper()}"
+        )
+        if entry.extra.get("previous_value"):
+            details += f"\nPrevious: {entry.extra['previous_value'][:200]}"
+
+        text_widget = ctk.CTkTextbox(alert, font=Fonts.body, fg_color="#0d1520",
+                                      text_color="white", wrap="word")
+        text_widget.pack(fill="both", expand=True, padx=15, pady=10)
+        text_widget.insert("1.0", details)
+        text_widget.configure(state="disabled")
+
+        ctk.CTkButton(
+            alert, text="Dismiss", command=alert.destroy,
+            fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
+            height=32, width=100
+        ).pack(pady=(0, 15))
+
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
         """Switch between main tabs"""
@@ -2287,14 +2935,9 @@ class ForensicAnalysisGUI:
         # Hide all subtabs
         for subtab in self.analysis_subtabs.values():
             subtab.pack_forget()
-        
+
         # Reset button colors
         self.btn_processes.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["red"]
-        )
-        self.btn_network.configure(
             fg_color="transparent",
             border_width=2,
             border_color=self.colors["red"]
@@ -2311,11 +2954,6 @@ class ForensicAnalysisGUI:
         # Highlight button
         if subtab_name == "processes":
             self.btn_processes.configure(
-                fg_color=self.colors["red"],
-                border_width=0
-            )
-        elif subtab_name == "network":
-            self.btn_network.configure(
                 fg_color=self.colors["red"],
                 border_width=0
             )
@@ -4699,6 +5337,11 @@ File Size: {file_info['file_size']} bytes"""
             # Start auto-refresh
             self.start_auto_refresh()
 
+        # Auto-start persistence monitoring (feeds into Live Events)
+        if not self.persistence_monitor_active:
+            self.persistence_monitor.start_monitoring()
+            self.persistence_monitor_active = True
+
     # ==================== PROCESS MONITOR METHODS ====================
     def toggle_process_monitoring(self):
         """Toggle process monitoring on/off"""
@@ -5083,7 +5726,7 @@ File Size: {file_info['file_size']} bytes"""
     def _get_process_connections_summary(self, pid):
         """Get a summary string of network connections for a process"""
         try:
-            connections = self.network_monitor.get_connections_by_process(pid)
+            connections = self._get_process_connections(pid)
             if not connections:
                 return "None"
             count = len(connections)
@@ -5106,9 +5749,37 @@ File Size: {file_info['file_size']} bytes"""
             return "None"
 
     def _get_process_connections(self, pid):
-        """Get the list of network connections for a process"""
+        """Get live network connections for a process directly via psutil"""
         try:
-            return self.network_monitor.get_connections_by_process(pid)
+            import psutil
+            proc = psutil.Process(pid)
+            raw_conns = proc.net_connections(kind='inet')
+            connections = []
+            for conn in raw_conns:
+                conn_info = {
+                    'family': 'IPv4' if conn.family == socket.AF_INET else 'IPv6',
+                    'type': 'TCP' if conn.type == socket.SOCK_STREAM else 'UDP',
+                    'local_ip': conn.laddr.ip if conn.laddr else None,
+                    'local_port': conn.laddr.port if conn.laddr else None,
+                    'remote_ip': conn.raddr.ip if conn.raddr else None,
+                    'remote_port': conn.raddr.port if conn.raddr else None,
+                    'status': conn.status,
+                    'pid': pid,
+                }
+                # Check suspicious ports inline
+                remote_port = conn_info.get('remote_port')
+                if remote_port and remote_port in (4444, 4445, 5555, 6666, 7777, 8888, 31337, 12345):
+                    conn_info['suspicious'] = True
+                # Resolve hostname
+                remote_ip = conn_info.get('remote_ip', '')
+                if remote_ip:
+                    hostname = self.resolve_hostname(remote_ip)
+                    if hostname and hostname != '-':
+                        conn_info['remote_hostname'] = hostname
+                connections.append(conn_info)
+            return connections
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return []
         except Exception:
             return []
 
@@ -5175,33 +5846,21 @@ File Size: {file_info['file_size']} bytes"""
         count = self.total_yara_matches
 
         # Update text
-        self.yara_match_badge.configure(text=f"⚠️ YARA: {count}")
+        self.yara_match_badge.configure(text=f"YARA: {count}")
 
         # Color code based on count
         if count == 0:
-            # Gray for no matches
             self.yara_match_badge.configure(
-                text_color="#9ca3af",
-                fg_color="#374151"
-            )
+                text_color="#9ca3af", fg_color="#374151", hover_color="#374151")
         elif count <= 10:
-            # Yellow for low count
             self.yara_match_badge.configure(
-                text_color="#fbbf24",
-                fg_color="#78350f"
-            )
+                text_color="#fbbf24", fg_color="#78350f", hover_color="#92400e")
         elif count <= 25:
-            # Orange for medium count
             self.yara_match_badge.configure(
-                text_color="#fb923c",
-                fg_color="#7c2d12"
-            )
+                text_color="#fb923c", fg_color="#7c2d12", hover_color="#9a3412")
         else:
-            # Red for high count
             self.yara_match_badge.configure(
-                text_color="#f87171",
-                fg_color="#7f1d1d"
-            )
+                text_color="#f87171", fg_color="#7f1d1d", hover_color="#991b1b")
 
     def update_sigma_match_badge(self):
         """Update the Sigma match counter badge with current count and color coding."""
@@ -5210,13 +5869,17 @@ File Size: {file_info['file_size']} bytes"""
         self.sigma_match_badge.configure(text=f"SIGMA: {count}")
 
         if count == 0:
-            self.sigma_match_badge.configure(text_color="#9ca3af", fg_color="#374151")
+            self.sigma_match_badge.configure(
+                text_color="#9ca3af", fg_color="#374151", hover_color="#374151")
         elif count <= 10:
-            self.sigma_match_badge.configure(text_color="#a78bfa", fg_color="#4c1d95")
+            self.sigma_match_badge.configure(
+                text_color="#a78bfa", fg_color="#4c1d95", hover_color="#5b21b6")
         elif count <= 25:
-            self.sigma_match_badge.configure(text_color="#c084fc", fg_color="#581c87")
+            self.sigma_match_badge.configure(
+                text_color="#c084fc", fg_color="#581c87", hover_color="#6b21a8")
         else:
-            self.sigma_match_badge.configure(text_color="#e879f9", fg_color="#701a75")
+            self.sigma_match_badge.configure(
+                text_color="#e879f9", fg_color="#701a75", hover_color="#86198f")
 
     def evaluate_process_sigma(self, proc):
         """
@@ -6014,13 +6677,13 @@ Errors: {scan_stats['errors']}"""
         details = f"""Process Details (PID {pid})
 {'='*80}
 
-Name: {info['name']}
-Executable: {info['exe']}
-Command Line: {info['cmdline']}
-Status: {info['status']}
-Username: {info['username']}
-Created: {info['create_time']}
-Parent PID: {info['parent_pid']} ({info['parent_name']})
+Name: {info.get('name', 'N/A')}
+Executable: {info.get('exe', 'N/A')}
+Command Line: {info.get('cmdline', 'N/A')}
+Status: {info.get('status', 'N/A')}
+Username: {info.get('username', 'N/A')}
+Created: {info.get('create_time', 'N/A')}
+Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
 """
         
@@ -7564,111 +8227,6 @@ Risk Level: {risk_level}"""
 
             self.root.after(0, show_alert)
     
-    # FIXED: Added network callback stub
-    def on_new_connection_detected(self, conn_info):
-        """Callback when new network connection is detected"""
-        if not conn_info:
-            return
-        
-        if conn_info.get('suspicious'):
-            # Could add network alerts here
-            pass
-    
-    # ==================== NETWORK MONITOR METHODS ====================
-    def toggle_network_monitoring(self):
-        """Toggle network monitoring on/off"""
-        if not self.network_monitor_active:
-            self.network_monitor.start_monitoring()
-            self.network_monitor_active = True
-            self.btn_toggle_network_monitor.configure(text="⏸ Stop Monitoring")
-        else:
-            self.network_monitor.stop_monitoring()
-            self.network_monitor_active = False
-            self.btn_toggle_network_monitor.configure(text="▶ Start Monitoring")
-    
-    def show_network_context_menu(self, event):
-        """Show right-click context menu for network connections"""
-        try:
-            self.network_context_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self.network_context_menu.grab_release()
-
-    def copy_network_cell(self, column_index):
-        """Copy a specific cell from selected network row to clipboard"""
-        selection = self.network_tree.selection()
-        if not selection:
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']
-            if values and len(values) > column_index:
-                cell_value = str(values[column_index])
-                self.root.clipboard_clear()
-                self.root.clipboard_append(cell_value)
-                self.root.update()  # Keep clipboard after window closes
-        except Exception as e:
-            pass
-
-    def copy_network_row(self):
-        """Copy entire row from selected network connection to clipboard"""
-        selection = self.network_tree.selection()
-        if not selection:
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']
-            if values:
-                # Format: Type | Local | Remote | Hostname | Status | Process | Suspicious
-                row_text = " | ".join(str(v) for v in values)
-                self.root.clipboard_clear()
-                self.root.clipboard_append(row_text)
-                self.root.update()  # Keep clipboard after window closes
-        except Exception as e:
-            pass
-
-    def add_network_ioc_to_case(self, field_type):
-        """Add selected network IOC to current case"""
-        if not self.current_case:
-            messagebox.showwarning("No Active Case", "No active case to add IOC to. Please create or load a case first.")
-            return
-
-        selection = self.network_tree.selection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select a network connection first.")
-            return
-
-        try:
-            item = self.network_tree.item(selection[0])
-            values = item['values']  # [Type, Local, Remote, Hostname, Status, Process, Suspicious]
-
-            if field_type == "remote_ip" and len(values) > 2:
-                # Extract IP from "IP:Port" format in Remote column (index 2)
-                remote_addr = str(values[2])
-                remote_ip = remote_addr.split(':')[0] if ':' in remote_addr else remote_addr
-
-                # Validate it's not empty or just a dash
-                if remote_ip and remote_ip != '-':
-                    self.case_manager.add_ioc("ips", remote_ip)
-                    self.refresh_iocs_display()
-                    messagebox.showinfo("Success", f"Added IP '{remote_ip}' to case IOCs!")
-                else:
-                    messagebox.showwarning("Invalid IP", "No valid IP address found in the selected connection.")
-
-            elif field_type == "hostname" and len(values) > 3:
-                hostname = str(values[3])
-                # Validate hostname is not empty or dash
-                if hostname and hostname != '-':
-                    self.case_manager.add_ioc("domains", hostname)
-                    self.refresh_iocs_display()
-                    messagebox.showinfo("Success", f"Added domain '{hostname}' to case IOCs!")
-                else:
-                    messagebox.showwarning("Invalid Hostname", "No valid hostname found in the selected connection.")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to add IOC: {str(e)}")
-
     def add_process_conn_ioc_to_case(self, field_type):
         """Add network connection IOCs from the selected process to the current case"""
         if not self.current_case:
@@ -7872,48 +8430,6 @@ Risk Level: {risk_level}"""
             # If resolution fails, just use the IP
             self.hostname_cache[ip_address] = '-'
             return '-'
-
-    def refresh_network_list(self):
-        """Refresh network connections list"""
-        # Clear existing
-        for item in self.network_tree.get_children():
-            self.network_tree.delete(item)
-
-        # Get connections
-        connections = self.network_monitor.get_all_connections()
-
-        for conn in connections:
-            local_addr = f"{conn.get('local_ip', '')}:{conn.get('local_port', '')}"
-            remote_addr = f"{conn.get('remote_ip', '')}:{conn.get('remote_port', '')}"
-
-            # Resolve hostname for remote IP
-            remote_ip = conn.get('remote_ip', '')
-            hostname = self.resolve_hostname(remote_ip) if remote_ip else '-'
-
-            suspicious_text = "Yes" if conn.get('suspicious', False) else "No"
-            tags = ('suspicious',) if conn.get('suspicious', False) else ()
-
-            self.network_tree.insert(
-                "", "end",
-                values=(
-                    conn.get('type', ''),
-                    local_addr,
-                    remote_addr,
-                    hostname,
-                    conn.get('status', ''),
-                    conn.get('process_name', 'Unknown'),
-                    suspicious_text
-                ),
-                tags=tags
-            )
-        
-        # Update stats
-        if self.network_monitor_active:
-            summary = self.network_monitor.get_connection_summary()
-            stats_text = f"""Network Statistics:
-Active: {summary['active_connections']} | Total: {summary['total_connections']} | Suspicious: {summary['suspicious_connections']}
-Unique IPs: {summary['unique_remote_ips']} | Unique Ports: {summary['unique_local_ports']}"""
-            self.network_stats_label.configure(text=stats_text)
 
     # ==================== FILE VIEWER AND EXECUTOR ====================
     def view_file_hex(self, file_path, file_name):

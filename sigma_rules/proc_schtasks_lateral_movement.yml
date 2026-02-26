@@ -1,0 +1,26 @@
+title: Remote Scheduled Task Creation
+id: f2d1c7a0-1023-4a0b-8b0a-sigma0023
+status: stable
+level: critical
+description: Detects scheduled task creation targeting a remote system, often used for lateral movement
+author: MAD-PDC
+date: 2026/02/19
+tags:
+    - attack.persistence
+    - attack.lateral_movement
+    - attack.t1053.005
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\schtasks.exe'
+        CommandLine|contains|all:
+            - '/create'
+            - '/s '
+    condition: selection
+falsepositives:
+    - Legitimate remote administration
+    - SCCM or other management tools
+references:
+    - https://attack.mitre.org/techniques/T1053/005/

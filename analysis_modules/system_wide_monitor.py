@@ -249,6 +249,7 @@ class SystemWideMonitor:
             'thread_events': 0,
             'imageload_events': 0,
             'dns_events': 0,
+            'persistence_events': 0,
             'sigma_matches': 0,
         }
 
@@ -411,7 +412,9 @@ class SystemWideMonitor:
         # Update stats
         self.stats['total_events'] += 1
         event_type = event.get('event_type', '').lower()
-        if 'file' in event_type:
+        if 'persistence' in event_type:
+            self.stats['persistence_events'] += 1
+        elif 'file' in event_type:
             self.stats['file_events'] += 1
         elif 'registry' in event_type:
             self.stats['registry_events'] += 1
@@ -616,7 +619,9 @@ class SystemWideMonitor:
             'process_events': 0,
             'thread_events': 0,
             'imageload_events': 0,
-            'dns_events': 0
+            'dns_events': 0,
+            'persistence_events': 0,
+            'sigma_matches': 0,
         }
 
     def set_filter(self, event_filter: EventFilter):

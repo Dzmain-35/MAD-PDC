@@ -1,0 +1,29 @@
+title: Suspicious Service Registration via Registry
+id: f2d1c7a0-1024-4a0b-8b0a-sigma0024
+status: stable
+level: high
+description: Detects suspicious service ImagePath values set in the registry, which may indicate persistence via service creation
+author: MAD-PDC
+date: 2026/02/19
+tags:
+    - attack.persistence
+    - attack.t1543.003
+logsource:
+    category: registry_set
+    product: windows
+detection:
+    selection:
+        TargetObject|contains: '\Services\'
+        TargetObject|endswith: '\ImagePath'
+    filter_legitimate:
+        Details|contains:
+            - '\Windows\system32\'
+            - '\Windows\SysWOW64\'
+            - '\Program Files\'
+            - '\Program Files (x86)\'
+    condition: selection and not filter_legitimate
+falsepositives:
+    - Third-party software installation
+    - Legitimate service updates
+references:
+    - https://attack.mitre.org/techniques/T1543/003/
