@@ -40,6 +40,7 @@ from views.yara_rules_view import YaraRulesView
 from views.current_case_view import CurrentCaseView
 from views.process_view import ProcessView
 from views.live_events_view import LiveEventsView
+from views.network_view import NetworkView
 
 
 class ForensicAnalysisGUI:
@@ -179,6 +180,9 @@ class ForensicAnalysisGUI:
         # Build UI
         self.create_ui()
 
+        # Wire up cross-view event bus handlers
+        self._wire_event_bus()
+
     # ==================== UI CREATION ====================
 
     def create_ui(self):
@@ -249,6 +253,7 @@ class ForensicAnalysisGUI:
         # Analysis sub-views (parent is analysis_content, not content_area)
         self.views["processes"] = ProcessView(self.analysis_content, self, self.colors)
         self.views["live_events"] = LiveEventsView(self.analysis_content, self, self.colors)
+        self.views["network"] = NetworkView(self.analysis_content, self, self.colors)
 
         # Register callbacks for real-time updates
         self.process_monitor.register_process_callback(
@@ -293,6 +298,29 @@ class ForensicAnalysisGUI:
             font=Fonts.body_bold
         )
         self.btn_live_events.pack(side="left", padx=5)
+
+        self.btn_network = ctk.CTkButton(
+            self.analysis_subtab_frame, text="🌐 Network",
+            command=lambda: self.show_analysis_subtab("network"),
+            height=35, width=150,
+            fg_color="transparent",
+            hover_color=self.colors["navy"],
+            border_width=2,
+            border_color=self.colors["red"],
+            font=Fonts.body_bold
+        )
+        self.btn_network.pack(side="left", padx=5)
+
+        # Breadcrumb context bar
+        self.breadcrumb_frame = ctk.CTkFrame(frame, fg_color="transparent", height=30)
+        self.breadcrumb_frame.pack(fill="x", padx=20, pady=(0, 5))
+        self.breadcrumb_frame.pack_propagate(False)
+
+        self.breadcrumb_label = ctk.CTkLabel(
+            self.breadcrumb_frame, text="Analysis > Processes",
+            font=Fonts.helper, text_color="#9ca3af", anchor="w"
+        )
+        self.breadcrumb_label.pack(side="left", padx=5)
 
         # Content area for analysis sub-tabs
         self.analysis_content = ctk.CTkFrame(frame, corner_radius=10,
@@ -343,7 +371,7 @@ class ForensicAnalysisGUI:
         """Switch between main tabs."""
         # Hide all top-level views
         for name, view in self.views.items():
-            if name not in ("processes", "live_events"):  # Analysis sub-views handled separately
+            if name not in ("processes", "live_events", "network"):  # Analysis sub-views handled separately
                 view.hide()
         self.analysis_frame.pack_forget()
 
@@ -370,15 +398,16 @@ class ForensicAnalysisGUI:
         self.active_tab = tab_name
 
     def show_analysis_subtab(self, subtab_name):
-        """Switch between analysis sub-tabs (processes, live_events)."""
+        """Switch between analysis sub-tabs (processes, live_events, network)."""
         # Hide all analysis sub-views
-        for name in ("processes", "live_events"):
+        for name in ("processes", "live_events", "network"):
             if name in self.views:
                 self.views[name].hide()
 
         # Reset subtab button colors
         self.btn_processes.configure(fg_color="transparent", border_width=2, border_color=self.colors["red"])
         self.btn_live_events.configure(fg_color="transparent", border_width=2, border_color=self.colors["red"])
+        self.btn_network.configure(fg_color="transparent", border_width=2, border_color=self.colors["red"])
 
         # Show selected subtab
         if subtab_name in self.views:
@@ -390,8 +419,13 @@ class ForensicAnalysisGUI:
             self.btn_processes.configure(fg_color=self.colors["red"], border_width=0)
         elif subtab_name == "live_events":
             self.btn_live_events.configure(fg_color=self.colors["red"], border_width=0)
+        elif subtab_name == "network":
+            self.btn_network.configure(fg_color=self.colors["red"], border_width=0)
 
         self.active_analysis_subtab = subtab_name
+
+        # Update breadcrumb
+        self._update_breadcrumb()
 
     # ==================== KEYBOARD SHORTCUTS ====================
 
@@ -461,6 +495,73 @@ class ForensicAnalysisGUI:
         """Switch to analysis tab and show a specific subtab."""
         self.show_tab("analysis")
         self.show_analysis_subtab(subtab_name)
+
+    # ==================== EVENT BUS WIRING ====================
+
+    def _wire_event_bus(self):
+        """Register cross-view event handlers on the shared EventBus."""
+        self.event_bus.on("process_selected", self._on_process_selected)
+        self.event_bus.on("threat_detected", self._on_threat_detected)
+        self.event_bus.on("ioc_extracted", self._on_ioc_extracted)
+
+    def _on_process_selected(self, pid=None, name=None):
+        """Handle process selection events from any view.
+
+        Updates the breadcrumb bar to reflect the selected process context.
+        """
+        print(f"EventBus: process_selected — PID={pid}, Name={name}")
+        self._update_breadcrumb(pid=pid, process_name=name)
+
+    def _on_threat_detected(self, pid=None, rule=None, score=None):
+        """Handle threat detection events (e.g. YARA match on a running process).
+
+        Logs the event for now; future: update YARA badge in process view.
+        """
+        print(f"EventBus: threat_detected — PID={pid}, Rule={rule}, Score={score}")
+
+    def _on_ioc_extracted(self, ioc_type=None, value=None):
+        """Handle IOC extraction events.
+
+        Adds the IOC to the current case data if a case is active.
+        """
+        print(f"EventBus: ioc_extracted — Type={ioc_type}, Value={value}")
+        if self.current_case and ioc_type and value:
+            iocs = self.current_case.setdefault("iocs", {})
+            # Normalize type key to plural form for storage
+            type_key = ioc_type if ioc_type.endswith("s") else ioc_type + "s"
+            ioc_list = iocs.setdefault(type_key, [])
+            if value not in ioc_list:
+                ioc_list.append(value)
+                print(f"  -> Added {ioc_type} IOC to case: {value}")
+
+    # ==================== BREADCRUMB BAR ====================
+
+    def _update_breadcrumb(self, pid=None, process_name=None):
+        """Update the breadcrumb context bar in the analysis frame.
+
+        Shows the current navigation path, e.g.:
+            Analysis > Processes > malware.exe (PID 6120)
+
+        Args:
+            pid: Optional PID to display in breadcrumb context
+            process_name: Optional process name to display
+        """
+        subtab = self.active_analysis_subtab or "processes"
+        subtab_display = {
+            "processes": "Processes",
+            "live_events": "Live Events",
+            "network": "Network",
+        }.get(subtab, subtab.replace("_", " ").title())
+
+        breadcrumb = f"Analysis  >  {subtab_display}"
+
+        if pid is not None and process_name and subtab == "processes":
+            breadcrumb += f"  >  {process_name} (PID {pid})"
+
+        # Build styled text: path segments in gray, active segment in white
+        # Use the label directly since CTkLabel doesn't support rich text easily
+        if hasattr(self, "breadcrumb_label"):
+            self.breadcrumb_label.configure(text=breadcrumb)
 
     # ==================== RESPONSIVE LAYOUT ====================
 
