@@ -15,6 +15,7 @@ import shutil
 
 from typography import Fonts
 from views.base_view import BaseView
+from views.string_analysis_view import StringAnalysisPanel
 from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 
 
@@ -55,6 +56,14 @@ class ProcessView(BaseView):
         # Process context menu
         self.process_context_menu = None
         self.process_conn_menu = None
+
+        # Quick Strings panel state
+        self._strings_panel_visible = False
+        self._strings_panel = None          # tk.Frame inside PanedWindow
+        self._strings_analysis = None       # StringAnalysisPanel instance
+        self._strings_cache = {}            # pid -> extraction_result
+        self._strings_selected_pid = None
+        self._strings_popout_window = None
 
         self._build()
 
@@ -187,6 +196,17 @@ class ProcessView(BaseView):
         )
         self.http_alert_badge.pack(side="left", padx=3)
 
+        # Quick Strings toggle badge
+        self._strings_badge = ctk.CTkButton(
+            search_frame, text="Strings \u25be",
+            command=self._toggle_quick_strings_panel,
+            font=("Segoe UI", 14, "bold"),
+            text_color="#9ca3af",
+            fg_color="#374151", hover_color="#374151",
+            corner_radius=6, height=30, width=100
+        )
+        self._strings_badge.pack(side="left", padx=3)
+
         # Paned container for process tree + HTTP panel
         paned_container = ctk.CTkFrame(frame, fg_color="transparent")
         paned_container.pack(fill="both", expand=True, padx=20, pady=10)
@@ -312,8 +332,12 @@ class ProcessView(BaseView):
         # Build HTTP panel
         self._build_http_panel()
 
+        # Build Quick Strings panel (collapsible, below the tree)
+        self._build_quick_strings_panel()
+
         # Auto-filter when process tree selection changes
         self.process_tree.bind("<<TreeviewSelect>>", self._on_process_select_for_http)
+        self.process_tree.bind("<<TreeviewSelect>>", self._on_process_select_for_strings, add="+")
 
         # Initial load
         self.refresh_process_list()
@@ -1367,6 +1391,190 @@ class ProcessView(BaseView):
         current_case_view = self.app.views.get("current_case")
         if current_case_view and hasattr(current_case_view, 'refresh_iocs_display'):
             current_case_view.refresh_iocs_display()
+
+    # ------------------------------------------------------------------
+    # Quick Strings Panel methods
+    # ------------------------------------------------------------------
+
+    def _build_quick_strings_panel(self):
+        """Build the collapsible Quick Strings panel (added to PanedWindow on demand)."""
+        self._strings_panel = tk.Frame(self._process_paned, bg=self.colors["navy"])
+
+        # Header bar
+        header = tk.Frame(self._strings_panel, bg=self.colors["dark_blue"], height=36)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header, text="Quick Strings",
+            bg=self.colors["dark_blue"], fg="#86efac",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(side="left", padx=10)
+
+        self._strings_status_lbl = tk.Label(
+            header, text="Select a process",
+            bg=self.colors["dark_blue"], fg="#9ca3af",
+            font=("Segoe UI", 10),
+        )
+        self._strings_status_lbl.pack(side="left", padx=15)
+
+        # Pop Out button
+        tk.Button(
+            header, text="Pop Out",
+            bg=self.colors["dark_blue"], fg="white",
+            activebackground=self.colors["red_dark"], activeforeground="white",
+            relief="flat", bd=0, padx=8, font=("Segoe UI", 9),
+            command=self._popout_strings_panel,
+        ).pack(side="right", padx=5)
+
+        # Close button
+        tk.Button(
+            header, text="Close",
+            bg=self.colors["dark_blue"], fg="white",
+            activebackground=self.colors["red_dark"], activeforeground="white",
+            relief="flat", bd=0, padx=8, font=("Segoe UI", 9),
+            command=self._toggle_quick_strings_panel,
+        ).pack(side="right", padx=5)
+
+        # The StringAnalysisPanel body
+        body = ctk.CTkFrame(self._strings_panel, fg_color=self.colors["navy"])
+        body.pack(fill="both", expand=True)
+
+        self._strings_analysis = StringAnalysisPanel(
+            parent=body,
+            app=self.app,
+            colors=self.colors,
+            is_large_screen=self.is_large_screen,
+            lightweight=True,
+            max_per_category=200,
+        )
+        self._strings_analysis.frame.pack(fill="both", expand=True)
+
+    def _toggle_quick_strings_panel(self):
+        """Show or hide the Quick Strings panel in the PanedWindow."""
+        if self._strings_panel_visible:
+            self._process_paned.forget(self._strings_panel)
+            self._strings_panel_visible = False
+            self._strings_badge.configure(
+                text="Strings \u25be",
+                text_color="#9ca3af",
+                fg_color="#374151", hover_color="#374151",
+            )
+        else:
+            self._process_paned.add(self._strings_panel, stretch="always")
+            self._process_paned.paneconfigure(self._strings_panel, height=280)
+            self._strings_panel_visible = True
+            self._strings_badge.configure(
+                text="Strings \u25b4",
+                text_color="#86efac",
+                fg_color="#14532d", hover_color="#166534",
+            )
+            # If a process is selected, load its strings immediately
+            if self._strings_selected_pid:
+                self._load_strings_for_pid(self._strings_selected_pid)
+
+    def _on_process_select_for_strings(self, event=None):
+        """Update the Quick Strings panel when a process is selected."""
+        sel = self.process_tree.selection()
+        if not sel:
+            self._strings_selected_pid = None
+            return
+        try:
+            values = self.process_tree.item(sel[0], "values")
+            pid = int(values[0])
+            self._strings_selected_pid = pid
+        except (ValueError, IndexError):
+            self._strings_selected_pid = None
+            return
+
+        if self._strings_panel_visible:
+            self._load_strings_for_pid(pid)
+
+    def _load_strings_for_pid(self, pid: int):
+        """Load strings for *pid* into the Quick Strings panel.
+
+        Uses the cache if available (< 200ms), otherwise triggers a
+        background quick scan.
+        """
+        import time
+
+        # Check cache first
+        if pid in self._strings_cache:
+            ts, result = self._strings_cache[pid]
+            if time.time() - ts < 30:
+                self._strings_status_lbl.configure(
+                    text=f"PID {pid} (cached)")
+                self._strings_analysis.set_strings_data(result)
+                return
+
+        # Trigger background scan
+        self._strings_status_lbl.configure(text=f"Scanning PID {pid}...")
+
+        def _worker():
+            try:
+                extractor = self.app.process_monitor.memory_extractor
+                result = extractor.extract_strings_from_memory(
+                    pid=pid,
+                    min_length=4,
+                    max_strings=500000,
+                    include_unicode=True,
+                    enable_quality_filter=True,
+                    scan_mode="quick",
+                    return_offsets=True,
+                )
+                self._strings_cache[pid] = (time.time(), result)
+                self.root.after(0, lambda: self._on_strings_loaded(pid, result))
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda: self._strings_status_lbl.configure(
+                        text=f"Error: {exc}"),
+                )
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def _on_strings_loaded(self, pid, result):
+        """Called on the main thread when string extraction finishes."""
+        if self._strings_selected_pid != pid:
+            return  # user moved on
+        self._strings_status_lbl.configure(text=f"PID {pid}")
+        self._strings_analysis.set_strings_data(result)
+
+    def _popout_strings_panel(self):
+        """Open a full StringAnalysisPanel in a separate Toplevel window."""
+        pid = self._strings_selected_pid
+        if not pid:
+            return
+
+        # Close existing popout if any
+        if self._strings_popout_window and self._strings_popout_window.winfo_exists():
+            self._strings_popout_window.destroy()
+
+        win = ctk.CTkToplevel(self.root)
+        win.title(f"String Analysis - PID {pid}")
+        win.geometry("1100x700")
+        self._strings_popout_window = win
+
+        panel = StringAnalysisPanel(
+            parent=win,
+            app=self.app,
+            colors=self.colors,
+            is_large_screen=self.is_large_screen,
+            lightweight=False,
+        )
+        panel.frame.pack(fill="both", expand=True)
+
+        # Load cached results if we have them, otherwise trigger scan
+        import time
+        if pid in self._strings_cache:
+            ts, result = self._strings_cache[pid]
+            if time.time() - ts < 60:
+                panel.set_strings_data(result)
+            else:
+                panel.load_strings(pid, scan_mode="quick")
+        else:
+            panel.load_strings(pid, scan_mode="quick")
 
     # ------------------------------------------------------------------
     # Process context menu and actions

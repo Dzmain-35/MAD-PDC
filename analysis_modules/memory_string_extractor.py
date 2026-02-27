@@ -129,13 +129,14 @@ class MemoryStringExtractor:
         self,
         pid: int,
         min_length: int = 10,
-        max_strings: int = 20000,
+        max_strings: int = 500000,
         include_unicode: bool = True,
         filter_regions: Optional[List[str]] = None,
         enable_quality_filter: bool = True,
         use_cache: bool = True,
         scan_mode: str = "quick",
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        return_offsets: bool = False
     ) -> Dict[str, any]:
         """
         Extract strings from process memory regions
@@ -153,9 +154,15 @@ class MemoryStringExtractor:
             scan_mode: 'quick' (IMAGE regions only, ~1-3 sec) or 'deep' (all regions, slower)
             progress_callback: Optional callback(current_strings, total_regions, regions_scanned)
                              for progressive updates
+            return_offsets: When True, strings in strings_by_region include offset info as
+                          tuples: (offset_hex, string, encoding) where
+                          offset_hex = hex(region.BaseAddress + position_in_buffer).
+                          Default False for backward compatibility.
 
         Returns:
-            Dictionary containing extracted strings and metadata
+            Dictionary containing extracted strings and metadata.
+            When return_offsets is True, also includes 'string_frequency' dict
+            mapping {string: count} for all extracted strings.
         """
         # Set default filter_regions based on scan_mode
         if filter_regions is None:
@@ -167,7 +174,7 @@ class MemoryStringExtractor:
         # Create cache key based on parameters
         cache_key = (pid, min_length, max_strings, include_unicode,
                      tuple(filter_regions) if filter_regions else None,
-                     enable_quality_filter, scan_mode)
+                     enable_quality_filter, scan_mode, return_offsets)
 
         # Check cache if enabled
         if use_cache and cache_key in self.cache:
@@ -205,7 +212,8 @@ class MemoryStringExtractor:
             'total_bytes_scanned': 0,
             'errors': [],
             'cached': False,
-            'scan_mode': scan_mode
+            'scan_mode': scan_mode,
+            'string_frequency': defaultdict(int),  # Track string frequency across all regions
         }
         
         try:
@@ -317,12 +325,31 @@ class MemoryStringExtractor:
                             )
 
                             # NEW: Extract strings for this specific region (Process Hacker style)
-                            region_strings = self._extract_strings_from_buffer_simple(
-                                memory_data,
-                                min_length,
-                                include_unicode,
-                                enable_quality_filter
-                            )
+                            # Handle None for BaseAddress (represents address 0 in ctypes)
+                            region_base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
+                            if return_offsets:
+                                region_strings = self._extract_strings_from_buffer_with_offsets(
+                                    memory_data,
+                                    region_base_addr,
+                                    min_length,
+                                    include_unicode,
+                                    enable_quality_filter
+                                )
+                            else:
+                                region_strings = self._extract_strings_from_buffer_simple(
+                                    memory_data,
+                                    min_length,
+                                    include_unicode,
+                                    enable_quality_filter
+                                )
+
+                            # Update string frequency tracking
+                            if return_offsets:
+                                for _offset, s, _enc in region_strings:
+                                    result['string_frequency'][s] += 1
+                            else:
+                                for s in region_strings:
+                                    result['string_frequency'][s] += 1
 
                             # Store strings with their region info
                             if region_strings:
@@ -394,6 +421,9 @@ class MemoryStringExtractor:
         # Use more generous per-category limits to match Process Hacker behavior
         for key in result['strings']:
             result['strings'][key] = sorted(list(result['strings'][key]))[:max_strings]
+
+        # Convert string_frequency from defaultdict to regular dict for serialization
+        result['string_frequency'] = dict(result['string_frequency'])
 
         # Validate results
         total_extracted = sum(len(s) for s in result['strings'].values())
@@ -701,6 +731,70 @@ class MemoryStringExtractor:
                     continue
 
         return strings
+
+    def _extract_strings_from_buffer_with_offsets(
+        self,
+        data: bytes,
+        base_address: int,
+        min_length: int,
+        include_unicode: bool,
+        enable_quality_filter: bool = True
+    ) -> List[tuple]:
+        """
+        Extract strings from buffer with offset tracking.
+        Returns tuples of (offset_hex, string, encoding).
+
+        Args:
+            data: Memory buffer
+            base_address: Base address of the memory region
+            min_length: Minimum string length
+            include_unicode: Whether to extract Unicode strings
+            enable_quality_filter: Whether to apply quality filtering
+
+        Returns:
+            List of (offset_hex, string, encoding) tuples
+        """
+        if not data:
+            return []
+
+        results = []
+
+        # Extract ASCII strings with offsets
+        if min_length == 4:
+            ascii_pattern = self.string_patterns['ascii']
+        else:
+            pattern = rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'
+            ascii_pattern = re.compile(pattern)
+
+        for match in ascii_pattern.finditer(data):
+            try:
+                string = match.group().decode('ascii', errors='ignore')
+                if len(string) >= min_length:
+                    if not enable_quality_filter or self._is_quality_string(string, min_length):
+                        offset_hex = hex(base_address + match.start())
+                        results.append((offset_hex, string, 'ascii'))
+            except Exception:
+                continue
+
+        # Extract Unicode strings (UTF-16LE) with offsets
+        if include_unicode:
+            if min_length == 4:
+                unicode_pattern = self.string_patterns['unicode']
+            else:
+                unicode_pattern = rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'
+                unicode_pattern = re.compile(unicode_pattern)
+
+            for match in unicode_pattern.finditer(data):
+                try:
+                    string = match.group().decode('utf-16le', errors='ignore')
+                    if len(string) >= min_length:
+                        if not enable_quality_filter or self._is_quality_string(string, min_length):
+                            offset_hex = hex(base_address + match.start())
+                            results.append((offset_hex, string, 'unicode'))
+                except Exception:
+                    continue
+
+        return results
 
     def _calculate_entropy(self, string: str) -> float:
         """

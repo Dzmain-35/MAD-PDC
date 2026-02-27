@@ -1,12 +1,20 @@
 """
 Live Events View for MAD - System-wide event monitoring.
 Extracted from MAD.py create_live_events_subtab() and related methods.
+
+Phase 3 optimizations:
+- Virtual scrolling via EventVirtualizer (handles 50k+ events)
+- Adaptive refresh rate (200ms-1000ms based on event volume)
+- Event density timeline bar
+- Event bookmarking with export
 """
 
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
+import time
+import csv
 import threading
 from datetime import datetime, timedelta
 
@@ -15,6 +23,316 @@ from views.base_view import BaseView
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
 
+
+# ======================================================================
+# Helper: EventVirtualizer
+# ======================================================================
+
+class EventVirtualizer:
+    """Manages virtual scrolling for large event datasets.
+
+    Keeps *all* events in memory (up to ``max_events``) but only inserts
+    a sliding window of rows into the ttk.Treeview.  This avoids the
+    O(n) cost of managing tens-of-thousands of Tk items while still
+    providing instant filter/scroll response.
+    """
+
+    def __init__(self, tree, format_fn, tag_fn, max_events=50000):
+        self.tree = tree
+        self.format_fn = format_fn      # event dict -> values tuple
+        self.tag_fn = tag_fn            # event dict -> tags tuple
+        self.all_data = []              # Full event list (master)
+        self.filtered_data = []         # After filters applied
+        self._filter_fn = None          # Optional callable(event)->bool
+        self._visible_count = 60        # Rows visible at once
+        self._buffer = 30              # Extra rows above/below viewport
+        self._current_offset = 0
+        self._auto_scroll = True        # Follow new events when at bottom
+        self._max_events = max_events
+        self._iid_to_event = {}         # tree iid -> event dict (for visible rows)
+
+    # ------------------------------------------------------------------
+    # Data mutation
+    # ------------------------------------------------------------------
+
+    def set_data(self, events):
+        """Replace all data and rebuild the viewport."""
+        self.all_data = list(events[-self._max_events:])
+        self._apply_filter_to_all()
+        self._current_offset = max(0, len(self.filtered_data) - self._visible_count)
+        self._rebuild_viewport()
+
+    def append_events(self, new_events):
+        """Efficiently append new events. O(k) for k new events."""
+        if not new_events:
+            return
+
+        self.all_data.extend(new_events)
+
+        # Trim to max
+        if len(self.all_data) > self._max_events:
+            overflow = len(self.all_data) - self._max_events
+            self.all_data = self.all_data[overflow:]
+
+        # Apply filter to new events only
+        if self._filter_fn is not None:
+            matching = [e for e in new_events if self._filter_fn(e)]
+        else:
+            matching = list(new_events)
+
+        self.filtered_data.extend(matching)
+
+        # Trim filtered_data if master was trimmed
+        if len(self.filtered_data) > self._max_events:
+            self.filtered_data = self.filtered_data[-self._max_events:]
+
+        if self._auto_scroll and matching:
+            # Append only the new matching rows and trim oldest visible
+            for event in matching:
+                children = self.tree.get_children()
+                if len(children) >= self._visible_count + self._buffer:
+                    oldest = children[0]
+                    self._iid_to_event.pop(oldest, None)
+                    self.tree.delete(oldest)
+                iid = self.tree.insert(
+                    "", "end",
+                    values=self.format_fn(event),
+                    tags=self.tag_fn(event),
+                )
+                self._iid_to_event[iid] = event
+            self._current_offset = max(0, len(self.filtered_data) - self._visible_count)
+            # Auto-scroll tree to bottom
+            children = self.tree.get_children()
+            if children:
+                self.tree.see(children[-1])
+
+    def clear(self):
+        """Remove all data."""
+        self.all_data.clear()
+        self.filtered_data.clear()
+        self._iid_to_event.clear()
+        self._current_offset = 0
+        self.tree.delete(*self.tree.get_children())
+
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+
+    def set_filter(self, filter_fn):
+        """Set or clear filter function. ``filter_fn(event) -> bool``."""
+        self._filter_fn = filter_fn
+        self._apply_filter_to_all()
+        self._current_offset = max(0, len(self.filtered_data) - self._visible_count)
+        self._rebuild_viewport()
+
+    def _apply_filter_to_all(self):
+        """Re-filter all_data into filtered_data."""
+        if self._filter_fn is not None:
+            self.filtered_data = [e for e in self.all_data if self._filter_fn(e)]
+        else:
+            self.filtered_data = list(self.all_data)
+
+    # ------------------------------------------------------------------
+    # Viewport management
+    # ------------------------------------------------------------------
+
+    def _rebuild_viewport(self):
+        """Clear tree and re-insert the visible window of rows."""
+        self._iid_to_event.clear()
+        self.tree.delete(*self.tree.get_children())
+        start = max(0, self._current_offset - self._buffer)
+        end = min(len(self.filtered_data),
+                  self._current_offset + self._visible_count + self._buffer)
+        for i in range(start, end):
+            event = self.filtered_data[i]
+            iid = self.tree.insert(
+                "", "end",
+                values=self.format_fn(event),
+                tags=self.tag_fn(event),
+            )
+            self._iid_to_event[iid] = event
+
+        # Scroll to bottom if auto-scroll
+        if self._auto_scroll:
+            children = self.tree.get_children()
+            if children:
+                self.tree.see(children[-1])
+
+    def get_event_for_iid(self, iid):
+        """Return the event dict for a visible tree iid, or None."""
+        return self._iid_to_event.get(iid)
+
+    def get_visible_count(self):
+        """Number of items currently in the tree."""
+        return len(self.tree.get_children())
+
+    def get_total_count(self):
+        """Total events stored (unfiltered)."""
+        return len(self.all_data)
+
+    def get_filtered_count(self):
+        """Total events after filtering."""
+        return len(self.filtered_data)
+
+    def update_tags_for_iid(self, iid, tags):
+        """Update the tags on a visible tree row."""
+        try:
+            self.tree.item(iid, tags=tags)
+        except tk.TclError:
+            pass
+
+
+# ======================================================================
+# Helper: EventDensityBar
+# ======================================================================
+
+class EventDensityBar:
+    """Minimap canvas showing event density over time as a histogram.
+
+    Placed between the filter controls and the events TreeView.
+    Clicking on a region scrolls the event list to that time period.
+    """
+
+    def __init__(self, parent, colors, on_click_callback=None):
+        self.colors = colors
+        self._on_click_callback = on_click_callback
+        self._buckets = []
+        self._time_range = (0.0, 0.0)   # (start_ts, end_ts) as float epoch
+        self._bucket_count = 0
+
+        self.canvas = tk.Canvas(
+            parent, height=30, bg=colors["navy"],
+            highlightthickness=0, cursor="hand2",
+        )
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Configure>", lambda e: self._redraw())
+
+    def pack(self, **kwargs):
+        self.canvas.pack(**kwargs)
+
+    def pack_forget(self):
+        self.canvas.pack_forget()
+
+    # ------------------------------------------------------------------
+
+    def update(self, events, event_filter=None):
+        """Recalculate density buckets from the events list."""
+        if not events:
+            self._buckets = []
+            self._redraw()
+            return
+
+        # Determine time range from events
+        timestamps = []
+        for ev in events:
+            ts = self._event_timestamp(ev)
+            if ts > 0:
+                timestamps.append(ts)
+
+        if len(timestamps) < 2:
+            self._buckets = []
+            self._redraw()
+            return
+
+        t_min = min(timestamps)
+        t_max = max(timestamps)
+        self._time_range = (t_min, t_max)
+
+        # Number of buckets = canvas width / 2, minimum 10
+        canvas_w = max(self.canvas.winfo_width(), 200)
+        n_buckets = max(10, canvas_w // 2)
+        self._bucket_count = n_buckets
+
+        span = t_max - t_min
+        if span <= 0:
+            span = 1.0
+
+        # Build buckets: each is (count, suspicious_count, sigma_count)
+        buckets = [[0, 0, 0] for _ in range(n_buckets)]
+        for ev in events:
+            ts = self._event_timestamp(ev)
+            if ts <= 0:
+                continue
+            idx = int((ts - t_min) / span * (n_buckets - 1))
+            idx = max(0, min(idx, n_buckets - 1))
+            buckets[idx][0] += 1
+            if bool(ev.get("sigma_matches")):
+                buckets[idx][2] += 1
+            elif event_filter and event_filter.is_suspicious(ev):
+                buckets[idx][1] += 1
+
+        self._buckets = buckets
+        self._redraw()
+
+    # ------------------------------------------------------------------
+
+    def _redraw(self):
+        self.canvas.delete("all")
+        if not self._buckets:
+            return
+
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+
+        n = len(self._buckets)
+        max_count = max(b[0] for b in self._buckets) or 1
+        bar_w = max(1, w / n)
+
+        for i, (total, susp, sigma) in enumerate(self._buckets):
+            if total == 0:
+                continue
+            bar_h = max(2, int((total / max_count) * (h - 4)))
+            x0 = i * bar_w
+            x1 = x0 + bar_w
+            y0 = h - 2 - bar_h
+            y1 = h - 2
+
+            if sigma > 0:
+                color = "#a855f7"       # purple for sigma
+            elif susp > 0:
+                color = "#ef4444"       # red for suspicious
+            else:
+                color = "#6b7280"       # gray for normal
+
+            self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+
+    def _on_click(self, event):
+        """Translate click position to a timestamp and invoke callback."""
+        if not self._buckets or not self._on_click_callback:
+            return
+        w = self.canvas.winfo_width()
+        if w <= 0:
+            return
+        frac = event.x / w
+        t_min, t_max = self._time_range
+        ts = t_min + frac * (t_max - t_min)
+        self._on_click_callback(ts)
+
+    @staticmethod
+    def _event_timestamp(ev):
+        """Return epoch float for an event, or 0."""
+        tf = ev.get("time_full")
+        if tf:
+            try:
+                return datetime.fromisoformat(tf).timestamp()
+            except (ValueError, TypeError):
+                pass
+        ts = ev.get("timestamp")
+        if isinstance(ts, str) and ":" in ts:
+            try:
+                today = datetime.now().date()
+                t = datetime.strptime(ts, "%H:%M:%S.%f").time()
+                return datetime.combine(today, t).timestamp()
+            except (ValueError, TypeError):
+                pass
+        return 0.0
+
+
+# ======================================================================
+# LiveEventsView
+# ======================================================================
 
 class LiveEventsView(BaseView):
     """System-wide live event monitoring view."""
@@ -55,6 +373,23 @@ class LiveEventsView(BaseView):
 
         # Hostname resolution cache
         self._hostname_cache = {}
+
+        # Virtualizer (set during _build)
+        self.virtualizer = None
+
+        # Density bar (set during _build)
+        self._density_bar = None
+
+        # Bookmarking
+        self._bookmarked_events = []
+        self._bookmarks_panel = None
+        self._bookmarks_tree = None
+        self._bookmarks_visible = False
+        self._bookmarks_toggle_btn = None
+
+        # Stats cache (avoid recalculating when nothing changed)
+        self._last_stats = None
+        self._last_stats_text = ""
 
         self._build()
 
@@ -122,6 +457,19 @@ class LiveEventsView(BaseView):
             border_color=self.colors["red"],
         )
         export_btn.pack(side="right", padx=5)
+
+        # Export bookmarks button
+        export_bm_btn = ctk.CTkButton(
+            row1,
+            text="\u2b50 Export Bookmarks",
+            command=self._export_bookmarks_csv,
+            height=35,
+            width=150,
+            fg_color="transparent",
+            border_width=2,
+            border_color="#eab308",
+        )
+        export_bm_btn.pack(side="right", padx=5)
 
         clear_btn = ctk.CTkButton(
             row1,
@@ -275,6 +623,51 @@ class LiveEventsView(BaseView):
         )
         self._process_info_label.pack(fill="both", expand=True, padx=15, pady=10)
 
+        # ===== BOOKMARKS PANEL (collapsible) =====
+        bookmarks_header = ctk.CTkFrame(content, fg_color=self.colors["navy"], height=30)
+        bookmarks_header.pack(fill="x", pady=(0, 2))
+        self._bookmarks_toggle_btn = ctk.CTkButton(
+            bookmarks_header,
+            text="\u2b50 Bookmarks (0) \u25b6",
+            command=self._toggle_bookmarks_panel,
+            height=24,
+            width=180,
+            font=Fonts.helper,
+            fg_color="transparent",
+            hover_color=self.colors["dark_blue"],
+            text_color="#eab308",
+        )
+        self._bookmarks_toggle_btn.pack(side="left", padx=5, pady=2)
+
+        self._bookmarks_panel = ctk.CTkFrame(content, fg_color=self.colors["dark_blue"], height=120)
+        # Not packed initially — collapsed
+
+        bm_columns = ("time", "pid", "process", "type", "operation", "path")
+        self._bookmarks_tree = ttk.Treeview(
+            self._bookmarks_panel,
+            columns=bm_columns,
+            show="headings",
+            height=4,
+            style="LiveEvents.Treeview",
+        )
+        for col in bm_columns:
+            self._bookmarks_tree.heading(col, text=col.capitalize())
+        self._bookmarks_tree.column("time", width=90, minwidth=80)
+        self._bookmarks_tree.column("pid", width=50, minwidth=40)
+        self._bookmarks_tree.column("process", width=110, minwidth=80)
+        self._bookmarks_tree.column("type", width=75, minwidth=60)
+        self._bookmarks_tree.column("operation", width=140, minwidth=100)
+        self._bookmarks_tree.column("path", width=350, minwidth=150)
+        self._bookmarks_tree.pack(fill="both", expand=True, padx=5, pady=3)
+        self._bookmarks_tree.bind("<Double-1>", lambda e: self._show_bookmark_detail())
+
+        # ===== EVENT DENSITY TIMELINE BAR =====
+        self._density_bar = EventDensityBar(
+            content, self.colors,
+            on_click_callback=self._on_density_click,
+        )
+        self._density_bar.pack(fill="x", pady=(0, 2))
+
         # ===== EVENTS DISPLAY =====
         self._events_frame = ctk.CTkFrame(content, fg_color="gray20")
         self._events_frame.pack(fill="both", expand=True)
@@ -345,10 +738,20 @@ class LiveEventsView(BaseView):
         self.events_tree.tag_configure("sigma_match", background="#4c1d95", foreground="#c084fc")
         # Tag for persistence changes (orange)
         self.events_tree.tag_configure("persistence", background="#78350f", foreground="#fbbf24")
+        # Tag for bookmarked events (yellow star)
+        self.events_tree.tag_configure("bookmarked", background="#854d0e", foreground="#fde047")
 
         self.events_tree.pack(side="left", fill="both", expand=True, padx=2, pady=2)
         events_vsb.config(command=self.events_tree.yview)
         events_hsb.config(command=self.events_tree.xview)
+
+        # --- Create virtualizer ---
+        self.virtualizer = EventVirtualizer(
+            self.events_tree,
+            self._format_event,
+            self._tags_for_event,
+            max_events=50000,
+        )
 
         # Context menu for events
         self._events_context_menu = tk.Menu(
@@ -359,6 +762,11 @@ class LiveEventsView(BaseView):
         self._events_context_menu.add_command(label="\U0001f4cb Copy Path", command=self.copy_path_to_clipboard)
         self._events_context_menu.add_separator()
         self._events_context_menu.add_command(
+            label="\u2b50 Bookmark Event",
+            command=self._bookmark_selected_event,
+        )
+        self._events_context_menu.add_separator()
+        self._events_context_menu.add_command(
             label="\u2795 Extract IOCs to Case",
             command=lambda: self.add_live_event_iocs_to_case(self.events_tree),
         )
@@ -367,6 +775,50 @@ class LiveEventsView(BaseView):
 
         self.events_tree.bind("<Button-3>", self._show_context_menu)
         self.events_tree.bind("<Double-1>", lambda e: self._show_live_event_detail())
+
+        # Keyboard shortcut: Ctrl+B to bookmark
+        self.events_tree.bind("<Control-b>", lambda e: self._bookmark_selected_event())
+        self.events_tree.bind("<Control-B>", lambda e: self._bookmark_selected_event())
+
+    # ------------------------------------------------------------------
+    # Format helpers (used by virtualizer)
+    # ------------------------------------------------------------------
+
+    def _format_event(self, event):
+        """Convert an event dict to a values tuple for the TreeView."""
+        path = event.get("path", "")
+        if len(str(path)) > 100:
+            path = str(path)[:97] + "..."
+        return (
+            event.get("timestamp", ""),
+            event.get("pid", 0),
+            event.get("process_name", "")[:20],
+            event.get("event_type", ""),
+            event.get("operation", ""),
+            path,
+            event.get("result", ""),
+        )
+
+    def _tags_for_event(self, event):
+        """Determine tags tuple for an event."""
+        # Check bookmark first
+        is_bm = any(b is event for b in self._bookmarked_events)
+
+        has_sigma = bool(event.get("sigma_matches"))
+        is_persistence = event.get("event_type") == "Persistence"
+        is_suspicious = False
+        if self.monitor_state.get("current_filter"):
+            is_suspicious = self.monitor_state["current_filter"].is_suspicious(event)
+
+        if is_bm:
+            return ("bookmarked",)
+        if has_sigma:
+            return ("sigma_match",)
+        if is_persistence:
+            return ("persistence",)
+        if is_suspicious:
+            return ("suspicious",)
+        return ()
 
     # ------------------------------------------------------------------
     # Context menu
@@ -401,7 +853,7 @@ class LiveEventsView(BaseView):
                 try:
                     sysmon_test = SysmonLogMonitor()
                     sysmon_available = sysmon_test.is_available()
-                except:
+                except Exception:
                     pass
 
                 sigma_info = ""
@@ -440,8 +892,8 @@ class LiveEventsView(BaseView):
                 self.toggle_monitoring_btn.configure(fg_color="#059669")  # Green
                 self._status_label.configure(text="\u25cf Monitoring: Active", text_color="#10b981")
 
-                # Start auto-refresh
-                self.refresh_events()
+                # Start adaptive auto-refresh
+                self._adaptive_refresh()
 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to start monitoring:\n{str(e)}")
@@ -476,6 +928,16 @@ class LiveEventsView(BaseView):
     # Filter logic
     # ------------------------------------------------------------------
 
+    def _build_filter_fn(self):
+        """Build a callable filter_fn(event)->bool from the current monitor filter."""
+        event_filter = self.monitor_state.get("current_filter")
+        if event_filter is None:
+            return None
+
+        def _fn(event):
+            return event_filter.matches(event)
+        return _fn
+
     def apply_filters(self):
         """Apply current filter settings to the monitor."""
         if not self.monitor_state["monitor"]:
@@ -498,7 +960,7 @@ class LiveEventsView(BaseView):
                 else:
                     # Just filter by the single PID
                     event_filter.set_pid(pid)
-            except:
+            except (ValueError, TypeError):
                 event_filter.set_pid(None)
         else:
             event_filter.set_pid(None)
@@ -516,52 +978,15 @@ class LiveEventsView(BaseView):
 
         self.monitor_state["current_filter"] = event_filter
 
-        # Clear and refresh display with filtered events
-        self.events_tree.delete(*self.events_tree.get_children())
-        self._live_event_data.clear()
-
-        # Get ALL events from monitor and filter them for display
+        # Use virtualizer to re-filter + rebuild viewport
         monitor = self.monitor_state["monitor"]
-        all_events = monitor.get_recent_events(count=5000)  # Get last 5000 events
+        all_events = monitor.get_recent_events(count=50000)
 
-        for event in all_events:
-            # Apply current filter
-            if not event_filter.matches(event):
-                continue
+        self.virtualizer.set_data(all_events)
+        self.virtualizer.set_filter(self._build_filter_fn())
 
-            # Determine row highlighting
-            has_sigma = bool(event.get("sigma_matches"))
-            is_persistence = event.get("event_type") == "Persistence"
-            is_suspicious = event_filter.is_suspicious(event)
-            if has_sigma:
-                tags = ("sigma_match",)
-            elif is_persistence:
-                tags = ("persistence",)
-            elif is_suspicious:
-                tags = ("suspicious",)
-            else:
-                tags = ()
-
-            # Truncate long paths
-            path = event.get("path", "")
-            if len(str(path)) > 100:
-                path = str(path)[:97] + "..."
-
-            # Insert event
-            iid = self.events_tree.insert(
-                "", "end",
-                values=(
-                    event.get("timestamp", ""),
-                    event.get("pid", 0),
-                    event.get("process_name", "")[:20],
-                    event.get("event_type", ""),
-                    event.get("operation", ""),
-                    path,
-                    event.get("result", ""),
-                ),
-                tags=tags,
-            )
-            self._live_event_data[iid] = event
+        # Rebuild _live_event_data from visible rows
+        self._live_event_data = dict(self.virtualizer._iid_to_event)
 
         # Update process info panel
         self.update_process_info()
@@ -591,47 +1016,11 @@ class LiveEventsView(BaseView):
         event_filter.set_suspicious_only(False)
         self.monitor_state["current_filter"] = event_filter
 
-        # Clear and refresh display with ALL events
-        self.events_tree.delete(*self.events_tree.get_children())
-        self._live_event_data.clear()
+        # Use virtualizer to clear filter and rebuild
+        self.virtualizer.set_filter(None)
 
-        monitor = self.monitor_state["monitor"]
-        all_events = monitor.get_recent_events(count=5000)
-
-        for event in all_events:
-            # Determine row highlighting
-            has_sigma = bool(event.get("sigma_matches"))
-            is_persistence = event.get("event_type") == "Persistence"
-            is_suspicious = event_filter.is_suspicious(event)
-            if has_sigma:
-                tags = ("sigma_match",)
-            elif is_persistence:
-                tags = ("persistence",)
-            elif is_suspicious:
-                tags = ("suspicious",)
-            else:
-                tags = ()
-
-            # Truncate long paths
-            path = event.get("path", "")
-            if len(str(path)) > 100:
-                path = str(path)[:97] + "..."
-
-            # Insert event
-            iid = self.events_tree.insert(
-                "", "end",
-                values=(
-                    event.get("timestamp", ""),
-                    event.get("pid", 0),
-                    event.get("process_name", "")[:20],
-                    event.get("event_type", ""),
-                    event.get("operation", ""),
-                    path,
-                    event.get("result", ""),
-                ),
-                tags=tags,
-            )
-            self._live_event_data[iid] = event
+        # Rebuild _live_event_data from visible rows
+        self._live_event_data = dict(self.virtualizer._iid_to_event)
 
         # Hide process info panel
         self._process_info_panel.pack_forget()
@@ -653,21 +1042,21 @@ class LiveEventsView(BaseView):
 
                 try:
                     info_lines.append(f"Path:     {proc.exe()}")
-                except:
-                    info_lines.append(f"Path:     [Access Denied]")
+                except Exception:
+                    info_lines.append("Path:     [Access Denied]")
 
                 try:
                     cmdline = " ".join(proc.cmdline())
                     if cmdline:
                         info_lines.append(f"Command:  {cmdline[:80]}{'...' if len(cmdline) > 80 else ''}")
-                except:
+                except Exception:
                     pass
 
                 try:
                     parent = proc.parent()
                     if parent:
                         info_lines.append(f"Parent:   {parent.name()} (PID: {parent.pid})")
-                except:
+                except Exception:
                     pass
 
                 self._process_info_label.configure(text="\n".join(info_lines))
@@ -699,62 +1088,21 @@ class LiveEventsView(BaseView):
 
             self.monitor_state["current_filter"] = event_filter
 
-            # Clear and refresh display with filtered events
-            self.events_tree.delete(*self.events_tree.get_children())
-            self._live_event_data.clear()
+            # Use virtualizer to re-filter + rebuild viewport
+            self.virtualizer.set_filter(self._build_filter_fn())
 
-            # Get ALL events from monitor and filter them for display
-            monitor = self.monitor_state["monitor"]
-            all_events = monitor.get_recent_events(count=5000)
-
-            for event in all_events:
-                # Apply current filter
-                if not event_filter.matches(event):
-                    continue
-
-                # Determine row highlighting
-                has_sigma = bool(event.get("sigma_matches"))
-                is_persistence = event.get("event_type") == "Persistence"
-                is_suspicious = event_filter.is_suspicious(event)
-                if has_sigma:
-                    tags = ("sigma_match",)
-                elif is_persistence:
-                    tags = ("persistence",)
-                elif is_suspicious:
-                    tags = ("suspicious",)
-                else:
-                    tags = ()
-
-                # Truncate long paths
-                path = event.get("path", "")
-                if len(str(path)) > 100:
-                    path = str(path)[:97] + "..."
-
-                # Insert event
-                iid = self.events_tree.insert(
-                    "", "end",
-                    values=(
-                        event.get("timestamp", ""),
-                        event.get("pid", 0),
-                        event.get("process_name", "")[:20],
-                        event.get("event_type", ""),
-                        event.get("operation", ""),
-                        path,
-                        event.get("result", ""),
-                    ),
-                    tags=tags,
-                )
-                self._live_event_data[iid] = event
+            # Rebuild _live_event_data from visible rows
+            self._live_event_data = dict(self.virtualizer._iid_to_event)
 
             # Update process info panel
             self.update_process_info()
 
     # ------------------------------------------------------------------
-    # Event refresh (auto-refresh loop)
+    # Adaptive refresh (replaces fixed 500ms interval)
     # ------------------------------------------------------------------
 
-    def refresh_events(self):
-        """Refresh the events display (incremental updates)."""
+    def _adaptive_refresh(self):
+        """Adjust refresh rate based on event volume."""
         if not self.monitor_state["monitoring"] or not self.monitor_state["monitor"]:
             return
 
@@ -763,84 +1111,219 @@ class LiveEventsView(BaseView):
 
             # Get events since last update (incremental)
             new_events = monitor.get_events_since(self.monitor_state["last_update_time"])
+            pending = len(new_events)
 
-            # Add only new events to tree (incremental update for performance)
-            for event in new_events:
-                # Apply current filter to new events
-                if self.monitor_state["current_filter"] and not self.monitor_state["current_filter"].matches(event):
-                    continue
+            # Adaptive interval
+            if pending > 100:
+                interval = 200    # High volume - fast refresh
+            elif pending > 10:
+                interval = 500    # Medium volume
+            else:
+                interval = 1000   # Low volume - save CPU
 
-                # Determine row highlighting
-                has_sigma = bool(event.get("sigma_matches"))
-                is_persistence = event.get("event_type") == "Persistence"
-                is_suspicious = False
-                if self.monitor_state["current_filter"]:
-                    is_suspicious = self.monitor_state["current_filter"].is_suspicious(event)
-                if has_sigma:
-                    tags = ("sigma_match",)
-                elif is_persistence:
-                    tags = ("persistence",)
-                elif is_suspicious:
-                    tags = ("suspicious",)
-                else:
-                    tags = ()
+            if new_events:
+                # Use virtualizer for efficient append
+                self.virtualizer.append_events(new_events)
 
-                # Truncate long paths
-                path = event.get("path", "")
-                if len(str(path)) > 100:
-                    path = str(path)[:97] + "..."
+                # Sync _live_event_data with virtualizer's visible rows
+                self._live_event_data = dict(self.virtualizer._iid_to_event)
 
-                # Insert event
-                iid = self.events_tree.insert(
-                    "", "end",
-                    values=(
-                        event.get("timestamp", ""),
-                        event.get("pid", 0),
-                        event.get("process_name", "")[:20],
-                        event.get("event_type", ""),
-                        event.get("operation", ""),
-                        path,
-                        event.get("result", ""),
-                    ),
-                    tags=tags,
+                self.monitor_state["event_count"] += pending
+
+                # Update last update time
+                self.monitor_state["last_update_time"] = datetime.now()
+
+                # Update statistics (only when events arrived)
+                self._update_stats()
+
+                # Update density bar (throttled — only when events arrived)
+                self._density_bar.update(
+                    self.virtualizer.all_data,
+                    event_filter=self.monitor_state.get("current_filter"),
                 )
-                self._live_event_data[iid] = event
 
-                self.monitor_state["event_count"] += 1
-
-            # Limit tree size for performance (keep last 5000 events)
-            children = self.events_tree.get_children()
-            if len(children) > 5000:
-                for item in children[: len(children) - 5000]:
-                    self._live_event_data.pop(item, None)
-                    self.events_tree.delete(item)
-
-            # Update statistics
-            stats = monitor.get_stats()
-            sigma_count = stats.get("sigma_matches", 0)
-            persist_count = stats.get("persistence_events", 0)
-            sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
-            persist_text = f" | Persist: {persist_count}" if persist_count > 0 else ""
-            self.stats_label.configure(
-                text=f"Total: {stats['total_events']} | "
-                     f"File: {stats['file_events']} | "
-                     f"Registry: {stats['registry_events']} | "
-                     f"Network: {stats['network_events']} | "
-                     f"Process: {stats['process_events']} | "
-                     f"DNS: {stats.get('dns_events', 0)}"
-                     f"{persist_text}{sigma_text}"
+            # Schedule next refresh with adaptive interval
+            self.monitor_state["update_job"] = self.frame.after(
+                interval, self._adaptive_refresh
             )
-
-            # Update last update time
-            self.monitor_state["last_update_time"] = datetime.now()
-
-            # Schedule next refresh (500ms)
-            self.monitor_state["update_job"] = self.frame.after(500, self.refresh_events)
 
         except Exception as e:
             print(f"Error refreshing events: {e}")
             import traceback
             traceback.print_exc()
+
+    def _update_stats(self):
+        """Update the statistics label. Skips update if stats unchanged."""
+        if not self.monitor_state["monitor"]:
+            return
+
+        stats = self.monitor_state["monitor"].get_stats()
+
+        # Quick equality check to avoid unnecessary label reconfigure
+        if stats == self._last_stats:
+            return
+
+        self._last_stats = stats.copy()
+
+        sigma_count = stats.get("sigma_matches", 0)
+        persist_count = stats.get("persistence_events", 0)
+        sigma_text = f" | Sigma: {sigma_count}" if sigma_count > 0 else ""
+        persist_text = f" | Persist: {persist_count}" if persist_count > 0 else ""
+
+        text = (
+            f"Total: {stats['total_events']} | "
+            f"File: {stats['file_events']} | "
+            f"Registry: {stats['registry_events']} | "
+            f"Network: {stats['network_events']} | "
+            f"Process: {stats['process_events']} | "
+            f"DNS: {stats.get('dns_events', 0)}"
+            f"{persist_text}{sigma_text}"
+        )
+
+        self.stats_label.configure(text=text)
+
+    # ------------------------------------------------------------------
+    # Density bar click callback
+    # ------------------------------------------------------------------
+
+    def _on_density_click(self, timestamp_epoch):
+        """Scroll events to the region closest to the clicked timestamp."""
+        # Find the event in filtered_data closest to this timestamp
+        if not self.virtualizer.filtered_data:
+            return
+
+        target_dt = datetime.fromtimestamp(timestamp_epoch)
+        best_idx = 0
+        best_diff = float("inf")
+
+        for i, ev in enumerate(self.virtualizer.filtered_data):
+            ts = EventDensityBar._event_timestamp(ev)
+            if ts > 0:
+                diff = abs(ts - timestamp_epoch)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+
+        # Set offset and rebuild viewport around that index
+        self.virtualizer._auto_scroll = False
+        self.virtualizer._current_offset = best_idx
+        self.virtualizer._rebuild_viewport()
+        self._live_event_data = dict(self.virtualizer._iid_to_event)
+
+    # ------------------------------------------------------------------
+    # Bookmarking
+    # ------------------------------------------------------------------
+
+    def _bookmark_selected_event(self):
+        """Bookmark the currently selected event in the TreeView."""
+        selection = self.events_tree.selection()
+        if not selection:
+            return
+
+        iid = selection[0]
+        event = self.virtualizer.get_event_for_iid(iid)
+        if event is None:
+            event = self._live_event_data.get(iid)
+        if event is None:
+            return
+
+        # Avoid duplicate bookmarks (by identity)
+        if any(b is event for b in self._bookmarked_events):
+            return
+
+        self._bookmarked_events.append(event)
+
+        # Tag the row in the main tree
+        self.virtualizer.update_tags_for_iid(iid, ("bookmarked",))
+
+        # Add to bookmarks tree
+        path = event.get("path", "")
+        if len(str(path)) > 80:
+            path = str(path)[:77] + "..."
+
+        self._bookmarks_tree.insert(
+            "", "end",
+            values=(
+                event.get("timestamp", ""),
+                event.get("pid", 0),
+                event.get("process_name", "")[:20],
+                event.get("event_type", ""),
+                event.get("operation", ""),
+                path,
+            ),
+        )
+
+        # Update button label
+        self._update_bookmarks_label()
+
+    def _update_bookmarks_label(self):
+        """Refresh the bookmarks toggle button label."""
+        arrow = "\u25bc" if self._bookmarks_visible else "\u25b6"
+        self._bookmarks_toggle_btn.configure(
+            text=f"\u2b50 Bookmarks ({len(self._bookmarked_events)}) {arrow}"
+        )
+
+    def _toggle_bookmarks_panel(self):
+        """Show or hide the bookmarks panel."""
+        if self._bookmarks_visible:
+            self._bookmarks_panel.pack_forget()
+            self._bookmarks_visible = False
+        else:
+            # Pack before density bar
+            self._bookmarks_panel.pack(
+                fill="x", pady=(0, 2),
+                before=self._density_bar.canvas,
+            )
+            self._bookmarks_visible = True
+        self._update_bookmarks_label()
+
+    def _show_bookmark_detail(self):
+        """Show detail popup for a double-clicked bookmark."""
+        sel = self._bookmarks_tree.selection()
+        if not sel:
+            return
+        idx_str = self._bookmarks_tree.index(sel[0])
+        if 0 <= idx_str < len(self._bookmarked_events):
+            event = self._bookmarked_events[idx_str]
+            self._show_event_detail_popup(event)
+
+    def _export_bookmarks_csv(self):
+        """Export all bookmarked events to CSV."""
+        if not self._bookmarked_events:
+            messagebox.showinfo("No Bookmarks", "No events have been bookmarked yet.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"mad_bookmarked_events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        )
+
+        if filepath:
+            try:
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "Timestamp", "PID", "Process", "Event Type",
+                        "Operation", "Path", "Result", "Detail",
+                    ])
+                    for event in self._bookmarked_events:
+                        writer.writerow([
+                            event.get("time_full", event.get("timestamp", "")),
+                            event.get("pid", ""),
+                            event.get("process_name", ""),
+                            event.get("event_type", ""),
+                            event.get("operation", ""),
+                            event.get("path", ""),
+                            event.get("result", ""),
+                            event.get("detail", ""),
+                        ])
+                messagebox.showinfo(
+                    "Success",
+                    f"Exported {len(self._bookmarked_events)} bookmarked event(s) to:\n{filepath}",
+                )
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export bookmarks: {str(e)}")
 
     # ------------------------------------------------------------------
     # Export / clear
@@ -860,7 +1343,6 @@ class LiveEventsView(BaseView):
 
         if filepath:
             try:
-                import csv
                 monitor = self.monitor_state["monitor"]
                 events = monitor.get_recent_events(count=len(monitor.events))
 
@@ -891,11 +1373,15 @@ class LiveEventsView(BaseView):
         """Clear events display and stats."""
         if self.monitor_state["monitor"]:
             self.monitor_state["monitor"].clear_events()
-            self.events_tree.delete(*self.events_tree.get_children())
-            self.monitor_state["event_count"] = 0
-            self.stats_label.configure(
-                text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0"
-            )
+
+        self.virtualizer.clear()
+        self._live_event_data.clear()
+        self.monitor_state["event_count"] = 0
+        self._last_stats = None
+        self.stats_label.configure(
+            text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0"
+        )
+        self._density_bar.update([])
 
     # ------------------------------------------------------------------
     # Context menu actions
@@ -914,7 +1400,6 @@ class LiveEventsView(BaseView):
         self._pid_filter_entry.delete(0, tk.END)
         self._pid_filter_entry.insert(0, str(pid))
         self.apply_filters()
-        self.refresh_events()
 
     def copy_path_to_clipboard(self):
         """Copy event path to clipboard."""
@@ -933,7 +1418,10 @@ class LiveEventsView(BaseView):
         """Remove selected event from display."""
         selection = self.events_tree.selection()
         if selection:
-            self.events_tree.delete(selection[0])
+            iid = selection[0]
+            self.virtualizer._iid_to_event.pop(iid, None)
+            self._live_event_data.pop(iid, None)
+            self.events_tree.delete(iid)
 
     # ------------------------------------------------------------------
     # Event detail popup
@@ -945,10 +1433,15 @@ class LiveEventsView(BaseView):
         if not sel:
             return
         iid = sel[0]
-        event = self._live_event_data.get(iid)
+        event = self.virtualizer.get_event_for_iid(iid)
+        if event is None:
+            event = self._live_event_data.get(iid)
         if not event:
             return
+        self._show_event_detail_popup(event)
 
+    def _show_event_detail_popup(self, event):
+        """Show full details for an event in a popup window."""
         detail = ctk.CTkToplevel(self.root)
         detail.title(f"Event Detail: {event.get('operation', '')} - PID {event.get('pid', '')}")
         detail.geometry("720x500")
@@ -986,6 +1479,17 @@ class LiveEventsView(BaseView):
                 font=Fonts.body_bold,
                 text_color="#c084fc",
                 fg_color="#4c1d95",
+                corner_radius=6,
+            ).pack(padx=15, pady=(0, 5), anchor="w")
+
+        # Bookmark indicator
+        if any(b is event for b in self._bookmarked_events):
+            ctk.CTkLabel(
+                detail,
+                text="\u2b50 BOOKMARKED",
+                font=Fonts.body_bold,
+                text_color="#fde047",
+                fg_color="#854d0e",
                 corner_radius=6,
             ).pack(padx=15, pady=(0, 5), anchor="w")
 
@@ -1075,6 +1579,33 @@ class LiveEventsView(BaseView):
                 self.root.clipboard_clear(),
                 self.root.clipboard_append(str(event.get("path", ""))),
             ),
+        ).pack(side="left", padx=5)
+
+        # Bookmark button in detail popup
+        def _bm_from_popup():
+            if not any(b is event for b in self._bookmarked_events):
+                self._bookmarked_events.append(event)
+                self._update_bookmarks_label()
+                # Also add to bookmarks tree
+                path = event.get("path", "")
+                if len(str(path)) > 80:
+                    path = str(path)[:77] + "..."
+                self._bookmarks_tree.insert(
+                    "", "end",
+                    values=(
+                        event.get("timestamp", ""),
+                        event.get("pid", 0),
+                        event.get("process_name", "")[:20],
+                        event.get("event_type", ""),
+                        event.get("operation", ""),
+                        path,
+                    ),
+                )
+
+        ctk.CTkButton(
+            btn_frame, text="\u2b50 Bookmark", height=32, width=120,
+            fg_color="#854d0e", hover_color="#a16207",
+            command=_bm_from_popup,
         ).pack(side="left", padx=5)
 
         ctk.CTkButton(
@@ -1257,7 +1788,7 @@ class LiveEventsView(BaseView):
             hostname = socket.gethostbyaddr(ip_address)[0]
             self._hostname_cache[ip_address] = hostname
             return hostname
-        except:
+        except Exception:
             # If resolution fails, just use the IP
             self._hostname_cache[ip_address] = "-"
             return "-"
