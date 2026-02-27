@@ -1512,7 +1512,14 @@ class ProcessView(BaseView):
 
         def _worker():
             try:
-                extractor = self.app.process_monitor.memory_extractor
+                extractor = getattr(self.app.process_monitor, 'memory_extractor', None)
+                if not extractor:
+                    self.root.after(
+                        0,
+                        lambda: self._strings_status_lbl.configure(
+                            text="Memory extractor not available"),
+                    )
+                    return
                 result = extractor.extract_strings_from_memory(
                     pid=pid,
                     min_length=4,

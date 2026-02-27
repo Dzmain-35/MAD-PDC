@@ -1498,6 +1498,113 @@ class ForensicAnalysisGUI:
             self.hostname_cache[ip_address] = '-'
             return '-'
 
+    # ==================== SIGMA / LIVE EVENTS SUPPORT ====================
+
+    def on_sigma_match_detected(self, sigma_match, event_dict):
+        """Callback fired by SystemWideMonitor when a Sigma rule matches an event.
+
+        Shows a popup alert (rate-limited per rule) and updates the badge.
+        """
+        rule_title = sigma_match.rule.title
+        rule_level = sigma_match.rule.level
+
+        self.total_sigma_matches += 1
+
+        process_view = self.views.get("processes")
+        if process_view and hasattr(process_view, 'update_sigma_match_badge'):
+            self.root.after(0, process_view.update_sigma_match_badge)
+
+        # Rate-limit popups per rule title
+        count = self.sigma_popup_count_by_rule.get(rule_title, 0)
+        if count >= self.max_popups_per_rule:
+            return
+        self.sigma_popup_count_by_rule[rule_title] = count + 1
+
+        # Only show popups for high and critical
+        if rule_level not in ('high', 'critical'):
+            return
+
+        def show_sigma_alert():
+            alert = ctk.CTkToplevel(self.root)
+            alert.title("SIGMA Rule Match")
+            alert.geometry("600x450")
+            alert.minsize(500, 350)
+            alert.attributes('-topmost', True)
+
+            if rule_level == 'critical':
+                bg_color = self.colors["red_dark"]
+                header_text = "CRITICAL SIGMA DETECTION"
+            else:
+                bg_color = "#4c1d95"
+                header_text = "HIGH SIGMA DETECTION"
+
+            main_frame = ctk.CTkFrame(alert, fg_color=bg_color)
+            main_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+            ctk.CTkLabel(
+                main_frame, text=header_text,
+                font=Fonts.title_large, text_color="white"
+            ).pack(pady=(15, 10))
+
+            details_frame = ctk.CTkFrame(main_frame, fg_color="#1a1a1a", corner_radius=8)
+            details_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+            rule_info = sigma_match.rule
+            tags_str = ", ".join(rule_info.tags[:5]) if rule_info.tags else "None"
+
+            details_text = (
+                f"Rule: {rule_info.title}\n"
+                f"Level: {rule_info.level.upper()}\n"
+                f"Description: {rule_info.description}\n\n"
+                f"MITRE Tags: {tags_str}\n\n"
+                f"Event: {event_dict.get('operation', '')} | "
+                f"PID: {event_dict.get('pid', '')} | "
+                f"Process: {event_dict.get('process_name', '')}\n"
+                f"Path: {str(event_dict.get('path', ''))[:120]}"
+            )
+
+            ctk.CTkLabel(
+                details_frame, text=details_text,
+                font=Fonts.body, justify="left",
+                text_color="white", wraplength=550
+            ).pack(pady=15, padx=15, anchor="w")
+
+            ctk.CTkButton(
+                main_frame, text="Close", command=alert.destroy,
+                fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+                width=120, height=35
+            ).pack(pady=(5, 15))
+
+        self.root.after(0, show_sigma_alert)
+
+    def get_child_pids_recursive(self, parent_pid):
+        """Get all child PIDs recursively for a given parent PID."""
+        child_pids = set()
+        processes = self.process_monitor.get_all_processes()
+
+        children_map = {}
+        for proc in processes:
+            ppid = proc.get('ppid')
+            if ppid:
+                if ppid not in children_map:
+                    children_map[ppid] = []
+                children_map[ppid].append(proc['pid'])
+
+        def get_children(pid):
+            if pid in children_map:
+                for child_pid in children_map[pid]:
+                    child_pids.add(child_pid)
+                    get_children(child_pid)
+
+        get_children(parent_pid)
+        return child_pids
+
+    def refresh_iocs_display(self):
+        """Refresh the IOCs display by delegating to the CurrentCaseView."""
+        current_case_view = self.views.get("current_case")
+        if current_case_view and hasattr(current_case_view, 'refresh_iocs_display'):
+            current_case_view.refresh_iocs_display()
+
     # ==================== APPLICATION LIFECYCLE ====================
 
     def run(self):
