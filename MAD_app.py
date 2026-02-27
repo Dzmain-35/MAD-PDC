@@ -1295,6 +1295,57 @@ class ForensicAnalysisGUI:
 
     # ==================== SHARED UTILITIES ====================
 
+    def evaluate_process_sigma(self, proc):
+        """
+        Evaluate a process dict against Sigma process_creation rules.
+        Returns list of matching rule titles (cached by exe path).
+        """
+        if not self.sigma_evaluator:
+            return []
+
+        exe = proc.get('exe', '')
+        if not exe or exe == 'N/A':
+            return []
+
+        # Check cache first
+        if exe in self._process_sigma_cache:
+            return self._process_sigma_cache[exe]
+
+        # Build a Sigma-compatible event dict for process_creation (event_id=1)
+        event_dict = {
+            'Image': exe,
+            'CommandLine': proc.get('cmdline', exe),
+            'ParentImage': proc.get('parent_exe', ''),
+            'User': proc.get('username', ''),
+            'ProcessId': str(proc.get('pid', '')),
+        }
+
+        try:
+            matches = self.sigma_evaluator._evaluate(event_dict, event_id=1)
+            match_titles = [m.rule.title for m in matches]
+            self._process_sigma_cache[exe] = match_titles
+            return match_titles
+        except Exception:
+            self._process_sigma_cache[exe] = []
+            return []
+
+    def should_show_popup(self, rule_name):
+        """
+        Determine if a popup should be shown for this YARA rule.
+        Limits popups to max_popups_per_rule per rule family to reduce alert fatigue.
+        """
+        if not rule_name or rule_name == 'No_YARA_Hit':
+            return False
+
+        count = self.popup_count_by_rule.get(rule_name, 0)
+
+        if count < self.max_popups_per_rule:
+            self.popup_count_by_rule[rule_name] = count + 1
+            return True
+        else:
+            print(f"ℹ️  Popup suppressed for {rule_name} (limit: {self.max_popups_per_rule} per rule)")
+            return False
+
     def resolve_hostname(self, ip_address):
         """Resolve IP address to hostname with caching."""
         if ip_address in self.hostname_cache:
