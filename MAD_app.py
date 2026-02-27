@@ -410,8 +410,36 @@ class ForensicAnalysisGUI:
         self.root.bind("<Control-Shift-E>", lambda e: self._switch_to_analysis_subtab("live_events"))
         self.root.bind("<Control-Shift-N>", lambda e: self._switch_to_analysis_subtab("network"))
 
+        # Process view shortcuts (only active when process view is shown)
+        self.root.bind("<Control-s>", lambda e: self._dispatch_to_active_view("scan_selected"))
+        self.root.bind("<Control-d>", lambda e: self._dispatch_to_active_view("view_details"))
+        self.root.bind("<Delete>", lambda e: self._dispatch_to_active_view("kill_selected"))
+
+    def _dispatch_to_active_view(self, action):
+        """Route keyboard actions to the currently visible view's methods.
+
+        Only dispatches process-specific actions when the process view is active.
+        """
+        # Process-specific actions only when process view is shown
+        if self.active_tab == "analysis" and self.active_analysis_subtab == "processes":
+            process_view = self.views.get("processes")
+            if process_view:
+                action_map = {
+                    "scan_selected": "scan_selected_process",
+                    "view_details": "view_process_details_and_strings",
+                    "kill_selected": "kill_selected_process",
+                }
+                method_name = action_map.get(action)
+                if method_name and hasattr(process_view, method_name):
+                    getattr(process_view, method_name)()
+                    return
+
+        # Generic refresh action works on any view
+        if action == "refresh":
+            self._refresh_current_view()
+
     def _refresh_current_view(self):
-        """Refresh the currently active view."""
+        """Refresh the currently active view by calling on_activate()."""
         if self.active_tab == "analysis":
             subtab = self.active_analysis_subtab
             if subtab and subtab in self.views:
@@ -420,8 +448,14 @@ class ForensicAnalysisGUI:
             self.views[self.active_tab].on_activate()
 
     def _handle_escape(self):
-        """Handle escape key — close popups, collapse panels."""
-        pass  # Views handle their own escape behavior
+        """Handle escape key — close any open CTkToplevel windows."""
+        # Iterate over all toplevel windows and destroy CTkToplevel instances
+        for widget in self.root.winfo_children():
+            if isinstance(widget, ctk.CTkToplevel):
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
 
     def _switch_to_analysis_subtab(self, subtab_name):
         """Switch to analysis tab and show a specific subtab."""
