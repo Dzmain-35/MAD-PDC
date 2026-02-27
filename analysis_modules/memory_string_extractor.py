@@ -315,19 +315,11 @@ class MemoryStringExtractor:
                             regions_read += 1
                             result['total_bytes_scanned'] += len(memory_data)
 
-                            # Extract strings from memory data (for backward compatibility)
-                            self._extract_strings_from_buffer(
-                                memory_data,
-                                result['strings'],
-                                min_length,
-                                include_unicode,
-                                enable_quality_filter
-                            )
-
-                            # NEW: Extract strings for this specific region (Process Hacker style)
                             # Handle None for BaseAddress (represents address 0 in ctypes)
                             region_base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
+
                             if return_offsets:
+                                # Offset mode: only do the offset extraction (skip redundant legacy scan)
                                 region_strings = self._extract_strings_from_buffer_with_offsets(
                                     memory_data,
                                     region_base_addr,
@@ -335,19 +327,26 @@ class MemoryStringExtractor:
                                     include_unicode,
                                     enable_quality_filter
                                 )
+                                # Back-fill the legacy strings dict from offset results
+                                for _offset, s, enc in region_strings:
+                                    cat = 'unicode' if enc == 'unicode' else 'ascii'
+                                    result['strings'][cat].add(s)
+                                    result['string_frequency'][s] += 1
                             else:
+                                # Legacy mode: populate both the flat dict and per-region list
+                                self._extract_strings_from_buffer(
+                                    memory_data,
+                                    result['strings'],
+                                    min_length,
+                                    include_unicode,
+                                    enable_quality_filter
+                                )
                                 region_strings = self._extract_strings_from_buffer_simple(
                                     memory_data,
                                     min_length,
                                     include_unicode,
                                     enable_quality_filter
                                 )
-
-                            # Update string frequency tracking
-                            if return_offsets:
-                                for _offset, s, _enc in region_strings:
-                                    result['string_frequency'][s] += 1
-                            else:
                                 for s in region_strings:
                                     result['string_frequency'][s] += 1
 
@@ -358,6 +357,10 @@ class MemoryStringExtractor:
                                     'strings': region_strings,
                                     'string_count': len(region_strings)
                                 })
+
+                            # Yield GIL periodically so GUI thread can run
+                            if regions_read % 3 == 0:
+                                time.sleep(0)
 
                             # Progressive callback for UI updates
                             total_strings = sum(len(s) for s in result['strings'].values())

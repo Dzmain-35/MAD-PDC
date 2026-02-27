@@ -1523,11 +1523,11 @@ class ProcessView(BaseView):
                 result = extractor.extract_strings_from_memory(
                     pid=pid,
                     min_length=4,
-                    max_strings=500000,
+                    max_strings=5000,
                     include_unicode=True,
                     enable_quality_filter=True,
                     scan_mode="quick",
-                    return_offsets=True,
+                    return_offsets=False,
                 )
                 self._strings_cache[pid] = (time.time(), result)
                 self.root.after(0, lambda: self._on_strings_loaded(pid, result))

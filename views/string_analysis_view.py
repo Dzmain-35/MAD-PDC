@@ -577,7 +577,7 @@ class StringAnalysisPanel:
                 result = extractor.extract_strings_from_memory(
                     pid=pid,
                     min_length=4,
-                    max_strings=500000,
+                    max_strings=20000,
                     include_unicode=True,
                     enable_quality_filter=True,
                     scan_mode=scan_mode,
