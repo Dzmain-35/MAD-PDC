@@ -3173,6 +3173,7 @@ class ForensicAnalysisGUI:
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
+                "infection_type": "file",
                 "network_case_path": network_case_path,
                 "files": [],
                 "total_threats": 0,
@@ -3285,6 +3286,9 @@ class ForensicAnalysisGUI:
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
+                "infection_type": "url",
+                "download_region": region,
+                "analyst_location": {},
                 "network_case_path": network_case_path,
                 "files": [],
                 "total_threats": 0,
@@ -3326,6 +3330,17 @@ class ForensicAnalysisGUI:
                     # Check current VPN location before downloading
                     self.root.after(0, self.update_progress, 0, len(urls), "Checking VPN location...")
                     loc = retriever.check_current_location()
+
+                    # Store analyst location in case data
+                    if not loc.get("error"):
+                        case_data["analyst_location"] = {
+                            "ip": loc["ip"],
+                            "city": loc["city"],
+                            "country": loc["country"],
+                            "timezone": loc["timezone"],
+                            "vpn_match": loc["match"],
+                        }
+
                     if loc["error"]:
                         print(f"VPN location check: {loc['error']}")
                     elif not loc["match"]:
@@ -4211,28 +4226,51 @@ class ForensicAnalysisGUI:
         for widget in self.case_info_frame.winfo_children():
             widget.destroy()
         
-        # Use Analyst Name and Report URL instead of Case ID and Created
+        # Build details list — base fields always shown
+        infection_type = self.current_case.get("infection_type", "N/A")
         details = [
             ("Analyst Name:", self.current_case.get("analyst_name", "N/A")),
             ("Report URL:", self.current_case.get("report_url", "N/A")),
+            ("Infection Type:", infection_type.upper() if infection_type != "N/A" else "N/A"),
             ("Files:", str(len(self.current_case["files"]))),
-            ("Threats:", str(self.current_case["total_threats"]))
+            ("Threats:", str(self.current_case["total_threats"])),
         ]
-        
+
+        # Add analyst location if available (URL cases with VPN check)
+        analyst_loc = self.current_case.get("analyst_location", {})
+        if analyst_loc and analyst_loc.get("ip"):
+            loc_str = f"{analyst_loc.get('city', '?')}, {analyst_loc.get('country', '?')}"
+            details.append(("Analyst Location:", loc_str))
+            details.append(("Analyst IP:", analyst_loc.get("ip", "N/A")))
+            vpn_status = "Match" if analyst_loc.get("vpn_match") else "Mismatch"
+            details.append(("VPN Status:", vpn_status))
+
+        # Add download region for URL cases
+        download_region = self.current_case.get("download_region")
+        if download_region:
+            from analysis_modules.url_grabber import PIA_SERVER_MAP
+            region_display = PIA_SERVER_MAP.get(download_region, download_region)
+            details.append(("Download Region:", region_display))
+
         for i, (label, value) in enumerate(details):
             row = i // 2
             col = i % 2
-            
+
             detail_frame = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
             detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
-            
-            lbl = ctk.CTkLabel(detail_frame, text=label, 
+
+            lbl = ctk.CTkLabel(detail_frame, text=label,
                               text_color="gray60", font=Fonts.helper)
             lbl.pack(anchor="w")
-            
+
+            # Highlight VPN mismatch in red
+            val_color = "white"
+            if label == "VPN Status:" and value == "Mismatch":
+                val_color = "#ff4444"
+
             val = ctk.CTkLabel(detail_frame, text=value,
                               font=Fonts.body_bold,
-                              text_color="white")
+                              text_color=val_color)
             val.pack(anchor="w")
         
         # Clear and rebuild files list
