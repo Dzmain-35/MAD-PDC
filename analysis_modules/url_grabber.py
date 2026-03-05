@@ -462,6 +462,76 @@ class MalwareRetriever:
         if url and url not in self._visited_urls:
             self._visited_urls.append(url)
 
+    def check_current_location(self) -> dict:
+        """
+        Query external IP geolocation to determine the current VPN exit location.
+        Compares against the target region to detect mismatches.
+
+        Returns:
+            Dictionary with:
+                - ip (str): Current external IP
+                - country (str): Country name
+                - city (str): City name
+                - timezone (str): Detected timezone (e.g. America/New_York)
+                - target_timezone (str): Expected timezone for the selected region
+                - match (bool): Whether detected timezone matches the target
+                - pia_server (str): Which PIA server they should be on
+                - error (str|None): Error message if lookup failed
+        """
+        target_profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])
+        target_tz = target_profile["n"]
+        pia_server = PIA_SERVER_MAP.get(self._region, "US East")
+
+        result = {
+            "ip": "unknown",
+            "country": "unknown",
+            "city": "unknown",
+            "timezone": "unknown",
+            "target_timezone": target_tz,
+            "match": False,
+            "pia_server": pia_server,
+            "error": None,
+        }
+
+        # Try ip-api.com first (no key required, returns timezone)
+        for api_url in [
+            "http://ip-api.com/json/?fields=query,country,city,timezone,status",
+            "https://ipinfo.io/json",
+        ]:
+            try:
+                r = requests.get(api_url, timeout=5)
+                r.raise_for_status()
+                data = r.json()
+
+                if "ip-api" in api_url:
+                    if data.get("status") != "success":
+                        continue
+                    result["ip"] = data.get("query", "unknown")
+                    result["country"] = data.get("country", "unknown")
+                    result["city"] = data.get("city", "unknown")
+                    result["timezone"] = data.get("timezone", "unknown")
+                else:
+                    # ipinfo.io format
+                    result["ip"] = data.get("ip", "unknown")
+                    result["country"] = data.get("country", "unknown")
+                    result["city"] = data.get("city", "unknown")
+                    result["timezone"] = data.get("timezone", "unknown")
+
+                result["match"] = result["timezone"] == target_tz
+                log.info("Current location: %s, %s (tz=%s, ip=%s) — target: %s — %s",
+                         result["city"], result["country"], result["timezone"],
+                         result["ip"], target_tz,
+                         "MATCH" if result["match"] else "MISMATCH")
+                return result
+
+            except Exception as e:
+                log.debug("Geo-IP lookup failed for %s: %s", api_url, e)
+                continue
+
+        result["error"] = "Could not determine current location (geo-IP lookup failed)"
+        log.warning(result["error"])
+        return result
+
     def get_region_info(self) -> dict:
         """Return region profile info for VPN recommendation."""
         profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])

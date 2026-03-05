@@ -3322,6 +3322,50 @@ class ForensicAnalysisGUI:
                     )
                     print(f"URL Grabber initialized: region={region_info['region']}, "
                           f"tz={region_info['timezone']}, offset={region_info['utc_offset_minutes']}")
+
+                    # Check current VPN location before downloading
+                    self.root.after(0, self.update_progress, 0, len(urls), "Checking VPN location...")
+                    loc = retriever.check_current_location()
+                    if loc["error"]:
+                        print(f"VPN location check: {loc['error']}")
+                    elif not loc["match"]:
+                        # Mismatch — warn analyst and let them decide
+                        proceed_result = [None]
+
+                        def show_vpn_mismatch():
+                            result = messagebox.askyesno(
+                                "VPN Location Mismatch",
+                                f"Your current IP location does not match the target region.\n\n"
+                                f"Current location:\n"
+                                f"  IP: {loc['ip']}\n"
+                                f"  Location: {loc['city']}, {loc['country']}\n"
+                                f"  Timezone: {loc['timezone']}\n\n"
+                                f"Target region:\n"
+                                f"  PIA Server: {loc['pia_server']}\n"
+                                f"  Timezone: {loc['target_timezone']}\n\n"
+                                f"Connect PIA to \"{loc['pia_server']}\" on the Linux host.\n\n"
+                                f"Continue downloading anyway?"
+                            )
+                            proceed_result[0] = result
+
+                        self.root.after(0, show_vpn_mismatch)
+
+                        import time
+                        while proceed_result[0] is None:
+                            time.sleep(0.1)
+
+                        if not proceed_result[0]:
+                            # User chose not to continue
+                            self.root.after(0, self.close_progress_window)
+                            self.root.after(0, lambda: self.new_case_status.configure(
+                                text="Cancelled — connect PIA to the correct region and try again"
+                            ))
+                            self.scan_in_progress = False
+                            return
+                    else:
+                        print(f"VPN location check: OK — {loc['city']}, {loc['country']} "
+                              f"(tz={loc['timezone']}) matches target {loc['target_timezone']}")
+
                 except Exception as e:
                     print(f"Warning: Could not initialize MalwareRetriever: {e}")
                     retriever = None
