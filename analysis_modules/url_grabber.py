@@ -146,6 +146,8 @@ class MalwareRetriever:
         self._fingerprint = build_fingerprint(region)
         # Track files saved during a retrieve() call
         self._retrieved_files: list[dict] = []
+        # Track all URLs encountered during retrieval (for IOCs)
+        self._visited_urls: list[str] = []
         log.info("Region profile: %s (tz=%s, offset=%d)", region,
                  self._fingerprint["n"], self._fingerprint["d"])
 
@@ -233,6 +235,7 @@ class MalwareRetriever:
 
     def _download_direct(self, url: str) -> bool:
         log.info("Direct download: %s", url)
+        self._track_url(url)
         try:
             r = self._session.get(url, stream=True, timeout=60)
             r.raise_for_status()
@@ -256,6 +259,7 @@ class MalwareRetriever:
         Returns the response body on success, None on failure.
         """
         log.info("Submitting fingerprint gate POST to: %s", url)
+        self._track_url(url)
         post_headers = {
             **HEADERS,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -283,6 +287,7 @@ class MalwareRetriever:
             if location:
                 follow_url = urljoin(url, location)
                 log.info("Gate redirected to: %s", follow_url)
+                self._track_url(follow_url)
                 f = self._session.get(follow_url, timeout=60, stream=True, allow_redirects=True)
                 f.raise_for_status()
                 log.debug("Follow response headers: %s", dict(f.headers))
@@ -306,12 +311,17 @@ class MalwareRetriever:
             return False
 
         log.info("Fetching [depth=%d]: %s", depth, url)
+        self._track_url(url)
         try:
             r = self._session.get(url, timeout=30)
             r.raise_for_status()
         except requests.RequestException as e:
             log.warning("Fetch failed: %s", e)
             return False
+
+        # Track the final URL after any HTTP redirects
+        if r.url != url:
+            self._track_url(r.url)
 
         ct = r.headers.get("content-type", "").split(";")[0].strip()
         log.debug("ct=%s len=%d url=%s", ct, len(r.content), r.url)
@@ -364,6 +374,7 @@ class MalwareRetriever:
 
     def _try_playwright(self, url: str) -> bool:
         log.info("Falling back to Playwright for: %s", url)
+        self._track_url(url)
         captured: list[tuple[bytes, str]] = []
 
         def handle_response(response):
@@ -371,6 +382,7 @@ class MalwareRetriever:
             cd = response.headers.get("content-disposition", "")
             cl = response.headers.get("content-length", "?")
             log.debug("RESPONSE ct=%-40s cd=%-30s len=%-8s %s", ct, cd, cl, response.url)
+            self._track_url(response.url)
             if ct not in BINARY_CONTENT_TYPES:
                 return
             try:
@@ -383,6 +395,7 @@ class MalwareRetriever:
 
         def handle_download(download):
             log.info("Download event: %s -> %s", download.url, download.suggested_filename)
+            self._track_url(download.url)
             try:
                 tmp = download.path()
                 if tmp is None:
@@ -431,6 +444,11 @@ class MalwareRetriever:
             self.save_payload(data, src_url)
         return bool(captured)
 
+    def _track_url(self, url: str) -> None:
+        """Record a URL encountered during retrieval (for IOC extraction)."""
+        if url and url not in self._visited_urls:
+            self._visited_urls.append(url)
+
     def get_region_info(self) -> dict:
         """Return region profile info for VPN recommendation."""
         profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])
@@ -453,6 +471,7 @@ class MalwareRetriever:
                 - url (str): The original URL
         """
         self._retrieved_files = []
+        self._visited_urls = []
         log.info("Opening: %s", url)
         if not self._fetch_and_parse(url):
             if not self._try_playwright(url):
@@ -463,6 +482,7 @@ class MalwareRetriever:
             "files": list(self._retrieved_files),
             "region_info": self.get_region_info(),
             "url": url,
+            "visited_urls": list(self._visited_urls),
         }
 
 

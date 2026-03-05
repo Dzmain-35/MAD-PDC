@@ -5,6 +5,7 @@ from datetime import datetime
 from case_manager import CaseManager
 from PIL import Image
 import os
+import shutil
 import socket
 import threading
 import subprocess
@@ -3348,7 +3349,13 @@ class ForensicAnalysisGUI:
                             for f_entry in result["files"]:
                                 retrieved_file_paths.append(f_entry["path"])
                             print(f"MalwareRetriever captured {len(result['files'])} payload(s) from {url}")
-                        else:
+
+                        # Add all visited URLs to case IOCs regardless of success
+                        for visited_url in result.get("visited_urls", []):
+                            self.case_manager.add_ioc("urls", visited_url)
+                            print(f"Added IOC URL: {visited_url}")
+
+                        if not success:
                             error = "MalwareRetriever found no payloads, falling back to basic download"
                             print(error)
                     except Exception as e:
@@ -3361,6 +3368,8 @@ class ForensicAnalysisGUI:
                     if basic_success:
                         success = True
                         retrieved_file_paths = [file_path]
+                        # Add the source URL as IOC for basic downloads too
+                        self.case_manager.add_ioc("urls", url)
                     else:
                         error = basic_error
 
@@ -3552,6 +3561,9 @@ class ForensicAnalysisGUI:
             self.root.after(0, lambda: self.report_url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.show_tab("current_case"))
+
+            # Refresh IOCs display so URL IOCs are visible
+            self.root.after(100, self.refresh_iocs_display)
 
         except Exception as e:
             self.root.after(0, self.close_progress_window)
