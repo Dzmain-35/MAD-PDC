@@ -77,6 +77,19 @@ REGION_PROFILES = {
     "ec":        {"d": -300, "n": "America/Guayaquil"},
 }
 
+# PIA (Private Internet Access) VPN server names matching each region profile.
+# These are the server location names as they appear in the PIA client.
+PIA_SERVER_MAP = {
+    "us-east":   "US East",
+    "br":        "Brazil",
+    "mx":        "Mexico",
+    "ar":        "Argentina",
+    "co":        "Colombia",
+    "cl":        "Chile",
+    "pe":        "Peru",
+    "ec":        "Ecuador",
+}
+
 
 def build_fingerprint(region: str) -> dict:
     profile = REGION_PROFILES.get(region, REGION_PROFILES["us-east"])
@@ -456,6 +469,7 @@ class MalwareRetriever:
             "region": self._region,
             "timezone": profile["n"],
             "utc_offset_minutes": profile["d"],
+            "pia_server": PIA_SERVER_MAP.get(self._region, "US East"),
             "fingerprint": self._fingerprint,
         }
 

@@ -3312,12 +3312,13 @@ class ForensicAnalysisGUI:
                 try:
                     retriever = MalwareRetriever(region=region, download_dir=files_dir)
                     region_info = retriever.get_region_info()
+                    pia_server = region_info['pia_server']
                     vpn_recommendation = (
-                        f"Region: {region_info['region']}\n"
+                        f"PIA Server: {pia_server}\n"
                         f"Timezone: {region_info['timezone']}\n"
                         f"UTC offset: {region_info['utc_offset_minutes']} minutes\n\n"
-                        f"Connect your VPN to a {region_info['region'].upper()} exit node "
-                        f"({region_info['timezone']}) before detonating the sample."
+                        f"Connect PIA to \"{pia_server}\" on the Linux host "
+                        f"before detonating the sample in the VM."
                     )
                     print(f"URL Grabber initialized: region={region_info['region']}, "
                           f"tz={region_info['timezone']}, offset={region_info['utc_offset_minutes']}")
@@ -3552,8 +3553,8 @@ class ForensicAnalysisGUI:
             # Show VPN info dialog separately for visibility
             if vpn_recommendation and files_processed > 0:
                 self.root.after(500, lambda: messagebox.showinfo(
-                    "VPN Location Recommendation",
-                    f"Based on the gate payload fingerprint:\n\n{vpn_recommendation}"
+                    "PIA VPN Location",
+                    f"Set PIA on the Linux host before detonating:\n\n{vpn_recommendation}"
                 ))
 
             # Clear form and switch tabs
