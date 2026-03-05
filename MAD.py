@@ -3446,14 +3446,23 @@ class ForensicAnalysisGUI:
                     # Download failed - prompt user for action
                     failed_downloads.append(f"{url}: {error}")
 
-                    # Show error dialog with retry/upload options (on main thread)
+                    # Show error dialog with VPN hint and retry/upload options (on main thread)
                     retry_result = [None]  # Use list to capture result from lambda
+
+                    vpn_hint = ""
+                    if vpn_recommendation:
+                        vpn_hint = (
+                            f"\n--- PIA VPN Check ---\n{vpn_recommendation}\n\n"
+                            "The download may have failed because PIA is not "
+                            "connected to the correct region.\n\n"
+                        )
 
                     def show_download_error():
                         result = messagebox.askretrycancel(
                             "Download Failed",
                             f"Failed to download file from URL:\n{url[:80]}...\n\n"
                             f"Error: {error}\n\n"
+                            f"{vpn_hint}"
                             "Click 'Retry' to try again, or 'Cancel' to skip this file.\n"
                             "You can also upload files manually from the 'New Case' tab."
                         )
