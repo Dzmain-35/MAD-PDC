@@ -137,11 +137,15 @@ def _detect_extension(data: bytes) -> str:
 
 
 class MalwareRetriever:
-    def __init__(self, region: str = "us-east"):
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    def __init__(self, region: str = "us-east", download_dir: str | None = None):
+        self.download_dir = download_dir or DOWNLOAD_DIR
+        os.makedirs(self.download_dir, exist_ok=True)
         self._seen: set[str] = set()
         self._session = make_session()
+        self._region = region
         self._fingerprint = build_fingerprint(region)
+        # Track files saved during a retrieve() call
+        self._retrieved_files: list[dict] = []
         log.info("Region profile: %s (tz=%s, offset=%d)", region,
                  self._fingerprint["n"], self._fingerprint["d"])
 
@@ -172,16 +176,16 @@ class MalwareRetriever:
         with open(LOG_FILE, "w") as f:
             json.dump(logs, f, indent=2)
 
-    def save_payload(self, data: bytes, url: str) -> None:
+    def save_payload(self, data: bytes, url: str) -> dict | None:
         md5, sha256 = self._hash_bytes(data)
         if sha256 in self._seen:
             log.info("Skipping duplicate payload: %s", sha256[:16])
-            return
+            return None
         self._seen.add(sha256)
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         ext = _detect_extension(data)
         filename = f"sample_{timestamp}_{sha256[:8]}{ext}"
-        path = os.path.join(DOWNLOAD_DIR, filename)
+        path = os.path.join(self.download_dir, filename)
         with open(path, "wb") as f:
             f.write(data)
         imphash = self._imphash(path)
@@ -195,11 +199,13 @@ class MalwareRetriever:
             "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         }
         self._append_log(entry)
+        self._retrieved_files.append(entry)
         log.info("Payload saved : %s", path)
         log.info("SHA256        : %s", sha256)
         log.info("MD5           : %s", md5)
         if imphash:
             log.info("Imphash       : %s", imphash)
+        return entry
 
     def _extract_js_redirects(self, html: str, base_url: str) -> list[str]:
         targets = []
@@ -425,12 +431,39 @@ class MalwareRetriever:
             self.save_payload(data, src_url)
         return bool(captured)
 
-    def retrieve(self, url: str) -> None:
+    def get_region_info(self) -> dict:
+        """Return region profile info for VPN recommendation."""
+        profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])
+        return {
+            "region": self._region,
+            "timezone": profile["n"],
+            "utc_offset_minutes": profile["d"],
+            "fingerprint": self._fingerprint,
+        }
+
+    def retrieve(self, url: str) -> dict:
+        """
+        Retrieve malware sample from URL.
+
+        Returns:
+            Dictionary with keys:
+                - success (bool): Whether any payloads were captured
+                - files (list[dict]): List of saved file entries (path, md5, sha256, etc.)
+                - region_info (dict): Region/timezone profile used (for VPN recommendation)
+                - url (str): The original URL
+        """
+        self._retrieved_files = []
         log.info("Opening: %s", url)
-        if self._fetch_and_parse(url):
-            return
-        if not self._try_playwright(url):
-            log.warning("No binary payloads detected from either strategy")
+        if not self._fetch_and_parse(url):
+            if not self._try_playwright(url):
+                log.warning("No binary payloads detected from either strategy")
+
+        return {
+            "success": len(self._retrieved_files) > 0,
+            "files": list(self._retrieved_files),
+            "region_info": self.get_region_info(),
+            "url": url,
+        }
 
 
 def main():
