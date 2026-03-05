@@ -4226,9 +4226,9 @@ class ForensicAnalysisGUI:
         for widget in self.case_info_frame.winfo_children():
             widget.destroy()
         
-        # Build details list — base fields always shown
+        # Build details — split into left (case info) and right (location/VPN) columns
         infection_type = self.current_case.get("infection_type", "N/A")
-        details = [
+        left_details = [
             ("Analyst Name:", self.current_case.get("analyst_name", "N/A")),
             ("Report URL:", self.current_case.get("report_url", "N/A")),
             ("Infection Type:", infection_type.upper() if infection_type != "N/A" else "N/A"),
@@ -4236,42 +4236,78 @@ class ForensicAnalysisGUI:
             ("Threats:", str(self.current_case["total_threats"])),
         ]
 
+        right_details = []
+
         # Add analyst location if available (URL cases with VPN check)
         analyst_loc = self.current_case.get("analyst_location", {})
         if analyst_loc and analyst_loc.get("ip"):
             loc_str = f"{analyst_loc.get('city', '?')}, {analyst_loc.get('country', '?')}"
-            details.append(("Analyst Location:", loc_str))
-            details.append(("Analyst IP:", analyst_loc.get("ip", "N/A")))
             vpn_status = "Match" if analyst_loc.get("vpn_match") else "Mismatch"
-            details.append(("VPN Status:", vpn_status))
+            right_details.append(("Analyst Location:", loc_str))
+            right_details.append(("Analyst IP:", analyst_loc.get("ip", "N/A")))
+            right_details.append(("VPN Status:", vpn_status))
 
         # Add download region for URL cases
         download_region = self.current_case.get("download_region")
         if download_region:
             from analysis_modules.url_grabber import PIA_SERVER_MAP
             region_display = PIA_SERVER_MAP.get(download_region, download_region)
-            details.append(("Download Region:", region_display))
+            right_details.append(("Download Region:", region_display))
 
-        for i, (label, value) in enumerate(details):
+        # Configure case_info_frame as a two-panel layout
+        self.case_info_frame.columnconfigure(0, weight=1)
+        self.case_info_frame.columnconfigure(1, weight=0)
+        self.case_info_frame.columnconfigure(2, weight=1)
+
+        # Left panel — case info (2-column grid within)
+        left_panel = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+        left_panel.grid(row=0, column=0, sticky="nsew")
+
+        for i, (label, value) in enumerate(left_details):
             row = i // 2
             col = i % 2
 
-            detail_frame = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+            detail_frame = ctk.CTkFrame(left_panel, fg_color="transparent")
             detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
 
             lbl = ctk.CTkLabel(detail_frame, text=label,
                               text_color="gray60", font=Fonts.helper)
             lbl.pack(anchor="w")
 
-            # Highlight VPN mismatch in red
-            val_color = "white"
-            if label == "VPN Status:" and value == "Mismatch":
-                val_color = "#ff4444"
-
             val = ctk.CTkLabel(detail_frame, text=value,
                               font=Fonts.body_bold,
-                              text_color=val_color)
+                              text_color="white")
             val.pack(anchor="w")
+
+        # Right panel — location/VPN info (only if there are details)
+        if right_details:
+            # Vertical separator
+            sep = ctk.CTkFrame(self.case_info_frame, fg_color="gray40", width=1)
+            sep.grid(row=0, column=1, sticky="ns", padx=10, pady=5)
+
+            right_panel = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+            right_panel.grid(row=0, column=2, sticky="nsew")
+
+            for i, (label, value) in enumerate(right_details):
+                row = i // 2
+                col = i % 2
+
+                detail_frame = ctk.CTkFrame(right_panel, fg_color="transparent")
+                detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
+
+                lbl = ctk.CTkLabel(detail_frame, text=label,
+                                  text_color="gray60", font=Fonts.helper)
+                lbl.pack(anchor="w")
+
+                # Highlight VPN mismatch in red
+                val_color = "white"
+                if label == "VPN Status:" and value == "Mismatch":
+                    val_color = "#ff4444"
+
+                val = ctk.CTkLabel(detail_frame, text=value,
+                                  font=Fonts.body_bold,
+                                  text_color=val_color)
+                val.pack(anchor="w")
         
         # Clear and rebuild files list
         for widget in self.files_list_frame.winfo_children():
