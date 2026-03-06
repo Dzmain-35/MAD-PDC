@@ -3476,6 +3476,26 @@ class ForensicAnalysisGUI:
                         else:
                             expanded_files.append(file_path)
 
+                    # Filter to only allowed file extensions
+                    ALLOWED_EXTENSIONS = {
+                        ".exe", ".zip", ".dll", ".lzh", ".rar", ".tar",
+                        ".png", ".jpg", ".html", ".msi", ".img", ".7z",
+                        ".gif", ".scr", ".py", ".ps1", ".vbs", ".vba", ".js",
+                    }
+                    filtered_files = []
+                    for fp in expanded_files:
+                        ext = os.path.splitext(fp)[1].lower()
+                        if ext in ALLOWED_EXTENSIONS:
+                            filtered_files.append(fp)
+                        else:
+                            print(f"Skipping file with disallowed extension: {os.path.basename(fp)} ({ext})")
+                            try:
+                                if os.path.exists(fp) and files_dir not in os.path.abspath(fp):
+                                    os.remove(fp)
+                            except:
+                                pass
+                    expanded_files = filtered_files
+
                     # Process each file (either the downloaded file or extracted files)
                     for j, process_file_path in enumerate(expanded_files):
                         filename = os.path.basename(process_file_path)
