@@ -56,13 +56,31 @@ class ForensicAnalysisGUI:
         self._is_large_screen = screen_w >= 1920
         self._sidebar_width = 220 if self._is_large_screen else 160
 
-        # Color scheme
+        # Color scheme — professional cybersecurity dashboard palette
         self.colors = {
-            "dark_blue": "#1a2332",
-            "navy": "#0d1520",
-            "red": "#dc2626",
-            "red_dark": "#991b1b",
-            "sidebar_bg": "#991b1b"
+            # Core backgrounds
+            "dark_blue": "#0d1117",       # Main content/tab background
+            "navy": "#162033",            # Hover & input field background
+            # Threat/alert accents (red kept for malware indicators)
+            "red": "#ef4444",
+            "red_dark": "#dc2626",
+            # Layout chrome
+            "sidebar_bg": "#0b0f1a",      # Sidebar background (dark professional)
+            "header_bg": "#060a12",       # Header bar background
+            "header_border": "#00d4ff",   # Header bottom accent line
+            # Extended palette
+            "accent": "#00d4ff",          # Cyan primary accent (active, highlights)
+            "accent_hover": "#38e8ff",    # Cyan hover
+            "accent_active_bg": "#0e2040",# Active nav button background
+            "surface": "#111827",         # Card/panel surface
+            "surface_elevated": "#1a2438",# Slightly elevated surfaces
+            "border": "#1e3a5f",          # Subtle borders
+            "border_dim": "#1a2535",      # Very subtle borders
+            "text_primary": "#e2e8f0",    # Primary text
+            "text_secondary": "#94a3b8",  # Secondary/label text
+            "text_dim": "#475569",        # Muted/meta text
+            "green": "#22c55e",           # Active/success indicator
+            "amber": "#f59e0b",           # Warning indicator
         }
 
         # Initialize settings manager first
@@ -170,10 +188,63 @@ class ForensicAnalysisGUI:
         """Build the main user interface"""
         self.create_header()
         self.create_main_container()
+        self.create_statusbar()
 
         # Bind resize event for dynamic layout adjustments
         self._resize_after_id = None
         self.root.bind("<Configure>", self._on_window_resize)
+
+    def create_statusbar(self):
+        """Create bottom status bar with live context info"""
+        bar = ctk.CTkFrame(self.root, height=26, corner_radius=0,
+                           fg_color=self.colors["header_bg"])
+        bar.pack(fill="x", side="bottom")
+        bar.pack_propagate(False)
+
+        # Top accent line (dim)
+        ctk.CTkFrame(bar, height=1, corner_radius=0,
+                     fg_color=self.colors["border_dim"]).pack(fill="x", side="top")
+
+        inner = ctk.CTkFrame(bar, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=10)
+
+        # Left: ready label
+        self.statusbar_left = ctk.CTkLabel(
+            inner, text="● Ready",
+            font=ctk.CTkFont(size=10),
+            text_color=self.colors["green"])
+        self.statusbar_left.pack(side="left", pady=4)
+
+        # Separator
+        ctk.CTkLabel(inner, text="|",
+                     font=ctk.CTkFont(size=10),
+                     text_color=self.colors["text_dim"]).pack(side="left", padx=8)
+
+        # Center: YARA / Sigma counts
+        self.statusbar_center = ctk.CTkLabel(
+            inner,
+            text="YARA Matches: 0   ·   Sigma Matches: 0",
+            font=ctk.CTkFont(size=10),
+            text_color=self.colors["text_dim"])
+        self.statusbar_center.pack(side="left")
+
+        # Right: platform info
+        platform_lbl = ctk.CTkLabel(
+            inner,
+            text=f"{platform.system()} {platform.release()}",
+            font=ctk.CTkFont(size=10),
+            text_color=self.colors["text_dim"])
+        platform_lbl.pack(side="right", pady=4)
+
+    def update_statusbar_matches(self):
+        """Refresh status bar match counters."""
+        try:
+            self.statusbar_center.configure(
+                text=f"YARA Matches: {self.total_yara_matches}"
+                     f"   ·   Sigma Matches: {self.total_sigma_matches}"
+            )
+        except Exception:
+            pass
 
     def _on_window_resize(self, event):
         """Handle window resize with debouncing to update responsive elements"""
@@ -220,35 +291,118 @@ class ForensicAnalysisGUI:
             pass  # Widget may not exist yet during startup
         
     def create_header(self):
-        """Create top header bar"""
-        header = ctk.CTkFrame(self.root, height=60, corner_radius=0, fg_color=self.colors["navy"])
-        header.pack(fill="x", side="top")
+        """Create top header bar — professional dashboard style"""
+        # Outer header wrapper (holds bar + accent line)
+        header_wrapper = ctk.CTkFrame(self.root, corner_radius=0,
+                                      fg_color=self.colors["header_bg"])
+        header_wrapper.pack(fill="x", side="top")
+
+        # Main header bar
+        header = ctk.CTkFrame(header_wrapper, height=64, corner_radius=0,
+                               fg_color=self.colors["header_bg"])
+        header.pack(fill="x")
         header.pack_propagate(False)
 
-        title = ctk.CTkLabel(header, text="MAD - Malware Analysis Dashboard",
-                            font=Fonts.header_subsection,
-                            text_color="white")
-        title.pack(side="left", padx=20, pady=15)
+        # ── Left: Shield icon + branding ──────────────────────────────
+        brand_frame = ctk.CTkFrame(header, fg_color="transparent")
+        brand_frame.pack(side="left", padx=(16, 0), pady=10)
 
-        # Date indicator (right side of header) - shows active session date
-        self.date_indicator_label = ctk.CTkLabel(
-            header, text="", font=("Segoe UI", 12), text_color="#9ca3af")
-        self.date_indicator_label.pack(side="right", padx=20, pady=15)
+        shield_lbl = ctk.CTkLabel(brand_frame, text="⬡",
+                                  font=ctk.CTkFont(size=26, weight="bold"),
+                                  text_color=self.colors["accent"])
+        shield_lbl.pack(side="left", padx=(0, 8))
 
-        # Update the date indicator every 30 seconds
+        title_block = ctk.CTkFrame(brand_frame, fg_color="transparent")
+        title_block.pack(side="left")
+
+        title_main = ctk.CTkLabel(title_block, text="M·A·D",
+                                   font=ctk.CTkFont(size=20, weight="bold"),
+                                   text_color=self.colors["accent"])
+        title_main.pack(anchor="w")
+
+        title_sub = ctk.CTkLabel(title_block, text="Malware Analysis Dashboard",
+                                  font=ctk.CTkFont(size=11),
+                                  text_color=self.colors["text_secondary"])
+        title_sub.pack(anchor="w")
+
+        # ── Center: status pills ───────────────────────────────────────
+        center_frame = ctk.CTkFrame(header, fg_color="transparent")
+        center_frame.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Monitoring pill
+        mon_pill = ctk.CTkFrame(center_frame, fg_color=self.colors["surface"],
+                                corner_radius=20)
+        mon_pill.pack(side="left", padx=6)
+
+        mon_dot = ctk.CTkLabel(mon_pill, text="●",
+                               font=ctk.CTkFont(size=10),
+                               text_color=self.colors["green"])
+        mon_dot.pack(side="left", padx=(10, 4), pady=6)
+
+        mon_lbl = ctk.CTkLabel(mon_pill, text="Monitoring Active",
+                               font=ctk.CTkFont(size=11),
+                               text_color=self.colors["text_secondary"])
+        mon_lbl.pack(side="left", padx=(0, 10), pady=6)
+
+        # Case pill
+        self.header_case_pill = ctk.CTkFrame(center_frame, fg_color=self.colors["surface"],
+                                             corner_radius=20)
+        self.header_case_pill.pack(side="left", padx=6)
+
+        case_icon = ctk.CTkLabel(self.header_case_pill, text="◈",
+                                 font=ctk.CTkFont(size=10),
+                                 text_color=self.colors["amber"])
+        case_icon.pack(side="left", padx=(10, 4), pady=6)
+
+        self.header_case_label = ctk.CTkLabel(self.header_case_pill,
+                                              text="No Active Case",
+                                              font=ctk.CTkFont(size=11),
+                                              text_color=self.colors["text_secondary"])
+        self.header_case_label.pack(side="left", padx=(0, 10), pady=6)
+
+        # ── Right: hostname + clock ────────────────────────────────────
+        right_frame = ctk.CTkFrame(header, fg_color="transparent")
+        right_frame.pack(side="right", padx=16)
+
+        host_lbl = ctk.CTkLabel(right_frame,
+                                text=f"  {socket.gethostname()}",
+                                font=ctk.CTkFont(size=11),
+                                text_color=self.colors["text_dim"])
+        host_lbl.pack(anchor="e")
+
+        self.date_indicator_label = ctk.CTkLabel(right_frame, text="",
+                                                  font=ctk.CTkFont(size=12, weight="bold"),
+                                                  text_color=self.colors["text_secondary"])
+        self.date_indicator_label.pack(anchor="e")
+
+        # Cyan accent line at bottom of header
+        accent_line = ctk.CTkFrame(header_wrapper, height=2, corner_radius=0,
+                                   fg_color=self.colors["accent"])
+        accent_line.pack(fill="x")
+
+        # Start clock (every second)
         self._update_date_indicator()
 
     def _update_date_indicator(self):
-        """Refresh the date indicator in the header bar."""
+        """Refresh the date/time clock in the header bar every second."""
         try:
             now = datetime.now()
             self.date_indicator_label.configure(
-                text=now.strftime("%m/%d/%Y  %H:%M"),
-                text_color="#9ca3af"
+                text=now.strftime("%m/%d/%Y  %H:%M:%S")
             )
         except Exception:
             pass
-        self.root.after(30000, self._update_date_indicator)
+        self.root.after(1000, self._update_date_indicator)
+
+    def update_header_case_label(self, case_name=None):
+        """Update the header case pill to show the active case name."""
+        try:
+            if case_name:
+                self.header_case_label.configure(text=f"Case: {case_name}")
+            else:
+                self.header_case_label.configure(text="No Active Case")
+        except Exception:
+            pass
         
     def create_main_container(self):
         """Create main layout with sidebar and content area"""
@@ -274,76 +428,81 @@ class ForensicAnalysisGUI:
         self.show_tab("new_case")
         
     def create_sidebar(self, parent):
-        """Create left sidebar with navigation buttons"""
-        self.sidebar = ctk.CTkFrame(parent, width=self._sidebar_width, corner_radius=0, fg_color=self.colors["sidebar_bg"])
+        """Create left sidebar — professional dark navigation panel"""
+        self.sidebar = ctk.CTkFrame(parent, width=self._sidebar_width, corner_radius=0,
+                                    fg_color=self.colors["sidebar_bg"])
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
-        
+
+        # ── Branding section ──────────────────────────────────────────
+        brand_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        brand_frame.pack(fill="x", padx=12, pady=(20, 8))
+
+        brand_icon = ctk.CTkLabel(brand_frame, text="⬡",
+                                  font=ctk.CTkFont(size=28, weight="bold"),
+                                  text_color=self.colors["accent"])
+        brand_icon.pack()
+
+        brand_name = ctk.CTkLabel(brand_frame, text="M·A·D",
+                                  font=ctk.CTkFont(size=16, weight="bold"),
+                                  text_color=self.colors["accent"])
+        brand_name.pack()
+
+        brand_tagline = ctk.CTkLabel(brand_frame, text="Analysis Platform",
+                                     font=ctk.CTkFont(size=10),
+                                     text_color=self.colors["text_dim"])
+        brand_tagline.pack()
+
+        # Divider
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=self.colors["border"]).pack(
+            fill="x", padx=10, pady=(10, 6))
+
+        # ── Navigation section ────────────────────────────────────────
+        nav_section_lbl = ctk.CTkLabel(self.sidebar, text="NAVIGATION",
+                                       font=ctk.CTkFont(size=9, weight="bold"),
+                                       text_color=self.colors["text_dim"])
+        nav_section_lbl.pack(anchor="w", padx=14, pady=(4, 6))
+
         nav_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        nav_frame.pack(fill="both", expand=True, padx=10, pady=20)
-        
-        # Navigation buttons with updated styling
-        nav_btn_height = 50 if self._is_large_screen else 36
+        nav_frame.pack(fill="x", padx=8)
+
+        nav_btn_height = 44 if self._is_large_screen else 38
         nav_btn_font = Fonts.label_large if self._is_large_screen else Fonts.label
-        nav_btn_pady = 6 if self._is_large_screen else 3
+        nav_btn_pady = 3
 
-        self.btn_new_case = ctk.CTkButton(
-            nav_frame, text="New Case",
-            command=lambda: self.show_tab("new_case"),
-            height=nav_btn_height, font=nav_btn_font,
-            fg_color=self.colors["navy"],
-            hover_color=self.colors["dark_blue"],
-            corner_radius=8
-        )
-        self.btn_new_case.pack(fill="x", pady=nav_btn_pady)
+        # Nav button definitions: (attr_name, icon, label, tab_name)
+        nav_items = [
+            ("btn_new_case",     "⊕", "New Case",      "new_case"),
+            ("btn_current_case", "◈", "Current Case",  "current_case"),
+            ("btn_analysis",     "◉", "Analysis",      "analysis"),
+            ("btn_yara_rules",   "⬡", "YARA Rules",    "yara_rules"),
+            ("btn_settings",     "⚙", "Settings",      "settings"),
+        ]
 
-        self.btn_current_case = ctk.CTkButton(
-            nav_frame, text="Current Case",
-            command=lambda: self.show_tab("current_case"),
-            height=nav_btn_height, font=nav_btn_font,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["navy"],
-            corner_radius=8
-        )
-        self.btn_current_case.pack(fill="x", pady=nav_btn_pady)
+        for attr, icon, label, tab in nav_items:
+            btn = ctk.CTkButton(
+                nav_frame,
+                text=f" {icon}   {label}",
+                command=lambda t=tab: self.show_tab(t),
+                height=nav_btn_height,
+                font=nav_btn_font,
+                fg_color="transparent",
+                text_color=self.colors["text_secondary"],
+                hover_color=self.colors["navy"],
+                corner_radius=6,
+                anchor="w",
+            )
+            btn.pack(fill="x", pady=nav_btn_pady)
+            setattr(self, attr, btn)
 
-        self.btn_analysis = ctk.CTkButton(
-            nav_frame, text="Analysis",
-            command=lambda: self.show_tab("analysis"),
-            height=nav_btn_height, font=nav_btn_font,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["navy"],
-            corner_radius=8
-        )
-        self.btn_analysis.pack(fill="x", pady=nav_btn_pady)
+        # ── Bottom divider + meta ─────────────────────────────────────
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=self.colors["border"]).pack(
+            fill="x", padx=10, pady=(10, 6), side="bottom")
 
-        self.btn_yara_rules = ctk.CTkButton(
-            nav_frame, text="YARA Rules",
-            command=lambda: self.show_tab("yara_rules"),
-            height=nav_btn_height, font=nav_btn_font,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["navy"],
-            corner_radius=8
-        )
-        self.btn_yara_rules.pack(fill="x", pady=nav_btn_pady)
-
-        self.btn_settings = ctk.CTkButton(
-            nav_frame, text="Settings",
-            command=lambda: self.show_tab("settings"),
-            height=nav_btn_height, font=nav_btn_font,
-            fg_color="transparent",
-            hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["navy"],
-            corner_radius=8
-        )
-        self.btn_settings.pack(fill="x", pady=nav_btn_pady)
+        version_lbl = ctk.CTkLabel(self.sidebar, text="v1.0.0  •  YDAMN",
+                                   font=ctk.CTkFont(size=9),
+                                   text_color=self.colors["text_dim"])
+        version_lbl.pack(side="bottom", pady=(0, 12))
         
     # ==================== NEW CASE TAB ====================
     def create_new_case_tab(self):
@@ -2871,64 +3030,43 @@ class ForensicAnalysisGUI:
         for tab in self.tabs.values():
             tab.pack_forget()
 
-        # Reset all button colors
-        self.btn_new_case.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["navy"]
-        )
-        self.btn_current_case.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["navy"]
-        )
-        self.btn_analysis.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["navy"]
-        )
-        self.btn_yara_rules.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["navy"]
-        )
-        self.btn_settings.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["navy"]
-        )
+        # Reset all nav buttons to inactive style
+        _nav_btns = [
+            self.btn_new_case,
+            self.btn_current_case,
+            self.btn_analysis,
+            self.btn_yara_rules,
+            self.btn_settings,
+        ]
+        for btn in _nav_btns:
+            btn.configure(
+                fg_color="transparent",
+                text_color=self.colors["text_secondary"],
+                border_width=0,
+            )
 
         # Show selected tab
         self.tabs[tab_name].pack(fill="both", expand=True)
 
-        # Highlight active button
-        if tab_name == "new_case":
-            self.btn_new_case.configure(
-                fg_color=self.colors["navy"],
-                border_width=0
+        # Highlight active nav button (cyan text + subtle bg)
+        _active_map = {
+            "new_case": self.btn_new_case,
+            "current_case": self.btn_current_case,
+            "analysis": self.btn_analysis,
+            "yara_rules": self.btn_yara_rules,
+            "settings": self.btn_settings,
+        }
+        if tab_name in _active_map:
+            _active_map[tab_name].configure(
+                fg_color=self.colors["accent_active_bg"],
+                text_color=self.colors["accent"],
             )
-        elif tab_name == "current_case":
-            self.btn_current_case.configure(
-                fg_color=self.colors["navy"],
-                border_width=0
-            )
+
+        # Tab-specific side-effects
+        if tab_name == "current_case":
             self.update_current_case_display()
-        elif tab_name == "analysis":
-            self.btn_analysis.configure(
-                fg_color=self.colors["navy"],
-                border_width=0
-            )
         elif tab_name == "yara_rules":
-            self.btn_yara_rules.configure(
-                fg_color=self.colors["navy"],
-                border_width=0
-            )
             self.refresh_yara_rules_list()
-        elif tab_name == "settings":
-            self.btn_settings.configure(
-                fg_color=self.colors["navy"],
-                border_width=0
-            )
 
     def show_analysis_subtab(self, subtab_name):
         """Switch between analysis sub-tabs"""
@@ -3179,7 +3317,8 @@ class ForensicAnalysisGUI:
             self.case_manager.save_case_metadata(case_dir, case_data)
             self.current_case = case_data
             self.case_manager.current_case = case_data  # Also update case_manager's reference
-            
+            self.root.after(0, lambda cd=case_data: self.update_header_case_label(cd.get("id", "")))
+
             # Close progress and show success
             self.root.after(0, self.close_progress_window)
             self.root.after(0, lambda: self.new_case_status.configure(
@@ -3429,6 +3568,7 @@ class ForensicAnalysisGUI:
             self.case_manager.save_case_metadata(case_dir, case_data)
             self.current_case = case_data
             self.case_manager.current_case = case_data
+            self.root.after(0, lambda cd=case_data: self.update_header_case_label(cd.get("id", "")))
 
             # Close progress and show success
             self.root.after(0, self.close_progress_window)
@@ -5925,6 +6065,7 @@ File Size: {file_info['file_size']} bytes"""
 
         self.total_sigma_matches += 1
         self.root.after(0, self.update_sigma_match_badge)
+        self.root.after(0, self.update_statusbar_matches)
 
         # Rate-limit popups per rule title (same approach as YARA)
         count = self.sigma_popup_count_by_rule.get(rule_title, 0)
@@ -6332,6 +6473,7 @@ File Size: {file_info['file_size']} bytes"""
 
                     # Update the badge display
                     self.root.after(0, self.update_yara_match_badge)
+                    self.root.after(0, self.update_statusbar_matches)
 
                     # Check if we should show popup (limits to 3 per rule family)
                     if not self.should_show_popup(rule):
@@ -8115,8 +8257,9 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             # Increment total YARA match count
             self.total_yara_matches += 1
 
-            # Update the badge display
+            # Update the badge display and status bar
             self.root.after(0, self.update_yara_match_badge)
+            self.root.after(0, self.update_statusbar_matches)
 
             # Check if we should show popup (limits to 3 per rule family)
             if not self.should_show_popup(rule):
