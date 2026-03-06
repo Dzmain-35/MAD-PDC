@@ -59,28 +59,34 @@ class ForensicAnalysisGUI:
         # Color scheme — professional cybersecurity dashboard palette
         self.colors = {
             # Core backgrounds
-            "dark_blue": "#0d1117",       # Main content/tab background
-            "navy": "#162033",            # Hover & input field background
-            # Threat/alert accents (red kept for malware indicators)
-            "red": "#ef4444",
-            "red_dark": "#dc2626",
+            "dark_blue": "#0a0d14",       # Main content/tab background (deeper)
+            "navy": "#111827",            # Input field bg / secondary surfaces
+            # Primary accent — Crimson Red (threat-focused, professional)
+            "accent": "#c41e3a",          # Crimson red — primary interactive accent
+            "accent_hover": "#e02040",    # Brighter red for hover states
+            "accent_active_bg": "#1a060b",# Dark red-tinted active nav background
+            # Threat / button reds (slightly brighter than header accent)
+            "red": "#dc2626",             # Alert / danger button red
+            "red_dark": "#b91c1c",        # Darker red for hover
+            "red_muted": "#7f1d1d",       # Muted red for row highlight backgrounds
+            # Secondary info accent — steel blue for data-category labels only
+            "info": "#38bdf8",            # Sky blue for neutral info elements
             # Layout chrome
-            "sidebar_bg": "#0b0f1a",      # Sidebar background (dark professional)
-            "header_bg": "#060a12",       # Header bar background
-            "header_border": "#00d4ff",   # Header bottom accent line
-            # Extended palette
-            "accent": "#00d4ff",          # Cyan primary accent (active, highlights)
-            "accent_hover": "#38e8ff",    # Cyan hover
-            "accent_active_bg": "#0e2040",# Active nav button background
-            "surface": "#111827",         # Card/panel surface
-            "surface_elevated": "#1a2438",# Slightly elevated surfaces
-            "border": "#1e3a5f",          # Subtle borders
-            "border_dim": "#1a2535",      # Very subtle borders
-            "text_primary": "#e2e8f0",    # Primary text
-            "text_secondary": "#94a3b8",  # Secondary/label text
-            "text_dim": "#475569",        # Muted/meta text
-            "green": "#22c55e",           # Active/success indicator
-            "amber": "#f59e0b",           # Warning indicator
+            "sidebar_bg": "#080b12",      # Sidebar background (darkest layer)
+            "header_bg": "#060810",       # Header bar background
+            "header_border": "#c41e3a",   # Red header accent line
+            # Surfaces
+            "surface": "#0f1520",         # Card / panel surface
+            "surface_elevated": "#161e2e",# Slightly elevated surfaces
+            "border": "#1e2d45",          # Subtle borders
+            "border_dim": "#131d2e",      # Very subtle / divider borders
+            # Text hierarchy
+            "text_primary": "#f1f5f9",    # Near-white — primary readable text
+            "text_secondary": "#94a3b8",  # Muted — secondary labels
+            "text_dim": "#475569",        # Dimmed — meta / footnote text
+            # Status indicators
+            "green": "#22c55e",           # Active / success
+            "amber": "#f59e0b",           # Warning / caution
         }
 
         # Initialize settings manager first
@@ -237,11 +243,28 @@ class ForensicAnalysisGUI:
         platform_lbl.pack(side="right", pady=4)
 
     def update_statusbar_matches(self):
-        """Refresh status bar match counters."""
+        """Refresh status bar match counters and sidebar threat badges."""
         try:
             self.statusbar_center.configure(
                 text=f"YARA Matches: {self.total_yara_matches}"
                      f"   ·   Sigma Matches: {self.total_sigma_matches}"
+            )
+        except Exception:
+            pass
+        # Update sidebar threat counter badges
+        try:
+            yara_count = self.total_yara_matches
+            self.sidebar_yara_badge.configure(
+                text=str(yara_count),
+                fg_color=self.colors["accent"] if yara_count > 0 else self.colors["red_muted"]
+            )
+        except Exception:
+            pass
+        try:
+            sigma_count = self.total_sigma_matches
+            self.sidebar_sigma_badge.configure(
+                text=str(sigma_count),
+                fg_color="#6d28d9" if sigma_count > 0 else "#4c1d95"
             )
         except Exception:
             pass
@@ -375,7 +398,7 @@ class ForensicAnalysisGUI:
                                                   text_color=self.colors["text_secondary"])
         self.date_indicator_label.pack(anchor="e")
 
-        # Cyan accent line at bottom of header
+        # Crimson accent line at bottom of header
         accent_line = ctk.CTkFrame(header_wrapper, height=2, corner_radius=0,
                                    fg_color=self.colors["accent"])
         accent_line.pack(fill="x")
@@ -495,161 +518,215 @@ class ForensicAnalysisGUI:
             btn.pack(fill="x", pady=nav_btn_pady)
             setattr(self, attr, btn)
 
-        # ── Bottom divider + meta ─────────────────────────────────────
+        # ── Bottom: threat counter panel ─────────────────────────────
         ctk.CTkFrame(self.sidebar, height=1, fg_color=self.colors["border"]).pack(
-            fill="x", padx=10, pady=(10, 6), side="bottom")
+            fill="x", padx=10, pady=(12, 0), side="bottom")
 
         version_lbl = ctk.CTkLabel(self.sidebar, text="v1.0.0  •  YDAMN",
                                    font=ctk.CTkFont(size=9),
                                    text_color=self.colors["text_dim"])
-        version_lbl.pack(side="bottom", pady=(0, 12))
-        
+        version_lbl.pack(side="bottom", pady=(0, 10))
+
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=self.colors["border_dim"]).pack(
+            fill="x", padx=10, pady=(0, 4), side="bottom")
+
+        # Threat counters
+        threat_panel = ctk.CTkFrame(self.sidebar, fg_color=self.colors["surface"],
+                                    corner_radius=8)
+        threat_panel.pack(side="bottom", fill="x", padx=10, pady=(0, 6))
+
+        ctk.CTkLabel(threat_panel, text="THREAT COUNTERS",
+                     font=ctk.CTkFont(size=8, weight="bold"),
+                     text_color=self.colors["text_dim"]).pack(anchor="w", padx=10, pady=(8, 4))
+
+        yara_row = ctk.CTkFrame(threat_panel, fg_color="transparent")
+        yara_row.pack(fill="x", padx=10, pady=(0, 4))
+
+        ctk.CTkLabel(yara_row, text="YARA",
+                     font=ctk.CTkFont(size=9, weight="bold"),
+                     text_color=self.colors["text_secondary"]).pack(side="left")
+
+        self.sidebar_yara_badge = ctk.CTkLabel(yara_row, text="0",
+                                               font=ctk.CTkFont(size=9, weight="bold"),
+                                               fg_color=self.colors["red_muted"],
+                                               text_color=self.colors["text_primary"],
+                                               corner_radius=4, width=28)
+        self.sidebar_yara_badge.pack(side="right")
+
+        sigma_row = ctk.CTkFrame(threat_panel, fg_color="transparent")
+        sigma_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(sigma_row, text="SIGMA",
+                     font=ctk.CTkFont(size=9, weight="bold"),
+                     text_color=self.colors["text_secondary"]).pack(side="left")
+
+        self.sidebar_sigma_badge = ctk.CTkLabel(sigma_row, text="0",
+                                                font=ctk.CTkFont(size=9, weight="bold"),
+                                                fg_color="#4c1d95",
+                                                text_color="#c084fc",
+                                                corner_radius=4, width=28)
+        self.sidebar_sigma_badge.pack(side="right")
+
+    # ==================== TAB HEADER HELPER ====================
+    def _make_tab_header(self, parent, label, subtitle, accent=True):
+        """
+        Build a consistent 54px page-header strip for any tab.
+        Returns the right-side frame for action buttons.
+        Uses the same visual DNA as the New Case tab header.
+        """
+        wrapper = ctk.CTkFrame(parent, fg_color=self.colors["surface_elevated"],
+                               corner_radius=0, height=54)
+        wrapper.pack(fill="x")
+        wrapper.pack_propagate(False)
+
+        # Left accent stripe
+        stripe_color = self.colors["accent"] if accent else self.colors["border"]
+        ctk.CTkFrame(wrapper, width=4, corner_radius=0,
+                     fg_color=stripe_color).pack(side="left", fill="y")
+
+        # Title block
+        title_blk = ctk.CTkFrame(wrapper, fg_color="transparent")
+        title_blk.pack(side="left", padx=16, pady=8)
+
+        lbl_color = self.colors["accent"] if accent else self.colors["text_secondary"]
+        ctk.CTkLabel(title_blk, text=label,
+                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     text_color=lbl_color).pack(anchor="w")
+        ctk.CTkLabel(title_blk, text=subtitle,
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=self.colors["text_secondary"]).pack(anchor="w")
+
+        # Right actions frame (caller populates)
+        actions_frame = ctk.CTkFrame(wrapper, fg_color="transparent")
+        actions_frame.pack(side="right", padx=14)
+        return actions_frame
+
     # ==================== NEW CASE TAB ====================
     def create_new_case_tab(self):
-        """Create the New Case tab interface with M.A.D. branding"""
-        # Scale form widths based on screen size
-        form_entry_width = 500 if self._is_large_screen else 320
-        form_btn_width = 500 if self._is_large_screen else 320
+        """Create the New Case tab — streamlined split-panel layout for fast analyst workflow"""
+        form_entry_width = 420 if self._is_large_screen else 300
 
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
-        
-        # Center container
-        center_container = ctk.CTkFrame(frame, fg_color="transparent")
-        center_container.place(relx=0.5, rely=0.5, anchor="center")
-        
-        # Logo and branding section
-        logo_frame = ctk.CTkFrame(center_container, fg_color="transparent")
-        logo_frame.pack(pady=(0, 30))
-        
-        # Load and display the M.A.D. logo image
-        image_loaded = False
+
+        # ── Outer split container using grid ──────────────────────────
+        split = ctk.CTkFrame(frame, fg_color="transparent")
+        split.pack(fill="both", expand=True, padx=20, pady=16)
+        split.columnconfigure(0, weight=55)
+        split.columnconfigure(1, weight=45)
+        split.rowconfigure(0, weight=1)
+
+        # ══════════════════════════════════════════════════════════════
+        # LEFT PANEL — Case Initialization Form
+        # ══════════════════════════════════════════════════════════════
+        left_panel = ctk.CTkFrame(split, fg_color=self.colors["surface"], corner_radius=10)
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        # Left panel header bar
+        lp_header = ctk.CTkFrame(left_panel, fg_color=self.colors["surface_elevated"],
+                                  corner_radius=0, height=54)
+        lp_header.pack(fill="x")
+        lp_header.pack_propagate(False)
+
+        # Red left-edge accent stripe
+        ctk.CTkFrame(lp_header, width=4, corner_radius=0,
+                     fg_color=self.colors["accent"]).pack(side="left", fill="y")
+
+        lp_title_block = ctk.CTkFrame(lp_header, fg_color="transparent")
+        lp_title_block.pack(side="left", padx=16, pady=8)
+
+        ctk.CTkLabel(lp_title_block, text="NEW CASE",
+                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     text_color=self.colors["accent"]).pack(anchor="w")
+        ctk.CTkLabel(lp_title_block, text="Initialize Malware Analysis Session",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=self.colors["text_secondary"]).pack(anchor="w")
+
+        # Logo thumbnail (top-right of header)
+        _logo_loaded = False
         try:
-            # Try multiple possible locations for image.png
-            possible_paths = [
+            _possible_paths = [
                 "image.png",
                 os.path.join(os.getcwd(), "image.png"),
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "image.png"),
-                os.path.join(os.path.expanduser("~"), "Desktop", "MAD", "image.png"),
-                r"C:\Users\REM\Desktop\MAD\image.png"
             ]
-            
-            logo_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    logo_path = path
+            for _p in _possible_paths:
+                if os.path.exists(_p):
+                    _pil = Image.open(_p)
+                    _pil.thumbnail((38, 38), Image.Resampling.LANCZOS)
+                    _logo_img = ctk.CTkImage(light_image=_pil, dark_image=_pil,
+                                             size=(_pil.width, _pil.height))
+                    _logo_lbl = ctk.CTkLabel(lp_header, image=_logo_img, text="")
+                    _logo_lbl.image = _logo_img
+                    _logo_lbl.pack(side="right", padx=14)
+                    _logo_loaded = True
                     break
-            
-            if logo_path and os.path.exists(logo_path):
-                # Load and resize image
-                pil_image = Image.open(logo_path)
+        except Exception:
+            pass
+        if not _logo_loaded:
+            ctk.CTkLabel(lp_header, text="⬡",
+                         font=ctk.CTkFont(size=22, weight="bold"),
+                         text_color=self.colors["accent"]).pack(side="right", padx=14)
 
-                # Scale logo based on screen size
-                max_size = 350 if self._is_large_screen else 190
-                pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                
-                logo_image = ctk.CTkImage(
-                    light_image=pil_image, 
-                    dark_image=pil_image, 
-                    size=(pil_image.width, pil_image.height)
-                )
-                
-                logo_label = ctk.CTkLabel(
-                    logo_frame,
-                    image=logo_image,
-                    text=""
-                )
-                logo_label.image = logo_image  # Keep a reference
-                logo_label.pack()
-                image_loaded = True
-                
-        except Exception as e:
-            print(f"ERROR loading logo image: {e}")
-        
-        # Fallback to text-based logo if image not found
-        if not image_loaded:
-            self.create_fallback_logo(logo_frame)
-        
-        # Title section
-        title_frame = ctk.CTkFrame(center_container, fg_color="transparent")
-        title_frame.pack(pady=(20, 20))
-        
-        title = ctk.CTkLabel(
-            title_frame,
-            text="New Malware Case",
-            font=Fonts.header_main,
-            text_color="white"
-        )
-        title.pack()
-        
-        # Separator line
-        separator = ctk.CTkFrame(title_frame, height=3, fg_color=self.colors["red"])
-        separator.pack(fill="x", pady=(10, 0))
-        
-        # Form container
-        form_container = ctk.CTkFrame(center_container, fg_color="transparent")
-        form_container.pack(pady=(20, 20))
-        
-        # Analyst Name input
-        analyst_label = ctk.CTkLabel(
-            form_container,
-            text="Analyst Name",
-            font=Fonts.label_large,
-            text_color="white",
-            anchor="w"
-        )
-        analyst_label.pack(anchor="w", padx=5, pady=(0, 5))
-        
+        # ── Form content (scrollable) ──────────────────────────────────
+        form_scroll = ctk.CTkScrollableFrame(left_panel, fg_color="transparent",
+                                              scrollbar_button_color=self.colors["border"])
+        form_scroll.pack(fill="both", expand=True)
+
+        form_inner = ctk.CTkFrame(form_scroll, fg_color="transparent")
+        form_inner.pack(fill="x", padx=28, pady=20)
+
+        # ── Section: Analyst Info ──────────────────────────────────────
+        ctk.CTkLabel(form_inner, text="ANALYST INFORMATION",
+                     font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                     text_color=self.colors["text_dim"]).pack(anchor="w", pady=(0, 12))
+
+        ctk.CTkLabel(form_inner, text="Name",
+                     font=Fonts.label,
+                     text_color=self.colors["text_secondary"],
+                     anchor="w").pack(anchor="w", pady=(0, 4))
+
         self.analyst_name_entry = ctk.CTkEntry(
-            form_container,
+            form_inner,
             width=form_entry_width,
-            height=40,
-            placeholder_text="Enter your name",
+            height=38,
+            placeholder_text="e.g. J. Smith",
             font=Fonts.body_large,
             fg_color=self.colors["navy"],
-            border_color=self.colors["red"],
-            border_width=2
+            border_color=self.colors["border"],
+            border_width=1
         )
-        self.analyst_name_entry.pack(padx=5, pady=(0, 15))
-        
-        # Report URL input
-        report_label = ctk.CTkLabel(
-            form_container,
-            text="Report URL",
-            font=Fonts.label_large,
-            text_color="white",
-            anchor="w"
-        )
-        report_label.pack(anchor="w", padx=5, pady=(0, 5))
-        
+        self.analyst_name_entry.pack(anchor="w", pady=(0, 16))
+
+        ctk.CTkLabel(form_inner, text="Report URL  (optional)",
+                     font=Fonts.label,
+                     text_color=self.colors["text_secondary"],
+                     anchor="w").pack(anchor="w", pady=(0, 4))
+
         self.report_url_entry = ctk.CTkEntry(
-            form_container,
+            form_inner,
             width=form_entry_width,
-            height=40,
-            placeholder_text="Enter report URL",
+            height=38,
+            placeholder_text="https://your-report-platform/...",
             font=Fonts.body_large,
             fg_color=self.colors["navy"],
-            border_color=self.colors["red"],
-            border_width=2
+            border_color=self.colors["border"],
+            border_width=1
         )
-        self.report_url_entry.pack(padx=5, pady=(0, 20))
+        self.report_url_entry.pack(anchor="w", pady=(0, 22))
 
-        # Upload method selection
-        upload_method_frame = ctk.CTkFrame(center_container, fg_color="transparent")
-        upload_method_frame.pack(pady=(10, 10))
+        # ── Divider ────────────────────────────────────────────────────
+        ctk.CTkFrame(form_inner, height=1,
+                     fg_color=self.colors["border_dim"]).pack(fill="x", pady=(0, 18))
 
-        method_label = ctk.CTkLabel(
-            upload_method_frame,
-            text="Select Upload Method:",
-            font=Fonts.label_large,
-            text_color="white"
-        )
-        method_label.pack(pady=(0, 10))
+        # ── Section: Sample Upload ─────────────────────────────────────
+        ctk.CTkLabel(form_inner, text="SAMPLE UPLOAD",
+                     font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                     text_color=self.colors["text_dim"]).pack(anchor="w", pady=(0, 12))
 
-        # Radio button variable
         self.upload_method = tk.StringVar(value="file")
 
-        radio_frame = ctk.CTkFrame(upload_method_frame, fg_color="transparent")
-        radio_frame.pack()
+        radio_frame = ctk.CTkFrame(form_inner, fg_color="transparent")
+        radio_frame.pack(anchor="w", pady=(0, 16))
 
         self.radio_file = ctk.CTkRadioButton(
             radio_frame,
@@ -657,71 +734,158 @@ class ForensicAnalysisGUI:
             variable=self.upload_method,
             value="file",
             command=self.on_upload_method_change,
-            font=Fonts.body_large,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"]
+            font=Fonts.body,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"]
         )
-        self.radio_file.pack(side="left", padx=20)
+        self.radio_file.pack(side="left", padx=(0, 24))
 
         self.radio_url = ctk.CTkRadioButton(
             radio_frame,
-            text="Download from URLs",
+            text="Download from URL",
             variable=self.upload_method,
             value="url",
             command=self.on_upload_method_change,
-            font=Fonts.body_large,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"]
+            font=Fonts.body,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"]
         )
-        self.radio_url.pack(side="left", padx=20)
+        self.radio_url.pack(side="left")
 
-        # URL input area (initially hidden) - simple single entry field like Report URL
-        self.url_input_frame = ctk.CTkFrame(center_container, fg_color="transparent")
+        # URL input area (initially hidden — must be sibling of btn_new_case_upload)
+        self.url_input_frame = ctk.CTkFrame(form_inner, fg_color="transparent")
 
-        url_label = ctk.CTkLabel(
+        ctk.CTkLabel(
             self.url_input_frame,
             text="Download URL",
-            font=Fonts.label_large,
-            text_color="white"
-        )
-        url_label.pack(anchor="w", pady=(0, 5))
+            font=Fonts.label,
+            text_color=self.colors["text_secondary"]
+        ).pack(anchor="w", pady=(0, 4))
 
         self.url_entry = ctk.CTkEntry(
             self.url_input_frame,
-            placeholder_text="Enter URL to download file from...",
-            height=45,
+            placeholder_text="https://...",
+            height=38,
             width=form_entry_width,
             font=Fonts.body_large,
-            fg_color="gray20",
-            border_color=self.colors["red"],
-            border_width=2
+            fg_color=self.colors["navy"],
+            border_color=self.colors["border"],
+            border_width=1
         )
-        self.url_entry.pack(fill="x")
+        self.url_entry.pack(anchor="w")
 
-        # Upload button
+        # ── Primary action button ──────────────────────────────────────
         btn_upload = ctk.CTkButton(
-            center_container,
-            text="Upload File to Start Case",
+            form_inner,
+            text="  ▶   START ANALYSIS CASE",
             command=self.handle_new_case_upload,
-            height=50,
-            width=form_btn_width,
-            font=Fonts.title_medium,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"],
-            corner_radius=8
+            height=46,
+            width=form_entry_width,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            corner_radius=6
         )
-        btn_upload.pack(pady=(10, 10))
+        btn_upload.pack(anchor="w", pady=(20, 8))
         self.btn_new_case_upload = btn_upload
-        
-        # Status label for feedback
+
+        # Status label
         self.new_case_status = ctk.CTkLabel(
-            center_container,
+            form_inner,
             text="",
             font=Fonts.body,
-            text_color="white"
+            text_color=self.colors["text_secondary"]
         )
-        self.new_case_status.pack(pady=10)
-        
+        self.new_case_status.pack(anchor="w", pady=2)
+
+        # ══════════════════════════════════════════════════════════════
+        # RIGHT PANEL — Analyst Workflow Reference
+        # ══════════════════════════════════════════════════════════════
+        right_panel = ctk.CTkFrame(split, fg_color=self.colors["surface"], corner_radius=10)
+        right_panel.grid(row=0, column=1, sticky="nsew")
+
+        # Right panel header bar
+        rp_header = ctk.CTkFrame(right_panel, fg_color=self.colors["surface_elevated"],
+                                  corner_radius=0, height=54)
+        rp_header.pack(fill="x")
+        rp_header.pack_propagate(False)
+
+        ctk.CTkFrame(rp_header, width=4, corner_radius=0,
+                     fg_color=self.colors["border"]).pack(side="left", fill="y")
+
+        rp_title_block = ctk.CTkFrame(rp_header, fg_color="transparent")
+        rp_title_block.pack(side="left", padx=16, pady=8)
+
+        ctk.CTkLabel(rp_title_block, text="ANALYST WORKFLOW",
+                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     text_color=self.colors["text_secondary"]).pack(anchor="w")
+        ctk.CTkLabel(rp_title_block, text="M.A.D. Session Guide",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=self.colors["text_dim"]).pack(anchor="w")
+
+        # Workflow steps content
+        rp_content = ctk.CTkScrollableFrame(right_panel, fg_color="transparent",
+                                             scrollbar_button_color=self.colors["border"])
+        rp_content.pack(fill="both", expand=True, padx=14, pady=14)
+
+        steps = [
+            ("01", "New Case",         "accent",   "Enter analyst name, optional report URL, then upload a sample."),
+            ("02", "Upload Sample",    "red",       "Upload a file directly or provide a download URL to fetch it."),
+            ("03", "Process Analysis", "amber",     "Monitor live processes, inspect memory, scan with YARA rules."),
+            ("04", "Network / HTTP",   "amber",     "Capture C2 traffic, extract remote IPs and hostnames as IOCs."),
+            ("05", "IOC Extraction",   "green",     "Collect URLs, IPs, domains from Current Case for the report."),
+            ("06", "YARA Hunt",        "green",     "Run custom or YDAMN rules against live memory and disk files."),
+            ("07", "Live Events",      "text_dim",  "Sysmon / Procmon feed — file writes, registry, child procs."),
+            ("08", "Export & Report",  "text_dim",  "Copy IOC lists, export case data, attach screenshots."),
+        ]
+
+        # Section label
+        ctk.CTkLabel(rp_content, text="STANDARD TRIAGE SEQUENCE",
+                     font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                     text_color=self.colors["text_dim"]).pack(anchor="w", pady=(4, 10))
+
+        for step_num, step_title, color_key, step_desc in steps:
+            step_row = ctk.CTkFrame(rp_content, fg_color=self.colors["surface_elevated"],
+                                    corner_radius=7)
+            step_row.pack(fill="x", pady=3)
+
+            # Step number badge
+            num_badge = ctk.CTkFrame(step_row, fg_color=self.colors["border"],
+                                     width=34, height=34, corner_radius=5)
+            num_badge.pack(side="left", padx=(10, 0), pady=10)
+            num_badge.pack_propagate(False)
+            ctk.CTkLabel(num_badge, text=step_num,
+                         font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                         text_color=self.colors["text_dim"]).pack(expand=True)
+
+            # Left accent stripe per step
+            ctk.CTkFrame(step_row, width=3, corner_radius=0,
+                         fg_color=self.colors[color_key]).pack(side="left", fill="y",
+                                                                padx=(8, 0))
+
+            # Step text block
+            step_text = ctk.CTkFrame(step_row, fg_color="transparent")
+            step_text.pack(side="left", padx=10, pady=8, fill="x", expand=True)
+
+            ctk.CTkLabel(step_text, text=step_title,
+                         font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                         text_color=self.colors["text_primary"],
+                         anchor="w").pack(anchor="w")
+            ctk.CTkLabel(step_text, text=step_desc,
+                         font=ctk.CTkFont(family="Segoe UI", size=10),
+                         text_color=self.colors["text_dim"],
+                         wraplength=220,
+                         justify="left",
+                         anchor="w").pack(anchor="w")
+
+        # Keyboard shortcut hint
+        ctk.CTkFrame(rp_content, height=1,
+                     fg_color=self.colors["border_dim"]).pack(fill="x", pady=(14, 10))
+        ctk.CTkLabel(rp_content,
+                     text="Tip: Tab between fields · Enter to submit",
+                     font=ctk.CTkFont(family="Segoe UI", size=10),
+                     text_color=self.colors["text_dim"]).pack(anchor="w")
+
         self.tabs["new_case"] = frame
     
     def create_fallback_logo(self, parent_frame):
@@ -758,35 +922,32 @@ class ForensicAnalysisGUI:
     def create_current_case_tab(self):
         """Create the Current Case tab interface"""
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
-        
-        # Header with title and status
-        header_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        header_frame.pack(fill="x", pady=10, padx=20)
-        
-        title = ctk.CTkLabel(header_frame, text="Current Case",
-                            font=Fonts.header_section,
-                            text_color="white")
-        title.pack(side="left")
-        
-        self.case_status_label = ctk.CTkLabel(header_frame, text="",
-                                             corner_radius=20,
-                                             fg_color="#2D7A3E",
-                                             width=100, height=30,
-                                             text_color="white",
-                                             font=Fonts.label)
-        self.case_status_label.pack(side="right", padx=10)
-        
+
+        # ── Unified tab header ─────────────────────────────────────────
+        actions_frame = self._make_tab_header(frame, "CURRENT CASE",
+                                              "Active Analysis Session")
+        self.case_status_label = ctk.CTkLabel(actions_frame, text="",
+                                              corner_radius=6,
+                                              fg_color=self.colors["green"],
+                                              width=90, height=26,
+                                              text_color="white",
+                                              font=Fonts.label)
+        self.case_status_label.pack(side="right")
+
         # Scrollable frame for content
-        scroll_frame = ctk.CTkScrollableFrame(frame, corner_radius=10, fg_color=self.colors["navy"])
-        scroll_frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
-        
+        scroll_frame = ctk.CTkScrollableFrame(frame, corner_radius=0,
+                                              fg_color=self.colors["dark_blue"],
+                                              scrollbar_button_color=self.colors["border"])
+        scroll_frame.pack(fill="both", expand=True, padx=16, pady=10)
+
         # Case details card - COMPACT VERSION
-        self.case_details_frame = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
-        self.case_details_frame.pack(fill="x", pady=5)
-        
+        self.case_details_frame = ctk.CTkFrame(scroll_frame, corner_radius=8,
+                                               fg_color=self.colors["surface_elevated"])
+        self.case_details_frame.pack(fill="x", pady=(0, 6))
+
         details_title = ctk.CTkLabel(self.case_details_frame, text="Case Details",
-                                    font=Fonts.title_medium,
-                                    text_color="white")
+                                     font=Fonts.title_medium,
+                                     text_color=self.colors["text_primary"])
         details_title.pack(pady=10, padx=15, anchor="w")
         
         self.case_info_frame = ctk.CTkFrame(self.case_details_frame, 
@@ -794,7 +955,7 @@ class ForensicAnalysisGUI:
         self.case_info_frame.pack(fill="x", padx=15, pady=(0, 10))
         
         # Files section header - Clickable
-        files_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        files_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"], cursor="hand2")
         files_header.pack(fill="x", pady=(10, 5))
 
         files_header_inner = ctk.CTkFrame(files_header, fg_color="transparent", cursor="hand2")
@@ -803,7 +964,7 @@ class ForensicAnalysisGUI:
         # Expand indicator for files (starts collapsed)
         self.files_expand_indicator = ctk.CTkLabel(files_header_inner, text="▶",
                                                    font=Fonts.body_large,
-                                                   text_color="gray60",
+                                                   text_color=self.colors["text_dim"],
                                                    cursor="hand2")
         self.files_expand_indicator.pack(side="left", padx=(0, 10))
 
@@ -826,7 +987,7 @@ class ForensicAnalysisGUI:
         # Don't pack initially - will be shown when files are added
 
         # IOCs section header - Clickable
-        self.iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.iocs_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"], cursor="hand2")
         self.iocs_header.pack(fill="x", pady=(10, 5))
 
         iocs_header_inner = ctk.CTkFrame(self.iocs_header, fg_color="transparent", cursor="hand2")
@@ -835,7 +996,7 @@ class ForensicAnalysisGUI:
         # Expand indicator for IOCs (starts collapsed)
         self.iocs_expand_indicator = ctk.CTkLabel(iocs_header_inner, text="▶",
                                                   font=Fonts.body_large,
-                                                  text_color="gray60",
+                                                  text_color=self.colors["text_dim"],
                                                   cursor="hand2")
         self.iocs_expand_indicator.pack(side="left", padx=(0, 10))
 
@@ -854,7 +1015,7 @@ class ForensicAnalysisGUI:
         btn_add_ioc.pack(side="right")
 
         # IOCs container (collapsible) - starts hidden
-        self.iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        self.iocs_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"])
         # Don't pack initially - will be shown when IOCs are added
 
         # IOCs content frame
@@ -862,7 +1023,7 @@ class ForensicAnalysisGUI:
         self.iocs_content_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
         # Notes section header - Clickable
-        self.notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.notes_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"], cursor="hand2")
         self.notes_header.pack(fill="x", pady=(10, 5))
 
         notes_header_inner = ctk.CTkFrame(self.notes_header, fg_color="transparent", cursor="hand2")
@@ -871,7 +1032,7 @@ class ForensicAnalysisGUI:
         # Expand indicator for Notes (starts collapsed)
         self.notes_expand_indicator = ctk.CTkLabel(notes_header_inner, text="▶",
                                                    font=Fonts.body_large,
-                                                   text_color="gray60",
+                                                   text_color=self.colors["text_dim"],
                                                    cursor="hand2")
         self.notes_expand_indicator.pack(side="left", padx=(0, 10))
 
@@ -891,7 +1052,7 @@ class ForensicAnalysisGUI:
         btn_save_notes.pack(side="right")
 
         # Notes text area (collapsible) - starts hidden
-        self.notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        self.notes_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"])
         # Don't pack initially - will be shown when notes are added
 
         # Track visibility states - all start collapsed (False)
@@ -978,7 +1139,7 @@ class ForensicAnalysisGUI:
         self.notes_expand_indicator.bind("<Button-1>", toggle_notes_section)
 
         # IOCs lists
-        self.iocs_urls_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color="#1a1a1a", corner_radius=5)
+        self.iocs_urls_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color=self.colors["surface"], corner_radius=5)
         self.iocs_urls_frame.pack(fill="x", pady=(0, 10))
 
         urls_label = ctk.CTkLabel(self.iocs_urls_frame, text="URLs:",
@@ -987,10 +1148,10 @@ class ForensicAnalysisGUI:
         urls_label.pack(anchor="w", padx=10, pady=(10, 5))
 
         self.iocs_urls_list = ctk.CTkTextbox(self.iocs_urls_frame, height=80,
-                                             fg_color="#0d1520", corner_radius=5)
+                                             fg_color=self.colors["navy"], corner_radius=5)
         self.iocs_urls_list.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.iocs_ips_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color="#1a1a1a", corner_radius=5)
+        self.iocs_ips_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color=self.colors["surface"], corner_radius=5)
         self.iocs_ips_frame.pack(fill="x", pady=(0, 10))
 
         ips_label = ctk.CTkLabel(self.iocs_ips_frame, text="IP Addresses:",
@@ -999,10 +1160,10 @@ class ForensicAnalysisGUI:
         ips_label.pack(anchor="w", padx=10, pady=(10, 5))
 
         self.iocs_ips_list = ctk.CTkTextbox(self.iocs_ips_frame, height=80,
-                                            fg_color="#0d1520", corner_radius=5)
+                                            fg_color=self.colors["navy"], corner_radius=5)
         self.iocs_ips_list.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.iocs_domains_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color="#1a1a1a", corner_radius=5)
+        self.iocs_domains_frame = ctk.CTkFrame(self.iocs_content_frame, fg_color=self.colors["surface"], corner_radius=5)
         self.iocs_domains_frame.pack(fill="x", pady=(0, 10))
 
         domains_label = ctk.CTkLabel(self.iocs_domains_frame, text="Domains:",
@@ -1011,14 +1172,14 @@ class ForensicAnalysisGUI:
         domains_label.pack(anchor="w", padx=10, pady=(10, 5))
 
         self.iocs_domains_list = ctk.CTkTextbox(self.iocs_domains_frame, height=80,
-                                                fg_color="#0d1520", corner_radius=5)
+                                                fg_color=self.colors["navy"], corner_radius=5)
         self.iocs_domains_list.pack(fill="x", padx=10, pady=(0, 10))
 
         # Notes text widget
         self.notes_textbox = tk.Text(
             self.notes_container,
             wrap="word",
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="#ffffff",
             font=Fonts.text_input(),
             relief="flat",
@@ -1029,7 +1190,7 @@ class ForensicAnalysisGUI:
         self.notes_textbox.pack(fill="both", expand=True, padx=2, pady=2)
 
         # Screenshots section header - Clickable
-        self.screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20", cursor="hand2")
+        self.screenshots_header = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"], cursor="hand2")
         self.screenshots_header.pack(fill="x", pady=(10, 5))
 
         screenshots_header_inner = ctk.CTkFrame(self.screenshots_header, fg_color="transparent", cursor="hand2")
@@ -1038,7 +1199,7 @@ class ForensicAnalysisGUI:
         # Expand indicator for Screenshots (starts collapsed)
         self.screenshots_expand_indicator = ctk.CTkLabel(screenshots_header_inner, text="▶",
                                                          font=Fonts.body_large,
-                                                         text_color="gray60",
+                                                         text_color=self.colors["text_dim"],
                                                          cursor="hand2")
         self.screenshots_expand_indicator.pack(side="left", padx=(0, 10))
 
@@ -1058,7 +1219,7 @@ class ForensicAnalysisGUI:
         btn_attach_screenshot.pack(side="right")
 
         # Screenshots container (collapsible) - starts hidden
-        self.screenshots_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color="gray20")
+        self.screenshots_container = ctk.CTkFrame(scroll_frame, corner_radius=10, fg_color=self.colors["surface_elevated"])
         # Don't pack initially - will be shown when screenshots are added
 
         # Screenshots display frame (scrollable)
@@ -1110,41 +1271,62 @@ class ForensicAnalysisGUI:
     def create_analysis_tab(self):
         """Create the Analysis tab with sub-tabs"""
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
-        
-        title = ctk.CTkLabel(frame, text="Analysis",
-                            font=Fonts.header_main,
-                            text_color="white")
-        title.pack(pady=20, padx=20, anchor="w")
-        
-        # Sub-tab buttons
-        subtab_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        subtab_frame.pack(fill="x", padx=20, pady=10)
-        
+
+        # ── Unified tab header ─────────────────────────────────────────
+        # Sub-nav built into the header right section
+        hdr_wrapper = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"],
+                                   corner_radius=0, height=54)
+        hdr_wrapper.pack(fill="x")
+        hdr_wrapper.pack_propagate(False)
+
+        # Red left accent stripe
+        ctk.CTkFrame(hdr_wrapper, width=4, corner_radius=0,
+                     fg_color=self.colors["accent"]).pack(side="left", fill="y")
+
+        # Title block
+        title_blk = ctk.CTkFrame(hdr_wrapper, fg_color="transparent")
+        title_blk.pack(side="left", padx=16, pady=8)
+        ctk.CTkLabel(title_blk, text="ANALYSIS",
+                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     text_color=self.colors["accent"]).pack(anchor="w")
+        ctk.CTkLabel(title_blk, text="Runtime Monitoring & Threat Detection",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=self.colors["text_secondary"]).pack(anchor="w")
+
+        # Sub-nav pills (right side of header)
+        subnav_frame = ctk.CTkFrame(hdr_wrapper, fg_color="transparent")
+        subnav_frame.pack(side="right", padx=14)
+
         self.btn_processes = ctk.CTkButton(
-            subtab_frame, text="⚙️ Processes",
+            subnav_frame, text="Processes",
             command=lambda: self.show_analysis_subtab("processes"),
-            height=35, width=150,
-            fg_color=self.colors["red"],
-            hover_color=self.colors["red_dark"],
-            font=Fonts.body_bold
+            height=30, width=110,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=5,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
         )
-        self.btn_processes.pack(side="left", padx=5)
-        
+        self.btn_processes.pack(side="left", padx=(0, 6))
+
         self.btn_live_events = ctk.CTkButton(
-            subtab_frame, text="📡 Live Events",
+            subnav_frame, text="Live Events",
             command=lambda: self.show_analysis_subtab("live_events"),
-            height=35, width=150,
+            height=30, width=110,
             fg_color="transparent",
             hover_color=self.colors["navy"],
-            border_width=2,
-            border_color=self.colors["red"],
-            font=Fonts.body_bold
+            text_color=self.colors["text_secondary"],
+            border_width=1,
+            border_color=self.colors["border"],
+            corner_radius=5,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
         )
-        self.btn_live_events.pack(side="left", padx=5)
+        self.btn_live_events.pack(side="left")
 
         # Content area for sub-tabs
-        self.analysis_content = ctk.CTkFrame(frame, corner_radius=10, fg_color=self.colors["navy"])
-        self.analysis_content.pack(fill="both", expand=True, padx=20, pady=10)
+        self.analysis_content = ctk.CTkFrame(frame, corner_radius=0,
+                                              fg_color=self.colors["dark_blue"])
+        self.analysis_content.pack(fill="both", expand=True)
 
         # Create sub-tab frames
         self.analysis_subtabs = {}
@@ -1182,8 +1364,8 @@ class ForensicAnalysisGUI:
             header, text="🔍 Scan All",
             command=self.scan_all_processes,
             height=35, width=100,
-            fg_color="#8B4513",
-            hover_color="#A0522D"
+            fg_color=self.colors["amber"],
+            hover_color="#d97706"
         )
         btn_scan_all.pack(side="right", padx=5)
 
@@ -1211,7 +1393,7 @@ class ForensicAnalysisGUI:
             placeholder_text="PID or Process Name...",
             height=35,
             width=220 if self._is_large_screen else 140,
-            fg_color="gray20",
+            fg_color=self.colors["surface_elevated"],
             border_color=self.colors["navy"],
             border_width=2
         )
@@ -1223,8 +1405,8 @@ class ForensicAnalysisGUI:
             search_frame, text="✕ Clear",
             command=self.clear_process_search,
             height=35, width=80,
-            fg_color="gray30",
-            hover_color="gray40"
+            fg_color=self.colors["navy"],
+            hover_color=self.colors["dark_blue"]
         )
         btn_clear_search.pack(side="left", padx=5)
 
@@ -1242,7 +1424,7 @@ class ForensicAnalysisGUI:
             command=lambda choice: self.filter_processes(),
             height=35,
             width=170 if self._is_large_screen else 130,
-            fg_color="gray20",
+            fg_color=self.colors["surface_elevated"],
             border_color=self.colors["navy"],
             button_color=self.colors["navy"],
             button_hover_color=self.colors["dark_blue"]
@@ -1304,12 +1486,12 @@ class ForensicAnalysisGUI:
         self._process_paned.pack(fill="both", expand=True)
 
         # Process tree area with parent-child hierarchy
-        tree_frame = tk.Frame(self._process_paned, bg="#1a1a1a")
+        tree_frame = tk.Frame(self._process_paned, bg=self.colors["surface"])
         self._process_paned.add(tree_frame, stretch="always")
         
         # Scrollbars
-        vsb = tk.Scrollbar(tree_frame, orient="vertical", bg="#1a1a1a", troughcolor="#0d1520")
-        hsb = tk.Scrollbar(tree_frame, orient="horizontal", bg="#1a1a1a", troughcolor="#0d1520")
+        vsb = tk.Scrollbar(tree_frame, orient="vertical", bg=self.colors["surface"], troughcolor=self.colors["navy"])
+        hsb = tk.Scrollbar(tree_frame, orient="horizontal", bg=self.colors["surface"], troughcolor=self.colors["navy"])
         vsb.pack(side="right", fill="y")
         hsb.pack(side="bottom", fill="x")
         
@@ -1324,27 +1506,27 @@ class ForensicAnalysisGUI:
 
         # Configure Treeview colors with responsive font
         style.configure("Process.Treeview",
-                       background="#1a1a1a",
-                       foreground="white",
-                       fieldbackground="#1a1a1a",
+                       background=self.colors["surface"],
+                       foreground=self.colors["text_primary"],
+                       fieldbackground=self.colors["surface"],
                        borderwidth=0,
                        relief="flat",
                        font=('Segoe UI', _tree_font_size),
                        rowheight=_tree_row_height)
 
         style.configure("Process.Treeview.Heading",
-                       background="#0d1520",
+                       background=self.colors["navy"],
                        foreground="white",
                        borderwidth=1,
                        relief="flat",
                        font=('Segoe UI', _tree_heading_size, 'bold'))
         
         style.map("Process.Treeview",
-                 background=[('selected', '#dc2626')],
+                 background=[('selected', self.colors["accent"])],
                  foreground=[('selected', 'white')])
         
         style.map("Process.Treeview.Heading",
-                 background=[('active', '#1a2332')])
+                 background=[('active', self.colors["surface_elevated"])])
         
         # Treeview with hierarchy support
         columns = ("PID", "File Path", "Bytes", "Connections", "Detection Status")
@@ -1380,9 +1562,9 @@ class ForensicAnalysisGUI:
         self.process_context_menu = tk.Menu(
             self.process_tree, 
             tearoff=0,
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="white",
-            activebackground="#dc2626",
+            activebackground=self.colors["accent"],
             activeforeground="white",
             borderwidth=0,
             relief="flat"
@@ -1404,9 +1586,9 @@ class ForensicAnalysisGUI:
         self.process_conn_menu = tk.Menu(
             self.process_context_menu,
             tearoff=0,
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="white",
-            activebackground="#dc2626",
+            activebackground=self.colors["accent"],
             activeforeground="white",
             borderwidth=0,
             relief="flat"
@@ -1466,7 +1648,7 @@ class ForensicAnalysisGUI:
         # PID filter indicator
         self.http_pid_filter_label = tk.Label(
             http_header, text="All Processes",
-            bg=self.colors["dark_blue"], fg="#22d3ee",
+            bg=self.colors["dark_blue"], fg=self.colors["text_secondary"],
             font=("Segoe UI", 10))
         self.http_pid_filter_label.pack(side="left", padx=5)
 
@@ -1476,9 +1658,9 @@ class ForensicAnalysisGUI:
             http_header, text="Filter to PID",
             variable=self.http_pid_lock_var,
             command=self._refresh_http_tree,
-            bg=self.colors["dark_blue"], fg="#22d3ee",
+            bg=self.colors["dark_blue"], fg=self.colors["text_secondary"],
             selectcolor=self.colors["navy"],
-            activebackground=self.colors["dark_blue"], activeforeground="#22d3ee",
+            activebackground=self.colors["dark_blue"], activeforeground=self.colors["text_secondary"],
             font=("Segoe UI", 10))
         self.http_pid_lock_check.pack(side="right", padx=5)
 
@@ -1633,7 +1815,7 @@ class ForensicAnalysisGUI:
 
         if not matched:
             ctk.CTkLabel(main, text="No YARA matches found.",
-                         font=Fonts.body, text_color="gray60").pack(pady=20)
+                         font=Fonts.body, text_color=self.colors["text_dim"]).pack(pady=20)
         else:
             text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
             text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
@@ -1687,7 +1869,7 @@ class ForensicAnalysisGUI:
 
         if not matched:
             ctk.CTkLabel(main, text="No Sigma matches found.",
-                         font=Fonts.body, text_color="gray60").pack(pady=20)
+                         font=Fonts.body, text_color=self.colors["text_dim"]).pack(pady=20)
         else:
             text_frame = ctk.CTkFrame(main, fg_color=self.colors["dark_blue"], corner_radius=8)
             text_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
@@ -1769,7 +1951,7 @@ class ForensicAnalysisGUI:
         # Update PID filter label
         if pid_filter:
             self.http_pid_filter_label.configure(
-                text=f"PID {pid_filter}", fg="#22d3ee")
+                text=f"PID {pid_filter}", fg=self.colors["text_secondary"])
         else:
             self.http_pid_filter_label.configure(
                 text="All Processes", fg="#9ca3af")
@@ -1883,7 +2065,7 @@ class ForensicAnalysisGUI:
         detail = ctk.CTkToplevel(self.root)
         detail.title(f"HTTP Session #{sess.id} — {sess.host or sess.remote_ip}")
         detail.geometry("640x450")
-        detail.configure(fg_color="#1a1a1a")
+        detail.configure(fg_color=self.colors["surface"])
         detail.attributes("-topmost", True)
         detail.after(200, lambda: detail.focus_force())
 
@@ -1926,7 +2108,7 @@ class ForensicAnalysisGUI:
             for reason in sess.alert_reasons:
                 lines.append(f"  - {reason}")
 
-        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color=self.colors["navy"],
                                       text_color="white", wrap="word")
         text_widget.pack(fill="both", expand=True, padx=15, pady=10)
         text_widget.insert("1.0", "\n".join(lines))
@@ -1993,7 +2175,7 @@ class ForensicAnalysisGUI:
             row1,
             text="",
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         sysmon_status.pack(side="left", padx=10)
 
@@ -2030,7 +2212,7 @@ class ForensicAnalysisGUI:
             row2,
             text="Total: 0 | File: 0 | Registry: 0 | Network: 0 | Process: 0 | DNS: 0 | Persistence: 0",
             font=Fonts.body,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         stats_label.pack(side="left")
 
@@ -2163,14 +2345,14 @@ class ForensicAnalysisGUI:
         process_info_label.pack(fill="both", expand=True, padx=15, pady=10)
 
         # ===== EVENTS DISPLAY =====
-        events_frame = ctk.CTkFrame(content, fg_color="gray20")
+        events_frame = ctk.CTkFrame(content, fg_color=self.colors["surface_elevated"])
         events_frame.pack(fill="both", expand=True)
 
         # Scrollbars
-        events_vsb = tk.Scrollbar(events_frame, orient="vertical", bg="#1a1a1a")
+        events_vsb = tk.Scrollbar(events_frame, orient="vertical", bg=self.colors["surface"])
         events_vsb.pack(side="right", fill="y")
 
-        events_hsb = tk.Scrollbar(events_frame, orient="horizontal", bg="#1a1a1a")
+        events_hsb = tk.Scrollbar(events_frame, orient="horizontal", bg=self.colors["surface"])
         events_hsb.pack(side="bottom", fill="x")
 
         # Style the Live Events tree with slightly larger font
@@ -2187,7 +2369,7 @@ class ForensicAnalysisGUI:
                        font=('Segoe UI', _le_font_size),
                        rowheight=_le_row_height)
         style.configure("LiveEvents.Treeview.Heading",
-                       background="#0d1520",
+                       background=self.colors["navy"],
                        foreground="white",
                        borderwidth=1,
                        font=('Segoe UI', _le_heading_size, 'bold'))
@@ -2814,7 +2996,7 @@ class ForensicAnalysisGUI:
         detail = ctk.CTkToplevel(self.root)
         detail.title(f"Event Detail: {event.get('operation', '')} - PID {event.get('pid', '')}")
         detail.geometry("720x500")
-        detail.configure(fg_color="#1a1a1a")
+        detail.configure(fg_color=self.colors["surface"])
         detail.attributes("-topmost", True)
         detail.after(200, lambda: detail.focus_force())
 
@@ -2902,7 +3084,7 @@ class ForensicAnalysisGUI:
             for k, v in extra.items():
                 lines.append(f"  {k}: {v}")
 
-        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color="#0d1520",
+        text_widget = ctk.CTkTextbox(detail, font=Fonts.body, fg_color=self.colors["navy"],
                                       text_color="white", wrap="word")
         text_widget.pack(fill="both", expand=True, padx=15, pady=10)
         text_widget.insert("1.0", "\n".join(lines))
@@ -2987,7 +3169,7 @@ class ForensicAnalysisGUI:
         alert = ctk.CTkToplevel(self.root)
         alert.title("Persistence Change Detected")
         alert.geometry("520x300")
-        alert.configure(fg_color="#1a1a1a")
+        alert.configure(fg_color=self.colors["surface"])
         alert.attributes("-topmost", True)
         alert.after(200, lambda: alert.focus_force())
 
@@ -3011,7 +3193,7 @@ class ForensicAnalysisGUI:
         if entry.extra.get("previous_value"):
             details += f"\nPrevious: {entry.extra['previous_value'][:200]}"
 
-        text_widget = ctk.CTkTextbox(alert, font=Fonts.body, fg_color="#0d1520",
+        text_widget = ctk.CTkTextbox(alert, font=Fonts.body, fg_color=self.colors["navy"],
                                       text_color="white", wrap="word")
         text_widget.pack(fill="both", expand=True, padx=15, pady=10)
         text_widget.insert("1.0", details)
@@ -3048,7 +3230,7 @@ class ForensicAnalysisGUI:
         # Show selected tab
         self.tabs[tab_name].pack(fill="both", expand=True)
 
-        # Highlight active nav button (cyan text + subtle bg)
+        # Highlight active nav button (red text + subtle dark-red bg)
         _active_map = {
             "new_case": self.btn_new_case,
             "current_case": self.btn_current_case,
@@ -3074,32 +3256,29 @@ class ForensicAnalysisGUI:
         for subtab in self.analysis_subtabs.values():
             subtab.pack_forget()
 
-        # Reset button colors
-        self.btn_processes.configure(
+        # Reset both nav pills to inactive style
+        _inactive_cfg = dict(
             fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["red"]
+            text_color=self.colors["text_secondary"],
+            border_width=1,
+            border_color=self.colors["border"],
         )
-        self.btn_live_events.configure(
-            fg_color="transparent",
-            border_width=2,
-            border_color=self.colors["red"]
-        )
+        self.btn_processes.configure(**_inactive_cfg)
+        self.btn_live_events.configure(**_inactive_cfg)
 
         # Show selected subtab
         self.analysis_subtabs[subtab_name].pack(fill="both", expand=True)
 
-        # Highlight button
+        # Highlight active pill
+        _active_cfg = dict(
+            fg_color=self.colors["accent"],
+            text_color="white",
+            border_width=0,
+        )
         if subtab_name == "processes":
-            self.btn_processes.configure(
-                fg_color=self.colors["red"],
-                border_width=0
-            )
+            self.btn_processes.configure(**_active_cfg)
         elif subtab_name == "live_events":
-            self.btn_live_events.configure(
-                fg_color=self.colors["red"],
-                border_width=0
-            )
+            self.btn_live_events.configure(**_active_cfg)
             # Auto-start monitoring if not already active
             if self.live_events_toggle_monitoring and not self.system_monitor_active:
                 print("[GUI] Auto-starting Live Events monitoring...")
@@ -3638,7 +3817,7 @@ class ForensicAnalysisGUI:
             container,
             text="YARA & Threat Intelligence Analysis",
             font=Fonts.body,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         subtitle.pack(pady=(0, 20))
         
@@ -3660,7 +3839,7 @@ class ForensicAnalysisGUI:
             container,
             text="Initializing...",
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         self.current_file_label.pack(pady=5)
         
@@ -3859,8 +4038,8 @@ class ForensicAnalysisGUI:
 
         btn_cancel = ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy,
                                    width=120, height=35,
-                                   fg_color="gray40",
-                                   hover_color="gray30")
+                                   fg_color=self.colors["navy"],
+                                   hover_color=self.colors["dark_blue"])
         btn_cancel.pack(side="left", padx=5)
 
     def refresh_iocs_display(self):
@@ -4075,7 +4254,7 @@ class ForensicAnalysisGUI:
                 continue
 
             # Create frame for each screenshot (vertical: thumbnail + delete button)
-            screenshot_frame = ctk.CTkFrame(gallery_frame, fg_color="#1a1a1a", corner_radius=8)
+            screenshot_frame = ctk.CTkFrame(gallery_frame, fg_color=self.colors["surface"], corner_radius=8)
             screenshot_frame.pack(side="left", padx=5, pady=5)
 
             # Load and create thumbnail
@@ -4205,7 +4384,7 @@ class ForensicAnalysisGUI:
             detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
             
             lbl = ctk.CTkLabel(detail_frame, text=label, 
-                              text_color="gray60", font=Fonts.helper)
+                              text_color=self.colors["text_dim"], font=Fonts.helper)
             lbl.pack(anchor="w")
             
             val = ctk.CTkLabel(detail_frame, text=value,
@@ -4318,7 +4497,7 @@ class ForensicAnalysisGUI:
         info_text = f"{size_kb:.2f} KB | {datetime.fromisoformat(file_info['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}"
         info_label = ctk.CTkLabel(
             left_frame, text=info_text,
-            text_color="gray60", font=Fonts.helper,
+            text_color=self.colors["text_dim"], font=Fonts.helper,
             cursor="hand2"
         )
         info_label.pack(anchor="w", pady=(2, 0))
@@ -4329,13 +4508,13 @@ class ForensicAnalysisGUI:
 
         # Expand/Collapse indicator
         details_visible = [False]
-        details_frame = ctk.CTkFrame(card_frame, fg_color="#0d1520", height=200)
+        details_frame = ctk.CTkFrame(card_frame, fg_color=self.colors["navy"], height=200)
 
         expand_indicator = ctk.CTkLabel(
             right_frame,
             text="▼",
             font=Fonts.body_large,
-            text_color="gray60",
+            text_color=self.colors["text_dim"],
             cursor="hand2"
         )
         expand_indicator.pack(side="top")
@@ -4548,7 +4727,7 @@ File Size: {file_info['file_size']} bytes"""
         text_widget = tk.Text(
             details_text_frame,
             wrap="none",
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="#ffffff",
             font=Fonts.monospace(10),
             height=12,
@@ -4661,46 +4840,36 @@ File Size: {file_info['file_size']} bytes"""
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
         self.tabs["yara_rules"] = frame
 
-        # Header
-        header_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=20)
-
-        title = ctk.CTkLabel(header_frame, text="YARA Rules Management",
-                            font=Fonts.header_subsection,
-                            text_color="white")
-        title.pack(side="left")
-
-        # Action buttons
-        btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        btn_frame.pack(side="right")
+        # ── Unified tab header ─────────────────────────────────────────
+        btn_frame = self._make_tab_header(frame, "YARA RULES",
+                                          "Detection Ruleset Management")
 
         _action_font = Fonts.label_large if self._is_large_screen else Fonts.label
-        self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
-                                     command=self.add_yara_rule_dialog,
-                                     fg_color=self.colors["red"],
-                                     hover_color=self.colors["red_dark"],
-                                     font=_action_font)
-        # Only show Add Rule button if rule creation is enabled in settings
-        if self.settings_manager.get("yara.enable_rule_creation", True):
-            self.btn_add_yara_rule.pack(side="left", padx=5)
-
-        btn_import_rule = ctk.CTkButton(btn_frame, text="Import from File",
-                                       command=self.import_yara_rule_file,
-                                       fg_color=self.colors["navy"],
-                                       hover_color=self.colors["dark_blue"],
-                                       font=_action_font)
-        btn_import_rule.pack(side="left", padx=5)
-
         btn_refresh = ctk.CTkButton(btn_frame, text="Refresh",
-                                   command=self.refresh_yara_rules_list,
-                                   fg_color=self.colors["navy"],
-                                   hover_color=self.colors["dark_blue"],
-                                   font=_action_font)
-        btn_refresh.pack(side="left", padx=5)
+                                    command=self.refresh_yara_rules_list,
+                                    fg_color=self.colors["navy"],
+                                    hover_color=self.colors["dark_blue"],
+                                    font=_action_font, height=30)
+        btn_refresh.pack(side="left", padx=(0, 6))
+
+        btn_import_rule = ctk.CTkButton(btn_frame, text="Import File",
+                                        command=self.import_yara_rule_file,
+                                        fg_color=self.colors["navy"],
+                                        hover_color=self.colors["dark_blue"],
+                                        font=_action_font, height=30)
+        btn_import_rule.pack(side="left", padx=(0, 6))
+
+        self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
+                                               command=self.add_yara_rule_dialog,
+                                               fg_color=self.colors["accent"],
+                                               hover_color=self.colors["accent_hover"],
+                                               font=_action_font, height=30)
+        if self.settings_manager.get("yara.enable_rule_creation", True):
+            self.btn_add_yara_rule.pack(side="left")
 
         # Info bar
-        info_frame = ctk.CTkFrame(frame, fg_color=self.colors["navy"], height=50)
-        info_frame.pack(fill="x", padx=20, pady=(0, 10))
+        info_frame = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"], height=40)
+        info_frame.pack(fill="x", padx=0, pady=(0, 0))
         info_frame.pack_propagate(False)
 
         self.yara_rules_count_label = ctk.CTkLabel(info_frame,
@@ -4728,19 +4897,19 @@ File Size: {file_info['file_size']} bytes"""
         _yara_row_height = 32 if self._is_large_screen else 24
 
         style.configure("Yara.Treeview",
-                       background="#1a2332",
+                       background=self.colors["surface_elevated"],
                        foreground="white",
-                       fieldbackground="#1a2332",
+                       fieldbackground=self.colors["surface_elevated"],
                        borderwidth=0,
                        font=('Segoe UI', _yara_font_size),
                        rowheight=_yara_row_height)
         style.configure("Yara.Treeview.Heading",
-                       background="#0d1520",
+                       background=self.colors["navy"],
                        foreground="white",
                        borderwidth=0,
                        font=('Segoe UI', _yara_heading_size, 'bold'))
         style.map('Yara.Treeview',
-                 background=[('selected', '#991b1b')])
+                 background=[('selected', self.colors["accent"])])
 
         # Create treeview with scrollbar
         tree_frame = tk.Frame(list_container, bg="#1a2332")
@@ -4782,7 +4951,7 @@ File Size: {file_info['file_size']} bytes"""
         self.yara_rules_tree.pack(fill="both", expand=True)
 
         # Context menu for rule actions (Edit option added dynamically based on settings)
-        self.yara_context_menu = tk.Menu(self.root, tearoff=0, bg="#0d1520", fg="white",
+        self.yara_context_menu = tk.Menu(self.root, tearoff=0, bg=self.colors["navy"], fg="white",
                                          activebackground="#991b1b", activeforeground="white")
 
         # Bind right-click to show context menu (built dynamically)
@@ -5236,37 +5405,29 @@ File Size: {file_info['file_size']} bytes"""
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
         self.tabs["settings"] = frame
 
-        # Header
-        header_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=20)
-
-        title = ctk.CTkLabel(header_frame, text="Application Settings",
-                            font=Fonts.header_subsection,
-                            text_color="white")
-        title.pack(side="left")
-
-        # Action buttons
-        btn_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
-        btn_frame.pack(side="right")
+        # ── Unified tab header ─────────────────────────────────────────
+        btn_frame = self._make_tab_header(frame, "SETTINGS",
+                                          "Application Configuration", accent=False)
 
         _settings_font = Fonts.label_large if self._is_large_screen else Fonts.label
-        btn_save = ctk.CTkButton(btn_frame, text="Save Settings",
-                                command=self.save_settings,
-                                fg_color=self.colors["red"],
-                                hover_color=self.colors["red_dark"],
-                                font=_settings_font)
-        btn_save.pack(side="left", padx=5)
+        btn_reset = ctk.CTkButton(btn_frame, text="Reset Defaults",
+                                  command=self.reset_settings,
+                                  fg_color=self.colors["navy"],
+                                  hover_color=self.colors["dark_blue"],
+                                  font=_settings_font, height=30)
+        btn_reset.pack(side="left", padx=(0, 6))
 
-        btn_reset = ctk.CTkButton(btn_frame, text="Reset to Defaults",
-                                 command=self.reset_settings,
-                                 fg_color=self.colors["navy"],
-                                 hover_color=self.colors["dark_blue"],
-                                 font=_settings_font)
-        btn_reset.pack(side="left", padx=5)
+        btn_save = ctk.CTkButton(btn_frame, text="Save Settings",
+                                 command=self.save_settings,
+                                 fg_color=self.colors["accent"],
+                                 hover_color=self.colors["accent_hover"],
+                                 font=_settings_font, height=30)
+        btn_save.pack(side="left")
 
         # Scrollable settings container
-        settings_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
-        settings_scroll.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        settings_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent",
+                                                  scrollbar_button_color=self.colors["border"])
+        settings_scroll.pack(fill="both", expand=True, padx=16, pady=12)
 
         # Store entry widgets for later access
         self.settings_widgets = {}
@@ -6108,7 +6269,7 @@ File Size: {file_info['file_size']} bytes"""
             title_label.pack()
 
             # Details
-            details_frame = ctk.CTkFrame(main_frame, fg_color="#1a1a1a", corner_radius=8)
+            details_frame = ctk.CTkFrame(main_frame, fg_color=self.colors["surface"], corner_radius=8)
             details_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
             rule_info = sigma_match.rule
@@ -6523,7 +6684,7 @@ File Size: {file_info['file_size']} bytes"""
                         rules_display = ', '.join(all_rules) if len(all_rules) > 1 else rule
 
                         # Details section
-                        details_frame = ctk.CTkFrame(content_frame, fg_color="#1a1a1a", corner_radius=8)
+                        details_frame = ctk.CTkFrame(content_frame, fg_color=self.colors["surface"], corner_radius=8)
                         details_frame.pack(fill="x", padx=10, pady=10)
 
                         details = f"""PID: {pid}
@@ -6554,7 +6715,7 @@ Risk Level: {risk_level}"""
                             strings_header.pack(pady=(5, 5), padx=10, anchor="w")
 
                             # Scrollable strings container with fixed height
-                            strings_container = ctk.CTkFrame(content_frame, fg_color="#1a1a1a", corner_radius=8)
+                            strings_container = ctk.CTkFrame(content_frame, fg_color=self.colors["surface"], corner_radius=8)
                             strings_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
                             strings_frame = ctk.CTkScrollableFrame(
@@ -6619,7 +6780,7 @@ Risk Level: {risk_level}"""
         progress_window.geometry("500x200")
         progress_window.attributes('-topmost', True)
 
-        frame = ctk.CTkFrame(progress_window, fg_color="gray20")
+        frame = ctk.CTkFrame(progress_window, fg_color=self.colors["surface_elevated"])
         frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         title_label = ctk.CTkLabel(
@@ -6953,7 +7114,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         info_text = tk.Text(
             info_frame,
             wrap="word",
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="#ffffff",
             font=Fonts.monospace(11),
             relief="flat",
@@ -7016,7 +7177,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             search_row,
             text="Extracting strings...",
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         status_label.pack(side="left", padx=20)
 
@@ -7121,19 +7282,19 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         export_btn.pack(side="left", padx=5)
         
         # Strings text area
-        strings_text_frame = ctk.CTkFrame(strings_frame, fg_color="gray20")
+        strings_text_frame = ctk.CTkFrame(strings_frame, fg_color=self.colors["surface_elevated"])
         strings_text_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         
-        vsb = tk.Scrollbar(strings_text_frame, orient="vertical", bg="#1a1a1a")
+        vsb = tk.Scrollbar(strings_text_frame, orient="vertical", bg=self.colors["surface"])
         vsb.pack(side="right", fill="y")
         
-        hsb = tk.Scrollbar(strings_text_frame, orient="horizontal", bg="#1a1a1a")
+        hsb = tk.Scrollbar(strings_text_frame, orient="horizontal", bg=self.colors["surface"])
         hsb.pack(side="bottom", fill="x")
         
         strings_text = tk.Text(
             strings_text_frame,
             wrap="none",
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="#ffffff",
             font=Fonts.monospace(10),
             yscrollcommand=vsb.set,
@@ -7503,7 +7664,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             controls_frame,
             text="Total: 0 | File: 0 | Network: 0 | Thread: 0 | Process: 0",
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         stats_label.pack(side="left", padx=20)
 
@@ -7564,14 +7725,14 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             btn.pack(side="left", padx=3)
 
         # Events tree view
-        tree_frame = ctk.CTkFrame(events_frame, fg_color="gray20")
+        tree_frame = ctk.CTkFrame(events_frame, fg_color=self.colors["surface_elevated"])
         tree_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # Scrollbars
-        tree_vsb = tk.Scrollbar(tree_frame, orient="vertical", bg="#1a1a1a")
+        tree_vsb = tk.Scrollbar(tree_frame, orient="vertical", bg=self.colors["surface"])
         tree_vsb.pack(side="right", fill="y")
 
-        tree_hsb = tk.Scrollbar(tree_frame, orient="horizontal", bg="#1a1a1a")
+        tree_hsb = tk.Scrollbar(tree_frame, orient="horizontal", bg=self.colors["surface"])
         tree_hsb.pack(side="bottom", fill="x")
 
         # Create tree view for events
@@ -7607,7 +7768,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                        fieldbackground="#1a1a1a",
                        borderwidth=0)
         style.configure("Treeview.Heading",
-                       background="#0d1520",
+                       background=self.colors["navy"],
                        foreground="white",
                        borderwidth=1)
         style.map("Treeview",
@@ -7845,7 +8006,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             search_row,
             text="Extracting strings...",
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         status_label.pack(side="left", padx=20)
 
@@ -7920,19 +8081,19 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         export_btn.pack(side="left", padx=5)
 
         # Strings text area
-        strings_text_frame = ctk.CTkFrame(main_container, fg_color="gray20")
+        strings_text_frame = ctk.CTkFrame(main_container, fg_color=self.colors["surface_elevated"])
         strings_text_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        vsb = tk.Scrollbar(strings_text_frame, orient="vertical", bg="#1a1a1a")
+        vsb = tk.Scrollbar(strings_text_frame, orient="vertical", bg=self.colors["surface"])
         vsb.pack(side="right", fill="y")
 
-        hsb = tk.Scrollbar(strings_text_frame, orient="horizontal", bg="#1a1a1a")
+        hsb = tk.Scrollbar(strings_text_frame, orient="horizontal", bg=self.colors["surface"])
         hsb.pack(side="bottom", fill="x")
 
         strings_text = tk.Text(
             strings_text_frame,
             wrap="none",
-            bg="#1a1a1a",
+            bg=self.colors["surface"],
             fg="#ffffff",
             font=Fonts.monospace(10),
             yscrollcommand=vsb.set,
@@ -8299,7 +8460,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 rules_display = ', '.join(all_rules) if len(all_rules) > 1 else rule
 
                 # Details section
-                details_frame = ctk.CTkFrame(content_frame, fg_color="#1a1a1a", corner_radius=8)
+                details_frame = ctk.CTkFrame(content_frame, fg_color=self.colors["surface"], corner_radius=8)
                 details_frame.pack(fill="x", padx=10, pady=10)
 
                 details = f"""PID: {proc_info['pid']}
@@ -8330,7 +8491,7 @@ Risk Level: {risk_level}"""
                     strings_header.pack(pady=(5, 5), padx=10, anchor="w")
 
                     # Scrollable strings container with fixed height
-                    strings_container = ctk.CTkFrame(content_frame, fg_color="#1a1a1a", corner_radius=8)
+                    strings_container = ctk.CTkFrame(content_frame, fg_color=self.colors["surface"], corner_radius=8)
                     strings_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
                     strings_frame = ctk.CTkScrollableFrame(
@@ -8470,7 +8631,7 @@ Risk Level: {risk_level}"""
         label.pack(pady=(0, 10))
 
         # Scrollable list of items with checkboxes
-        scroll_frame = ctk.CTkScrollableFrame(content, fg_color="gray20", height=200)
+        scroll_frame = ctk.CTkScrollableFrame(content, fg_color=self.colors["surface_elevated"], height=200)
         scroll_frame.pack(fill="both", expand=True, pady=(0, 10))
 
         check_vars = {}
@@ -8500,7 +8661,7 @@ Risk Level: {risk_level}"""
                        fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
                        height=35).pack(side="left", padx=5, expand=True, fill="x")
         ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy,
-                       fg_color="gray30", hover_color="gray40",
+                       fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
                        height=35).pack(side="right", padx=5)
 
     def add_live_event_iocs_to_case(self, events_tree):
@@ -8607,7 +8768,7 @@ Risk Level: {risk_level}"""
             header,
             text=info_text,
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         info_label.pack(side="right", padx=20)
 
@@ -8619,7 +8780,7 @@ Risk Level: {risk_level}"""
         hex_text = tk.Text(
             text_frame,
             wrap="none",
-            bg="#0d1520",
+            bg=self.colors["navy"],
             fg="#ffffff",
             font=("Courier New", 10),
             selectbackground="#2a4d6e",
@@ -8681,7 +8842,7 @@ Risk Level: {risk_level}"""
             header,
             text=info_text,
             font=Fonts.helper,
-            text_color="gray60"
+            text_color=self.colors["text_dim"]
         )
         info_label.pack(side="right", padx=20)
 
@@ -8690,7 +8851,7 @@ Risk Level: {risk_level}"""
         text_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Create text widget with line numbers
-        line_frame = tk.Frame(text_frame, bg="#0d1520")
+        line_frame = tk.Frame(text_frame, bg=self.colors["navy"])
         line_frame.pack(side="left", fill="y")
 
         line_numbers = tk.Text(
@@ -8708,7 +8869,7 @@ Risk Level: {risk_level}"""
         text_widget = tk.Text(
             text_frame,
             wrap="none",
-            bg="#0d1520",
+            bg=self.colors["navy"],
             fg="#ffffff",
             font=("Courier New", 10),
             selectbackground="#2a4d6e",
