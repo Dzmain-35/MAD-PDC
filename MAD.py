@@ -2767,6 +2767,21 @@ class ForensicAnalysisGUI:
                              self.root.clipboard_append(str(event.get('path', ''))))
         ).pack(side="left", padx=5)
 
+        # Persistence-specific action buttons
+        if persist_entry and isinstance(persist_entry, dict):
+            ctk.CTkButton(
+                btn_frame, text="📂 Open File Location", height=32, width=160,
+                fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+                command=lambda: self._open_persistence_file_location(persist_entry)
+            ).pack(side="left", padx=5)
+
+            if persist_entry.get('entry_type') == 'scheduled_task':
+                ctk.CTkButton(
+                    btn_frame, text="📋 Open in Task Scheduler", height=32, width=180,
+                    fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+                    command=lambda: self._open_scheduled_task(persist_entry)
+                ).pack(side="left", padx=5)
+
         ctk.CTkButton(
             btn_frame, text="Close", command=detail.destroy,
             fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
@@ -2782,6 +2797,94 @@ class ForensicAnalysisGUI:
     # Baseline / snapshot controls are available in the Live Events
     # control panel.  The persistence change badge is shown in the
     # Live Events stats bar.
+
+    def _extract_file_path_from_persistence(self, entry_dict):
+        """Extract an executable/file path from a persistence entry's value field.
+
+        The value may contain a command line with arguments, quoted paths, etc.
+        This method attempts to isolate the actual file path.
+        """
+        value = entry_dict.get('value', '') if isinstance(entry_dict, dict) else str(entry_dict)
+        if not value:
+            return None
+
+        # Strip leading/trailing whitespace
+        value = value.strip()
+
+        # Handle quoted paths: "C:\path\to\file.exe" -args
+        if value.startswith('"'):
+            end_quote = value.find('"', 1)
+            if end_quote != -1:
+                candidate = value[1:end_quote]
+            else:
+                candidate = value[1:]
+        else:
+            # Take everything up to the first space (handles: C:\path\file.exe -args)
+            candidate = value.split()[0] if value.split() else value
+
+        # Basic validation: must look like a file path
+        if candidate and (os.sep in candidate or '/' in candidate or '\\' in candidate):
+            return candidate
+        return None
+
+    def _open_persistence_file_location(self, entry_dict):
+        """Open the folder containing the file referenced by a persistence entry."""
+        file_path = self._extract_file_path_from_persistence(entry_dict)
+        if not file_path:
+            messagebox.showwarning("No File Path",
+                                   "Could not extract a file path from this persistence entry.")
+            return
+
+        try:
+            folder_path = os.path.dirname(file_path)
+            system = platform.system()
+            if system == "Windows":
+                if os.path.exists(file_path):
+                    subprocess.run(['explorer', '/select,', file_path])
+                elif os.path.exists(folder_path):
+                    subprocess.run(['explorer', folder_path])
+                else:
+                    messagebox.showinfo("Path Not Found",
+                                        f"Path does not exist on this system:\n{file_path}")
+            elif system == "Darwin":
+                if os.path.exists(file_path):
+                    subprocess.run(['open', '-R', file_path])
+                elif os.path.exists(folder_path):
+                    subprocess.run(['open', folder_path])
+                else:
+                    messagebox.showinfo("Path Not Found",
+                                        f"Path does not exist on this system:\n{file_path}")
+            else:
+                if os.path.exists(folder_path):
+                    subprocess.run(['xdg-open', folder_path])
+                else:
+                    messagebox.showinfo("Path Not Found",
+                                        f"Path does not exist on this system:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open file location: {str(e)}")
+
+    def _open_scheduled_task(self, entry_dict):
+        """Open the Windows Task Scheduler focused on the relevant task."""
+        task_path = None
+        if isinstance(entry_dict, dict):
+            task_path = (entry_dict.get('extra', {}).get('full_path')
+                         or entry_dict.get('location', ''))
+        if not task_path:
+            messagebox.showwarning("No Task Path",
+                                   "Could not determine the scheduled task path.")
+            return
+
+        try:
+            system = platform.system()
+            if system == "Windows":
+                # Open Task Scheduler via taskschd.msc
+                subprocess.run(['mmc', 'taskschd.msc'])
+            else:
+                messagebox.showinfo("Not Supported",
+                                    "Task Scheduler is only available on Windows.\n\n"
+                                    f"Task path: {task_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open Task Scheduler: {str(e)}")
 
     def on_persistence_change_detected(self, change_type, entry):
         """Callback fired from PersistenceMonitor when a change is found.
@@ -2827,7 +2930,7 @@ class ForensicAnalysisGUI:
         """Show a popup alert for a significant persistence change."""
         alert = ctk.CTkToplevel(self.root)
         alert.title("Persistence Change Detected")
-        alert.geometry("520x300")
+        alert.geometry("520x340")
         alert.configure(fg_color="#1a1a1a")
         alert.attributes("-topmost", True)
         alert.after(200, lambda: alert.focus_force())
@@ -2858,11 +2961,28 @@ class ForensicAnalysisGUI:
         text_widget.insert("1.0", details)
         text_widget.configure(state="disabled")
 
+        entry_dict = entry.to_dict()
+        btn_frame = ctk.CTkFrame(alert, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+
         ctk.CTkButton(
-            alert, text="Dismiss", command=alert.destroy,
+            btn_frame, text="📂 Open File Location", height=32, width=160,
+            fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+            command=lambda: self._open_persistence_file_location(entry_dict)
+        ).pack(side="left", padx=5)
+
+        if entry.entry_type == "scheduled_task":
+            ctk.CTkButton(
+                btn_frame, text="📋 Open in Task Scheduler", height=32, width=180,
+                fg_color=self.colors["navy"], hover_color=self.colors["dark_blue"],
+                command=lambda: self._open_scheduled_task(entry_dict)
+            ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Dismiss", command=alert.destroy,
             fg_color=self.colors["red"], hover_color=self.colors["red_dark"],
             height=32, width=100
-        ).pack(pady=(0, 15))
+        ).pack(side="right", padx=5)
 
     # ==================== TAB NAVIGATION ====================
     def show_tab(self, tab_name):
