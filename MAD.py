@@ -697,7 +697,7 @@ class ForensicAnalysisGUI:
         form_scroll.pack(fill="both", expand=True)
 
         form_inner = ctk.CTkFrame(form_scroll, fg_color="transparent")
-        form_inner.pack(fill="x", padx=28, pady=20)
+        form_inner.pack(pady=20)
 
         # ── Section: Analyst Info ──────────────────────────────────────
         ctk.CTkLabel(form_inner, text="ANALYST INFORMATION",
@@ -1793,7 +1793,7 @@ class ForensicAnalysisGUI:
             self.workflow_toggle_btn.configure(text="≡ Guide")
         else:
             self.workflow_sidecar.grid(row=0, column=1, sticky="nsew")
-            self.workflow_sidecar.master.columnconfigure(1, weight=45)
+            self.workflow_sidecar.master.columnconfigure(1, minsize=420, weight=0)
             self._workflow_visible = True
             self.workflow_toggle_btn.configure(text="✕ Guide")
 
