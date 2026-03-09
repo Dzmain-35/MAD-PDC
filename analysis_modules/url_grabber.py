@@ -77,6 +77,19 @@ REGION_PROFILES = {
     "ec":        {"d": -300, "n": "America/Guayaquil"},
 }
 
+# PIA (Private Internet Access) VPN server names matching each region profile.
+# These are the server location names as they appear in the PIA client.
+PIA_SERVER_MAP = {
+    "us-east":   "US East",
+    "br":        "Brazil",
+    "mx":        "Mexico",
+    "ar":        "Argentina",
+    "co":        "Colombia",
+    "cl":        "Chile",
+    "pe":        "Peru",
+    "ec":        "Ecuador",
+}
+
 
 def build_fingerprint(region: str) -> dict:
     profile = REGION_PROFILES.get(region, REGION_PROFILES["us-east"])
@@ -137,11 +150,17 @@ def _detect_extension(data: bytes) -> str:
 
 
 class MalwareRetriever:
-    def __init__(self, region: str = "us-east"):
-        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    def __init__(self, region: str = "us-east", download_dir: str | None = None):
+        self.download_dir = download_dir or DOWNLOAD_DIR
+        os.makedirs(self.download_dir, exist_ok=True)
         self._seen: set[str] = set()
         self._session = make_session()
+        self._region = region
         self._fingerprint = build_fingerprint(region)
+        # Track files saved during a retrieve() call
+        self._retrieved_files: list[dict] = []
+        # Track all URLs encountered during retrieval (for IOCs)
+        self._visited_urls: list[str] = []
         log.info("Region profile: %s (tz=%s, offset=%d)", region,
                  self._fingerprint["n"], self._fingerprint["d"])
 
@@ -172,16 +191,16 @@ class MalwareRetriever:
         with open(LOG_FILE, "w") as f:
             json.dump(logs, f, indent=2)
 
-    def save_payload(self, data: bytes, url: str) -> None:
+    def save_payload(self, data: bytes, url: str) -> dict | None:
         md5, sha256 = self._hash_bytes(data)
         if sha256 in self._seen:
             log.info("Skipping duplicate payload: %s", sha256[:16])
-            return
+            return None
         self._seen.add(sha256)
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         ext = _detect_extension(data)
         filename = f"sample_{timestamp}_{sha256[:8]}{ext}"
-        path = os.path.join(DOWNLOAD_DIR, filename)
+        path = os.path.join(self.download_dir, filename)
         with open(path, "wb") as f:
             f.write(data)
         imphash = self._imphash(path)
@@ -195,11 +214,13 @@ class MalwareRetriever:
             "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         }
         self._append_log(entry)
+        self._retrieved_files.append(entry)
         log.info("Payload saved : %s", path)
         log.info("SHA256        : %s", sha256)
         log.info("MD5           : %s", md5)
         if imphash:
             log.info("Imphash       : %s", imphash)
+        return entry
 
     def _extract_js_redirects(self, html: str, base_url: str) -> list[str]:
         targets = []
@@ -227,6 +248,7 @@ class MalwareRetriever:
 
     def _download_direct(self, url: str) -> bool:
         log.info("Direct download: %s", url)
+        self._track_url(url)
         try:
             r = self._session.get(url, stream=True, timeout=60)
             r.raise_for_status()
@@ -250,6 +272,7 @@ class MalwareRetriever:
         Returns the response body on success, None on failure.
         """
         log.info("Submitting fingerprint gate POST to: %s", url)
+        self._track_url(url)
         post_headers = {
             **HEADERS,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -277,6 +300,7 @@ class MalwareRetriever:
             if location:
                 follow_url = urljoin(url, location)
                 log.info("Gate redirected to: %s", follow_url)
+                self._track_url(follow_url)
                 f = self._session.get(follow_url, timeout=60, stream=True, allow_redirects=True)
                 f.raise_for_status()
                 log.debug("Follow response headers: %s", dict(f.headers))
@@ -300,12 +324,17 @@ class MalwareRetriever:
             return False
 
         log.info("Fetching [depth=%d]: %s", depth, url)
+        self._track_url(url)
         try:
             r = self._session.get(url, timeout=30)
             r.raise_for_status()
         except requests.RequestException as e:
             log.warning("Fetch failed: %s", e)
             return False
+
+        # Track the final URL after any HTTP redirects
+        if r.url != url:
+            self._track_url(r.url)
 
         ct = r.headers.get("content-type", "").split(";")[0].strip()
         log.debug("ct=%s len=%d url=%s", ct, len(r.content), r.url)
@@ -358,6 +387,7 @@ class MalwareRetriever:
 
     def _try_playwright(self, url: str) -> bool:
         log.info("Falling back to Playwright for: %s", url)
+        self._track_url(url)
         captured: list[tuple[bytes, str]] = []
 
         def handle_response(response):
@@ -365,6 +395,7 @@ class MalwareRetriever:
             cd = response.headers.get("content-disposition", "")
             cl = response.headers.get("content-length", "?")
             log.debug("RESPONSE ct=%-40s cd=%-30s len=%-8s %s", ct, cd, cl, response.url)
+            self._track_url(response.url)
             if ct not in BINARY_CONTENT_TYPES:
                 return
             try:
@@ -377,6 +408,7 @@ class MalwareRetriever:
 
         def handle_download(download):
             log.info("Download event: %s -> %s", download.url, download.suggested_filename)
+            self._track_url(download.url)
             try:
                 tmp = download.path()
                 if tmp is None:
@@ -425,12 +457,117 @@ class MalwareRetriever:
             self.save_payload(data, src_url)
         return bool(captured)
 
-    def retrieve(self, url: str) -> None:
+    def _track_url(self, url: str) -> None:
+        """Record a URL encountered during retrieval (for IOC extraction)."""
+        if url and url not in self._visited_urls:
+            self._visited_urls.append(url)
+
+    def check_current_location(self) -> dict:
+        """
+        Query external IP geolocation to determine the current VPN exit location.
+        Compares against the target region to detect mismatches.
+
+        Returns:
+            Dictionary with:
+                - ip (str): Current external IP
+                - country (str): Country name
+                - city (str): City name
+                - timezone (str): Detected timezone (e.g. America/New_York)
+                - target_timezone (str): Expected timezone for the selected region
+                - match (bool): Whether detected timezone matches the target
+                - pia_server (str): Which PIA server they should be on
+                - error (str|None): Error message if lookup failed
+        """
+        target_profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])
+        target_tz = target_profile["n"]
+        pia_server = PIA_SERVER_MAP.get(self._region, "US East")
+
+        result = {
+            "ip": "unknown",
+            "country": "unknown",
+            "city": "unknown",
+            "timezone": "unknown",
+            "target_timezone": target_tz,
+            "match": False,
+            "pia_server": pia_server,
+            "error": None,
+        }
+
+        # Try ip-api.com first (no key required, returns timezone)
+        for api_url in [
+            "http://ip-api.com/json/?fields=query,country,city,timezone,status",
+            "https://ipinfo.io/json",
+        ]:
+            try:
+                r = requests.get(api_url, timeout=5)
+                r.raise_for_status()
+                data = r.json()
+
+                if "ip-api" in api_url:
+                    if data.get("status") != "success":
+                        continue
+                    result["ip"] = data.get("query", "unknown")
+                    result["country"] = data.get("country", "unknown")
+                    result["city"] = data.get("city", "unknown")
+                    result["timezone"] = data.get("timezone", "unknown")
+                else:
+                    # ipinfo.io format
+                    result["ip"] = data.get("ip", "unknown")
+                    result["country"] = data.get("country", "unknown")
+                    result["city"] = data.get("city", "unknown")
+                    result["timezone"] = data.get("timezone", "unknown")
+
+                result["match"] = result["timezone"] == target_tz
+                log.info("Current location: %s, %s (tz=%s, ip=%s) — target: %s — %s",
+                         result["city"], result["country"], result["timezone"],
+                         result["ip"], target_tz,
+                         "MATCH" if result["match"] else "MISMATCH")
+                return result
+
+            except Exception as e:
+                log.debug("Geo-IP lookup failed for %s: %s", api_url, e)
+                continue
+
+        result["error"] = "Could not determine current location (geo-IP lookup failed)"
+        log.warning(result["error"])
+        return result
+
+    def get_region_info(self) -> dict:
+        """Return region profile info for VPN recommendation."""
+        profile = REGION_PROFILES.get(self._region, REGION_PROFILES["us-east"])
+        return {
+            "region": self._region,
+            "timezone": profile["n"],
+            "utc_offset_minutes": profile["d"],
+            "pia_server": PIA_SERVER_MAP.get(self._region, "US East"),
+            "fingerprint": self._fingerprint,
+        }
+
+    def retrieve(self, url: str) -> dict:
+        """
+        Retrieve malware sample from URL.
+
+        Returns:
+            Dictionary with keys:
+                - success (bool): Whether any payloads were captured
+                - files (list[dict]): List of saved file entries (path, md5, sha256, etc.)
+                - region_info (dict): Region/timezone profile used (for VPN recommendation)
+                - url (str): The original URL
+        """
+        self._retrieved_files = []
+        self._visited_urls = []
         log.info("Opening: %s", url)
-        if self._fetch_and_parse(url):
-            return
-        if not self._try_playwright(url):
-            log.warning("No binary payloads detected from either strategy")
+        if not self._fetch_and_parse(url):
+            if not self._try_playwright(url):
+                log.warning("No binary payloads detected from either strategy")
+
+        return {
+            "success": len(self._retrieved_files) > 0,
+            "files": list(self._retrieved_files),
+            "region_info": self.get_region_info(),
+            "url": url,
+            "visited_urls": list(self._visited_urls),
+        }
 
 
 def main():
