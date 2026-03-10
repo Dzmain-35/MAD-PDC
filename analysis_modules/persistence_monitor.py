@@ -21,10 +21,6 @@ try:
 except ImportError:
     winreg = None
 
-try:
-    import psutil as _psutil
-except ImportError:
-    _psutil = None
 
 # ── Registry locations commonly abused for persistence ──────────────────
 REGISTRY_PERSISTENCE_KEYS = [
@@ -140,10 +136,6 @@ class PersistenceMonitor:
         self.changes: List[Dict[str, Any]] = []
         self._changes_lock = threading.Lock()
 
-        # PIDs of subprocesses spawned by this monitor (shared with SystemWideMonitor)
-        self._internal_pids: Set[int] = set()
-        self._internal_pids_lock = threading.Lock()
-
         # Stats
         self.stats = {
             "registry_entries": 0,
@@ -154,34 +146,6 @@ class PersistenceMonitor:
             "removed": 0,
             "last_scan": None,
         }
-
-    @property
-    def internal_pids(self) -> Set[int]:
-        """PIDs of subprocesses owned by this monitor (for exclusion from live events)."""
-        with self._internal_pids_lock:
-            return set(self._internal_pids)
-
-    def _track_subprocess(self, proc: subprocess.Popen):
-        """Add a Popen process and its children to the internal PID set."""
-        with self._internal_pids_lock:
-            self._internal_pids.add(proc.pid)
-        # Also track child processes (e.g. conhost.exe spawned by schtasks)
-        if _psutil:
-            try:
-                ps = _psutil.Process(proc.pid)
-                for child in ps.children(recursive=True):
-                    with self._internal_pids_lock:
-                        self._internal_pids.add(child.pid)
-            except (_psutil.NoSuchProcess, _psutil.AccessDenied):
-                pass
-
-    def _untrack_subprocess(self, proc: subprocess.Popen):
-        """Remove a Popen process and its children from the internal PID set."""
-        with self._internal_pids_lock:
-            self._internal_pids.discard(proc.pid)
-            # Clean up any child PIDs that were tracked
-            # Keep only PIDs that are still alive and parented to our processes
-            self._internal_pids.clear()
 
     # ── public API ───────────────────────────────────────────────────
     def register_callback(self, callback: Callable):
@@ -348,7 +312,7 @@ class PersistenceMonitor:
 
     # ── snapshot: scheduled tasks ────────────────────────────────────
     def _run_schtasks(self, args: List[str], timeout: int = 30) -> Optional[str]:
-        """Run schtasks via Popen, tracking PIDs so SystemWideMonitor can exclude them."""
+        """Run schtasks command and return stdout, or None on failure."""
         try:
             proc = subprocess.Popen(
                 args,
@@ -356,7 +320,6 @@ class PersistenceMonitor:
                 text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            self._track_subprocess(proc)
             try:
                 stdout, _ = proc.communicate(timeout=timeout)
                 if proc.returncode == 0 and stdout.strip():
@@ -365,8 +328,6 @@ class PersistenceMonitor:
                 proc.kill()
                 proc.communicate()
                 print(f"[PersistenceMonitor] schtasks timed out: {args}")
-            finally:
-                self._untrack_subprocess(proc)
         except FileNotFoundError:
             pass
         except Exception as e:

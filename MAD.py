@@ -2186,8 +2186,8 @@ class ForensicAnalysisGUI:
                         self.persistence_monitor.start_monitoring()
                         self.persistence_monitor_active = True
 
-                    # Exclude PersistenceMonitor's own schtasks/conhost PIDs from live events
-                    monitor.set_excluded_pids_ref(self.persistence_monitor._internal_pids)
+                    # Suppress PersistenceMonitor's own schtasks/conhost from live events & process tree
+                    monitor.set_excluded_pids_ref(None)
 
                     monitor_btn_text.set("⏸ Stop Monitoring")
                     monitor_btn.configure(fg_color="#059669")  # Green
@@ -5656,6 +5656,27 @@ File Size: {file_info['file_size']} bytes"""
         # Get all current processes
         processes = self.process_monitor.get_all_processes()
 
+        # Filter out PersistenceMonitor's own child processes (schtasks/conhost)
+        if self.system_wide_monitor and self.system_wide_monitor._suppress_own_children:
+            own_pid = self.system_wide_monitor._own_pid
+            _suppressed = self.system_wide_monitor._suppressed_process_names
+            # Build quick ppid lookup
+            ppid_map = {p['pid']: p.get('ppid') for p in processes}
+            hide_pids = set()
+            for p in processes:
+                name_lower = (p.get('name') or '').lower()
+                if name_lower not in _suppressed:
+                    continue
+                ppid = p.get('ppid')
+                # Direct child of MAD
+                if ppid == own_pid:
+                    hide_pids.add(p['pid'])
+                # Child of a direct child of MAD (conhost under schtasks)
+                elif ppid in hide_pids or ppid_map.get(ppid) == own_pid:
+                    hide_pids.add(p['pid'])
+            if hide_pids:
+                processes = [p for p in processes if p['pid'] not in hide_pids]
+
         # Build process map by PID
         process_map = {proc['pid']: proc for proc in processes}
         current_pids = set(process_map.keys())
@@ -6305,6 +6326,25 @@ File Size: {file_info['file_size']} bytes"""
 
         # Get all processes
         processes = self.process_monitor.get_all_processes()
+
+        # Filter out PersistenceMonitor's own child processes (schtasks/conhost)
+        if self.system_wide_monitor and self.system_wide_monitor._suppress_own_children:
+            own_pid = self.system_wide_monitor._own_pid
+            _suppressed = self.system_wide_monitor._suppressed_process_names
+            ppid_map = {p['pid']: p.get('ppid') for p in processes}
+            hide_pids = set()
+            for p in processes:
+                name_lower = (p.get('name') or '').lower()
+                if name_lower not in _suppressed:
+                    continue
+                ppid = p.get('ppid')
+                if ppid == own_pid:
+                    hide_pids.add(p['pid'])
+                elif ppid in hide_pids or ppid_map.get(ppid) == own_pid:
+                    hide_pids.add(p['pid'])
+            if hide_pids:
+                processes = [p for p in processes if p['pid'] not in hide_pids]
+
         process_map = {proc['pid']: proc for proc in processes}
 
         # Build parent-child relationships
