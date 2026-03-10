@@ -5,6 +5,7 @@ from datetime import datetime
 from case_manager import CaseManager
 from PIL import Image
 import os
+import shutil
 import socket
 import threading
 import subprocess
@@ -17,6 +18,7 @@ from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
 from analysis_modules.file_viewer_executor import get_viewer_executor
+from analysis_modules.url_grabber import MalwareRetriever, REGION_PROFILES
 import tkinter as tk
 from tkinter import ttk
 import re
@@ -798,7 +800,34 @@ class ForensicAnalysisGUI:
         )
         self.url_entry.pack(anchor="w")
 
-        # ── Primary action button ──────────────────────────────────────
+        # Region selector for URL Grabber (VPN location hint)
+        region_frame = ctk.CTkFrame(self.url_input_frame, fg_color="transparent")
+        region_frame.pack(fill="x", pady=(8, 0))
+
+        region_label = ctk.CTkLabel(
+            region_frame,
+            text="Target Region (VPN):",
+            font=Fonts.body_large,
+            text_color="white"
+        )
+        region_label.pack(side="left", padx=(0, 10))
+
+        region_choices = list(REGION_PROFILES.keys())
+        default_region = self.settings_manager.get("url_grabber.default_region", "us-east")
+        self.url_region_var = tk.StringVar(value=default_region)
+        self.url_region_dropdown = ctk.CTkOptionMenu(
+            region_frame,
+            variable=self.url_region_var,
+            values=region_choices,
+            font=Fonts.body_large,
+            fg_color=self.colors["navy"],
+            button_color=self.colors["red"],
+            button_hover_color=self.colors["red_dark"],
+            width=200
+        )
+        self.url_region_dropdown.pack(side="left")
+
+        # Upload button
         btn_upload = ctk.CTkButton(
             form_inner,
             text="  ▶   START ANALYSIS CASE",
@@ -3447,7 +3476,8 @@ class ForensicAnalysisGUI:
             if not download_url.startswith(('http://', 'https://')):
                 download_url = 'https://' + download_url
 
-            self.process_new_case_urls([download_url], analyst_name, report_url)
+            region = self.url_region_var.get()
+            self.process_new_case_urls([download_url], analyst_name, report_url, region=region)
         else:
             # File upload mode
             files = filedialog.askopenfilenames(title="Select files to analyze")
@@ -3505,6 +3535,7 @@ class ForensicAnalysisGUI:
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
+                "infection_type": "file",
                 "network_case_path": network_case_path,
                 "files": [],
                 "total_threats": 0,
@@ -3569,7 +3600,7 @@ class ForensicAnalysisGUI:
         finally:
             self.scan_in_progress = False
 
-    def process_new_case_urls(self, urls, analyst_name, report_url):
+    def process_new_case_urls(self, urls, analyst_name, report_url, region="us-east"):
         """Process URLs for new case with progress bar"""
         if self.scan_in_progress:
             messagebox.showwarning("Scan in Progress", "Please wait for current scan to complete")
@@ -3584,13 +3615,13 @@ class ForensicAnalysisGUI:
         # Run downloading and scanning in separate thread
         scan_thread = threading.Thread(
             target=self._scan_urls_thread,
-            args=(urls, analyst_name, report_url),
+            args=(urls, analyst_name, report_url, region),
             daemon=True
         )
         scan_thread.start()
 
-    def _scan_urls_thread(self, urls, analyst_name, report_url):
-        """Background thread for URL downloading and file scanning"""
+    def _scan_urls_thread(self, urls, analyst_name, report_url, region="us-east"):
+        """Background thread for URL downloading and file scanning using MalwareRetriever"""
         try:
             # Create case structure
             case_id = f"CASE-{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -3618,6 +3649,9 @@ class ForensicAnalysisGUI:
                 "status": "ACTIVE",
                 "analyst_name": analyst_name,
                 "report_url": report_url,
+                "infection_type": "url",
+                "download_region": region,
+                "analyst_location": {},
                 "network_case_path": network_case_path,
                 "files": [],
                 "total_threats": 0,
@@ -3634,6 +3668,85 @@ class ForensicAnalysisGUI:
 
             downloaded_files = []
             failed_downloads = []
+            vpn_recommendation = None
+
+            # Determine whether to use advanced retrieval (MalwareRetriever)
+            use_advanced = self.settings_manager.get("url_grabber.enable_advanced_retrieval", True)
+
+            # Initialize MalwareRetriever if advanced retrieval is enabled
+            retriever = None
+            if use_advanced:
+                try:
+                    retriever = MalwareRetriever(region=region, download_dir=files_dir)
+                    region_info = retriever.get_region_info()
+                    pia_server = region_info['pia_server']
+                    vpn_recommendation = (
+                        f"PIA Server: {pia_server}\n"
+                        f"Timezone: {region_info['timezone']}\n"
+                        f"UTC offset: {region_info['utc_offset_minutes']} minutes\n\n"
+                        f"Connect PIA to \"{pia_server}\" on the Linux host "
+                        f"before detonating the sample in the VM."
+                    )
+                    print(f"URL Grabber initialized: region={region_info['region']}, "
+                          f"tz={region_info['timezone']}, offset={region_info['utc_offset_minutes']}")
+
+                    # Check current VPN location before downloading
+                    self.root.after(0, self.update_progress, 0, len(urls), "Checking VPN location...")
+                    loc = retriever.check_current_location()
+
+                    # Store analyst location in case data
+                    if not loc.get("error"):
+                        case_data["analyst_location"] = {
+                            "ip": loc["ip"],
+                            "city": loc["city"],
+                            "country": loc["country"],
+                            "timezone": loc["timezone"],
+                            "vpn_match": loc["match"],
+                        }
+
+                    if loc["error"]:
+                        print(f"VPN location check: {loc['error']}")
+                    elif not loc["match"]:
+                        # Mismatch — warn analyst and let them decide
+                        proceed_result = [None]
+
+                        def show_vpn_mismatch():
+                            result = messagebox.askyesno(
+                                "VPN Location Mismatch",
+                                f"Your current IP location does not match the target region.\n\n"
+                                f"Current location:\n"
+                                f"  IP: {loc['ip']}\n"
+                                f"  Location: {loc['city']}, {loc['country']}\n"
+                                f"  Timezone: {loc['timezone']}\n\n"
+                                f"Target region:\n"
+                                f"  PIA Server: {loc['pia_server']}\n"
+                                f"  Timezone: {loc['target_timezone']}\n\n"
+                                f"Connect PIA to \"{loc['pia_server']}\" on the Linux host.\n\n"
+                                f"Continue downloading anyway?"
+                            )
+                            proceed_result[0] = result
+
+                        self.root.after(0, show_vpn_mismatch)
+
+                        import time
+                        while proceed_result[0] is None:
+                            time.sleep(0.1)
+
+                        if not proceed_result[0]:
+                            # User chose not to continue
+                            self.root.after(0, self.close_progress_window)
+                            self.root.after(0, lambda: self.new_case_status.configure(
+                                text="Cancelled — connect PIA to the correct region and try again"
+                            ))
+                            self.scan_in_progress = False
+                            return
+                    else:
+                        print(f"VPN location check: OK — {loc['city']}, {loc['country']} "
+                              f"(tz={loc['timezone']}) matches target {loc['target_timezone']}")
+
+                except Exception as e:
+                    print(f"Warning: Could not initialize MalwareRetriever: {e}")
+                    retriever = None
 
             # Download and process each URL
             for i, url in enumerate(urls):
@@ -3646,47 +3759,108 @@ class ForensicAnalysisGUI:
                 # Update progress - downloading
                 self.root.after(0, self.update_progress, i + 1, len(urls), f"Downloading: {url[:50]}...")
 
-                # Download file
-                success, file_path, error = self.case_manager.download_file_from_url(url)
+                # Try advanced retrieval first (MalwareRetriever), fall back to basic download
+                retrieved_file_paths = []
+                success = False
+                error = ""
+
+                if retriever:
+                    try:
+                        result = retriever.retrieve(url)
+                        if result["success"] and result["files"]:
+                            success = True
+                            for f_entry in result["files"]:
+                                retrieved_file_paths.append(f_entry["path"])
+                            print(f"MalwareRetriever captured {len(result['files'])} payload(s) from {url}")
+
+                        # Add all visited URLs to case IOCs regardless of success
+                        for visited_url in result.get("visited_urls", []):
+                            self.case_manager.add_ioc("urls", visited_url)
+                            print(f"Added IOC URL: {visited_url}")
+
+                        if not success:
+                            error = "MalwareRetriever found no payloads, falling back to basic download"
+                            print(error)
+                    except Exception as e:
+                        error = f"MalwareRetriever error: {e}"
+                        print(error)
+
+                # Fall back to basic download if advanced retrieval didn't work
+                if not success:
+                    basic_success, file_path, basic_error = self.case_manager.download_file_from_url(url)
+                    if basic_success:
+                        success = True
+                        retrieved_file_paths = [file_path]
+                        # Add the source URL as IOC for basic downloads too
+                        self.case_manager.add_ioc("urls", url)
+                    else:
+                        error = basic_error
 
                 if success:
-                    downloaded_files.append(file_path)
-                    files_to_process = [file_path]
+                    for file_path in retrieved_file_paths:
+                        downloaded_files.append(file_path)
 
-                    # Check if downloaded file is an archive - auto-extract
-                    if self.case_manager._is_archive(file_path):
-                        self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
-                        extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
-                        if extract_success and extracted_files:
-                            print(f"Auto-extracted {len(extracted_files)} files from archive")
-                            files_to_process = extracted_files
+                    files_to_process = list(retrieved_file_paths)
 
-                            # Copy extracted files to Desktop folder for analyst access
+                    # Check each downloaded file for archives - auto-extract
+                    expanded_files = []
+                    for file_path in files_to_process:
+                        if self.case_manager._is_archive(file_path):
+                            self.root.after(0, self.update_progress, i + 1, len(urls), f"Extracting archive...")
+                            extract_success, extracted_files, extract_error = self.case_manager._extract_archive(file_path)
+                            if extract_success and extracted_files:
+                                print(f"Auto-extracted {len(extracted_files)} files from archive")
+                                expanded_files.extend(extracted_files)
+
+                                # Copy extracted files to Desktop folder for analyst access
+                                try:
+                                    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+                                    archive_name = os.path.splitext(os.path.basename(file_path))[0]
+                                    desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
+                                    os.makedirs(desktop_extract_folder, exist_ok=True)
+
+                                    for extracted_file in extracted_files:
+                                        dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
+                                        shutil.copy2(extracted_file, dest_path)
+
+                                    print(f"Copied extracted files to: {desktop_extract_folder}")
+                                except Exception as e:
+                                    print(f"Warning: Could not copy to desktop: {e}")
+
+                                # Clean up the archive after extraction
+                                try:
+                                    os.remove(file_path)
+                                except:
+                                    pass
+                            else:
+                                if extract_error:
+                                    print(f"Archive extraction warning: {extract_error}")
+                                expanded_files.append(file_path)
+                        else:
+                            expanded_files.append(file_path)
+
+                    # Filter to only allowed file extensions
+                    ALLOWED_EXTENSIONS = {
+                        ".exe", ".zip", ".dll", ".lzh", ".rar", ".tar",
+                        ".png", ".jpg", ".html", ".msi", ".img", ".7z",
+                        ".gif", ".scr", ".py", ".ps1", ".vbs", ".vba", ".js",
+                    }
+                    filtered_files = []
+                    for fp in expanded_files:
+                        ext = os.path.splitext(fp)[1].lower()
+                        if ext in ALLOWED_EXTENSIONS:
+                            filtered_files.append(fp)
+                        else:
+                            print(f"Skipping file with disallowed extension: {os.path.basename(fp)} ({ext})")
                             try:
-                                desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-                                archive_name = os.path.splitext(os.path.basename(file_path))[0]
-                                desktop_extract_folder = os.path.join(desktop_path, f"{case_id}_{archive_name}")
-                                os.makedirs(desktop_extract_folder, exist_ok=True)
-
-                                for extracted_file in extracted_files:
-                                    dest_path = os.path.join(desktop_extract_folder, os.path.basename(extracted_file))
-                                    shutil.copy2(extracted_file, dest_path)
-
-                                print(f"Copied extracted files to: {desktop_extract_folder}")
-                            except Exception as e:
-                                print(f"Warning: Could not copy to desktop: {e}")
-
-                            # Clean up the archive after extraction
-                            try:
-                                os.remove(file_path)
+                                if os.path.exists(fp) and files_dir not in os.path.abspath(fp):
+                                    os.remove(fp)
                             except:
                                 pass
-                        elif extract_error:
-                            print(f"Archive extraction warning: {extract_error}")
-                            # Fall back to processing the archive itself
+                    expanded_files = filtered_files
 
                     # Process each file (either the downloaded file or extracted files)
-                    for j, process_file_path in enumerate(files_to_process):
+                    for j, process_file_path in enumerate(expanded_files):
                         filename = os.path.basename(process_file_path)
                         self.root.after(0, self.update_progress, i + 1, len(urls), f"Scanning: {filename}")
 
@@ -3704,9 +3878,9 @@ class ForensicAnalysisGUI:
                             case_data["total_threats"] += 1
                         case_data["total_vt_hits"] += file_info["vt_hits"]
 
-                        # Clean up temporary file
+                        # Clean up temporary files (only those outside files_dir)
                         try:
-                            if os.path.exists(process_file_path):
+                            if os.path.exists(process_file_path) and files_dir not in os.path.abspath(process_file_path):
                                 os.remove(process_file_path)
                         except:
                             pass
@@ -3714,14 +3888,23 @@ class ForensicAnalysisGUI:
                     # Download failed - prompt user for action
                     failed_downloads.append(f"{url}: {error}")
 
-                    # Show error dialog with retry/upload options (on main thread)
+                    # Show error dialog with VPN hint and retry/upload options (on main thread)
                     retry_result = [None]  # Use list to capture result from lambda
+
+                    vpn_hint = ""
+                    if vpn_recommendation:
+                        vpn_hint = (
+                            f"\n--- PIA VPN Check ---\n{vpn_recommendation}\n\n"
+                            "The download may have failed because PIA is not "
+                            "connected to the correct region.\n\n"
+                        )
 
                     def show_download_error():
                         result = messagebox.askretrycancel(
                             "Download Failed",
                             f"Failed to download file from URL:\n{url[:80]}...\n\n"
                             f"Error: {error}\n\n"
+                            f"{vpn_hint}"
                             "Click 'Retry' to try again, or 'Cancel' to skip this file.\n"
                             "You can also upload files manually from the 'New Case' tab."
                         )
@@ -3736,7 +3919,7 @@ class ForensicAnalysisGUI:
                         time.sleep(0.1)
 
                     if retry_result[0]:  # User clicked Retry
-                        # Remove from failed list and retry
+                        # Remove from failed list and retry with basic download
                         failed_downloads.pop()
                         self.root.after(0, self.update_progress, i + 1, len(urls), f"Retrying: {url[:50]}...")
                         success, file_path, error = self.case_manager.download_file_from_url(url)
@@ -3810,16 +3993,30 @@ class ForensicAnalysisGUI:
                 if len(failed_downloads) > 5:
                     success_msg += f"\n... and {len(failed_downloads) - 5} more"
 
+            # Show VPN recommendation if URL grabber was used
+            if vpn_recommendation and files_processed > 0:
+                success_msg += f"\n\n--- VPN Recommendation ---\n{vpn_recommendation}"
+
             self.root.after(0, lambda: self.new_case_status.configure(
                 text=f"✓ Case created: {case_data['id']} | Files: {files_processed} | Threats: {case_data['total_threats']}"
             ))
             self.root.after(0, lambda: messagebox.showinfo("Success", success_msg))
+
+            # Show VPN info dialog separately for visibility
+            if vpn_recommendation and files_processed > 0:
+                self.root.after(500, lambda: messagebox.showinfo(
+                    "PIA VPN Location",
+                    f"Set PIA on the Linux host before detonating:\n\n{vpn_recommendation}"
+                ))
 
             # Clear form and switch tabs
             self.root.after(0, lambda: self.analyst_name_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.report_url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.url_entry.delete(0, 'end'))
             self.root.after(0, lambda: self.show_tab("current_case"))
+
+            # Refresh IOCs display so URL IOCs are visible
+            self.root.after(100, self.refresh_iocs_display)
 
         except Exception as e:
             self.root.after(0, self.close_progress_window)
@@ -4403,29 +4600,88 @@ class ForensicAnalysisGUI:
         for widget in self.case_info_frame.winfo_children():
             widget.destroy()
         
-        # Use Analyst Name and Report URL instead of Case ID and Created
-        details = [
+        # Build details — split into left (case info) and right (location/VPN) columns
+        infection_type = self.current_case.get("infection_type", "N/A")
+        left_details = [
             ("Analyst Name:", self.current_case.get("analyst_name", "N/A")),
             ("Report URL:", self.current_case.get("report_url", "N/A")),
+            ("Infection Type:", infection_type.upper() if infection_type != "N/A" else "N/A"),
             ("Files:", str(len(self.current_case["files"]))),
-            ("Threats:", str(self.current_case["total_threats"]))
+            ("Threats:", str(self.current_case["total_threats"])),
         ]
-        
-        for i, (label, value) in enumerate(details):
+
+        right_details = []
+
+        # Add analyst location if available (URL cases with VPN check)
+        analyst_loc = self.current_case.get("analyst_location", {})
+        if analyst_loc and analyst_loc.get("ip"):
+            loc_str = f"{analyst_loc.get('city', '?')}, {analyst_loc.get('country', '?')}"
+            vpn_status = "Match" if analyst_loc.get("vpn_match") else "Mismatch"
+            right_details.append(("Analyst Location:", loc_str))
+            right_details.append(("Analyst IP:", analyst_loc.get("ip", "N/A")))
+            right_details.append(("VPN Status:", vpn_status))
+
+        # Add download region for URL cases
+        download_region = self.current_case.get("download_region")
+        if download_region:
+            from analysis_modules.url_grabber import PIA_SERVER_MAP
+            region_display = PIA_SERVER_MAP.get(download_region, download_region)
+            right_details.append(("Download Region:", region_display))
+
+        # Configure case_info_frame as a two-panel layout
+        self.case_info_frame.columnconfigure(0, weight=1)
+        self.case_info_frame.columnconfigure(1, weight=0)
+        self.case_info_frame.columnconfigure(2, weight=1)
+
+        # Left panel — case info (2-column grid within)
+        left_panel = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+        left_panel.grid(row=0, column=0, sticky="nsew")
+
+        for i, (label, value) in enumerate(left_details):
             row = i // 2
             col = i % 2
-            
-            detail_frame = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+
+            detail_frame = ctk.CTkFrame(left_panel, fg_color="transparent")
             detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
-            
-            lbl = ctk.CTkLabel(detail_frame, text=label, 
-                              text_color=self.colors["text_dim"], font=Fonts.helper)
+
+            lbl = ctk.CTkLabel(detail_frame, text=label,
+                              text_color="gray60", font=Fonts.helper)
             lbl.pack(anchor="w")
-            
+
             val = ctk.CTkLabel(detail_frame, text=value,
                               font=Fonts.body_bold,
                               text_color="white")
             val.pack(anchor="w")
+
+        # Right panel — location/VPN info (only if there are details)
+        if right_details:
+            # Vertical separator
+            sep = ctk.CTkFrame(self.case_info_frame, fg_color="gray40", width=1)
+            sep.grid(row=0, column=1, sticky="ns", padx=10, pady=5)
+
+            right_panel = ctk.CTkFrame(self.case_info_frame, fg_color="transparent")
+            right_panel.grid(row=0, column=2, sticky="nsew")
+
+            for i, (label, value) in enumerate(right_details):
+                row = i // 2
+                col = i % 2
+
+                detail_frame = ctk.CTkFrame(right_panel, fg_color="transparent")
+                detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
+
+                lbl = ctk.CTkLabel(detail_frame, text=label,
+                                  text_color="gray60", font=Fonts.helper)
+                lbl.pack(anchor="w")
+
+                # Highlight VPN mismatch in red
+                val_color = "white"
+                if label == "VPN Status:" and value == "Mismatch":
+                    val_color = "#ff4444"
+
+                val = ctk.CTkLabel(detail_frame, text=value,
+                                  font=Fonts.body_bold,
+                                  text_color=val_color)
+                val.pack(anchor="w")
         
         # Clear and rebuild files list
         for widget in self.files_list_frame.winfo_children():
@@ -7344,12 +7600,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             if not search_term:
                 # Show all strings (with length filter applied)
                 if length_filtered:
-                    display_text = "\n".join(length_filtered[:1000])  # Limit display for performance
+                    display_limit = 1000
+                    display_text = "\n".join(length_filtered[:display_limit])
                     strings_text.insert("1.0", display_text)
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (filtered by length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Showing: {len(length_filtered)} strings{filter_msg}")
+                    if len(length_filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(length_filtered):,} strings{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Showing: {len(length_filtered):,} strings{filter_msg}")
                 else:
                     strings_text.insert("1.0", "No strings match the length filter")
                     status_label.configure(text="No matches")
@@ -7381,7 +7641,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Found: {len(filtered)} matches{filter_msg}")
+                    if len(filtered) > 1000:
+                        status_label.configure(text=f"Showing 1,000 of {len(filtered):,} matches{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Found: {len(filtered):,} matches{filter_msg}")
                 else:
                     strings_text.insert("1.0", f"No strings found matching '{search_term}' with current filters")
                     status_label.configure(text="No matches")
@@ -7425,35 +7688,22 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
                 # Get minimum length for extraction
                 try:
-                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 4
-                    extract_min_length = max(4, min(extract_min_length, 10))
+                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 8
+                    extract_min_length = max(8, min(extract_min_length, 50))
                 except ValueError:
-                    extract_min_length = 4
+                    extract_min_length = 8
 
                 # Get quality filter setting
                 use_quality_filter = quality_filter_var.get()
 
-                # Progressive callback for UI updates
-                def progress_callback(current_strings, regions_total, regions_read, final=False):
-                    """Update UI with progressive results"""
+                # Lightweight progress callback - receives counts only for performance
+                def progress_callback(total_strings, regions_total, regions_read, final=False):
+                    """Update UI status with extraction progress (counts only, no data)"""
                     try:
-                        # Flatten strings for display
-                        flat_strings = []
-                        for category_strings in current_strings.values():
-                            if isinstance(category_strings, list):
-                                flat_strings.extend(category_strings)
-
-                        # Update status
-                        status_msg = f"{scan_mode.capitalize()} scan: {len(flat_strings)} strings | {regions_read}/{regions_total} regions"
+                        status_msg = f"{scan_mode.capitalize()} scan: {total_strings:,} strings | {regions_read}/{regions_total} regions"
                         if final:
-                            status_msg = f"Complete: {len(flat_strings)} strings ({scan_mode} mode)"
-
+                            status_msg = f"Complete: {total_strings:,} strings ({scan_mode} mode)"
                         self.root.after(0, lambda msg=status_msg: status_label.configure(text=msg))
-
-                        # Update display every 10 regions or on final
-                        if final or regions_read % 10 == 0:
-                            all_strings_data["strings"] = flat_strings
-                            self.root.after(0, search_strings)
                     except Exception as e:
                         print(f"Progress callback error: {e}")
 
@@ -7606,16 +7856,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                         process_name=name
                     )
                     if success:
-                        # Also copy to network case folder if enabled
-                        network_copy_msg = ""
-                        if self.current_case and self.current_case.get("network_case_path"):
-                            try:
-                                network_path = self.current_case["network_case_path"]
-                                network_strings_path = os.path.join(network_path, os.path.basename(file_path))
-                                shutil.copy2(file_path, network_strings_path)
-                                network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
-                            except Exception as e:
-                                print(f"Warning: Could not copy strings to network folder: {e}")
+                        # Distribute to desktop and network case folder
+                        dist_messages = self._save_and_distribute_export(
+                            file_path, os.path.basename(file_path)
+                        )
 
                         # Show summary including metadata
                         mem_regions = len(extraction_result.get('memory_regions', []))
@@ -7624,7 +7868,8 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                         summary += f"Memory Regions Scanned: {mem_regions}\n"
                         summary += f"Total Bytes Scanned: {bytes_scanned:,}\n"
                         summary += f"Extraction Method: {extraction_result.get('extraction_method', 'unknown')}"
-                        summary += network_copy_msg
+                        if dist_messages:
+                            summary += "\n\nAlso copied to:\n" + "\n".join(dist_messages)
                         messagebox.showinfo("Export Complete", summary)
                     else:
                         messagebox.showerror("Export Failed", "Failed to export strings")
@@ -8129,12 +8374,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
             if not search_term:
                 if length_filtered:
-                    display_text = "\n".join(length_filtered[:5000])  # Limit for performance
+                    display_limit = 5000
+                    display_text = "\n".join(length_filtered[:display_limit])
                     strings_text.insert("1.0", display_text)
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (filtered by length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Showing: {len(length_filtered)} strings{filter_msg}")
+                    if len(length_filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(length_filtered):,} strings{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Showing: {len(length_filtered):,} strings{filter_msg}")
                 else:
                     strings_text.insert("1.0", "No strings match the filters")
                     status_label.configure(text="No matches")
@@ -8143,12 +8392,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 filtered = [s for s in length_filtered if search_term in s.lower()]
 
                 if filtered:
-                    for s in filtered[:5000]:
+                    display_limit = 5000
+                    for s in filtered[:display_limit]:
                         strings_text.insert("end", s + "\n")
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Found: {len(filtered)} matches{filter_msg}")
+                    if len(filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(filtered):,} matches{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Found: {len(filtered):,} matches{filter_msg}")
                 else:
                     strings_text.insert("1.0", f"No strings found matching '{search_term}'")
                     status_label.configure(text="No matches")
@@ -8186,7 +8439,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Extract strings
                 result = extractor.extract_strings_from_file(
                     file_path,
-                    min_length=4,
+                    min_length=8,
                     max_strings=50000,
                     include_unicode=True,
                     enable_quality_filter=use_quality_filter,
@@ -8273,18 +8526,15 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 )
 
                 if success:
-                    # Also copy to network case folder if enabled
-                    network_copy_msg = ""
-                    if self.current_case and self.current_case.get("network_case_path"):
-                        try:
-                            network_path = self.current_case["network_case_path"]
-                            network_strings_path = os.path.join(network_path, os.path.basename(save_path))
-                            shutil.copy2(save_path, network_strings_path)
-                            network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
-                        except Exception as e:
-                            print(f"Warning: Could not copy strings to network folder: {e}")
+                    # Distribute to desktop and network case folder
+                    dist_messages = self._save_and_distribute_export(
+                        save_path, os.path.basename(save_path)
+                    )
 
-                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}{network_copy_msg}")
+                    summary = f"Strings exported to:\n{save_path}"
+                    if dist_messages:
+                        summary += "\n\nAlso copied to:\n" + "\n".join(dist_messages)
+                    messagebox.showinfo("Export Complete", summary)
                 else:
                     messagebox.showerror("Export Failed", "Failed to export strings")
 
@@ -8300,6 +8550,33 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         # Start initial extraction
         import threading
         threading.Thread(target=extract_file_strings, daemon=True).start()
+
+    def _save_and_distribute_export(self, local_path, file_basename):
+        """Copy exported file to desktop and network case folder for the case."""
+        import shutil
+        messages = []
+
+        # Copy to Desktop
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+        desktop_dest = os.path.join(desktop_path, file_basename)
+        try:
+            if os.path.abspath(local_path) != os.path.abspath(desktop_dest):
+                shutil.copy2(local_path, desktop_dest)
+                messages.append(f"Desktop: {desktop_dest}")
+        except Exception as e:
+            print(f"Warning: Could not copy to desktop: {e}")
+
+        # Copy to network case folder
+        if self.current_case and self.current_case.get("network_case_path"):
+            try:
+                network_path = self.current_case["network_case_path"]
+                network_dest = os.path.join(network_path, file_basename)
+                shutil.copy2(local_path, network_dest)
+                messages.append(f"Network: {network_dest}")
+            except Exception as e:
+                print(f"Warning: Could not copy to network folder: {e}")
+
+        return messages
 
     def open_folder_location(self):
         """Open the folder containing the selected process's executable"""

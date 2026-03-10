@@ -82,6 +82,10 @@ class SettingsManager:
             "create_backups_on_delete": True,
             "create_backups_on_update": True,
         },
+        "url_grabber": {
+            "enable_advanced_retrieval": True,  # Use MalwareRetriever for URL downloads
+            "default_region": "us-east",  # Default fingerprint region profile
+        },
         "vm_snapshot": {
             "last_known_date": "",  # ISO date string of last session, used to detect stale snapshots
         },
@@ -367,6 +371,8 @@ class SettingsManager:
             "sigma.network_sigma_path": "Network path for shared Sigma rules",
             "sigma.create_backups_on_delete": "Create backup when deleting Sigma rules",
             "sigma.create_backups_on_update": "Create backup when updating Sigma rules",
+            "url_grabber.enable_advanced_retrieval": "Use MalwareRetriever for fingerprint-gate bypass when downloading from URLs",
+            "url_grabber.default_region": "Default region profile for URL grabber (us-east, br, mx, ar, co, cl, pe, ec)",
             "vm_snapshot.last_known_date": "Last known session date (auto-updated, used for clock sync detection)",
         }
         return descriptions.get(key_path, "No description available")
