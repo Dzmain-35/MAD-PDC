@@ -664,7 +664,6 @@ class ProcessMonitor:
             results = self.memory_extractor.extract_strings_from_memory(
                 pid=pid,
                 min_length=extraction_min_length,
-                max_strings=limit,
                 include_unicode=True,
                 filter_regions=None,  # Let scan_mode determine regions
                 enable_quality_filter=enable_quality_filter,
@@ -689,6 +688,7 @@ class ProcessMonitor:
             all_strings.extend(results['strings'].get('unicode', []))
 
             # Remove duplicates while preserving order (keep first occurrence)
+            # No cap — return ALL strings like Process Hacker
             seen = set()
             unique_strings = []
             for s in all_strings:
@@ -697,8 +697,6 @@ class ProcessMonitor:
                     if (yara_matched_strings and s in yara_matched_strings) or len(s) >= min_length:
                         seen.add(s)
                         unique_strings.append(s)
-                        if len(unique_strings) >= limit:
-                            break
 
             # Return full result or just strings
             if return_full_result:

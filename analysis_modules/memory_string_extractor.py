@@ -150,7 +150,7 @@ class MemoryStringExtractor:
         max_strings: int = 20000,
         include_unicode: bool = True,
         filter_regions: Optional[List[str]] = None,
-        enable_quality_filter: bool = True,
+        enable_quality_filter: bool = False,
         use_cache: bool = True,
         scan_mode: str = "quick",
         progress_callback: Optional[callable] = None
@@ -166,7 +166,8 @@ class MemoryStringExtractor:
             filter_regions: List of region types to scan ['private', 'image', 'mapped']
                           If None, defaults based on scan_mode
             enable_quality_filter: Enable quality filtering to remove low-quality strings
-                                 (entropy, vowel ratio, repetition, truncation checks)
+                                 (entropy, vowel ratio, repetition checks). OFF by default
+                                 for Process Hacker compatible raw extraction.
             use_cache: Use cached results if available and within TTL
             scan_mode: 'quick' (IMAGE regions only, ~1-3 sec) or 'deep' (all regions, slower)
             progress_callback: Optional callback(current_strings, total_regions, regions_scanned)
@@ -182,8 +183,8 @@ class MemoryStringExtractor:
             else:  # deep scan
                 filter_regions = ['private', 'image', 'mapped']  # Deep scan: all regions
 
-        # Create cache key based on parameters
-        cache_key = (pid, min_length, max_strings, include_unicode,
+        # Create cache key based on parameters (max_strings excluded — we always scan all)
+        cache_key = (pid, min_length, include_unicode,
                      tuple(filter_regions) if filter_regions else None,
                      enable_quality_filter, scan_mode)
 
@@ -350,12 +351,6 @@ class MemoryStringExtractor:
                                 except Exception as e:
                                     if self.verbose:
                                         print(f"[MemoryExtractor] Callback error: {e}")
-
-                            # Stop if we've collected enough strings
-                            if total_strings >= max_strings:
-                                if self.verbose:
-                                    print(f"[MemoryExtractor] Reached max strings limit ({max_strings})")
-                                break
                         else:
                             if self.verbose and regions_scanned <= 5:  # Only log first few failures
                                 base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
@@ -491,52 +486,92 @@ class MemoryStringExtractor:
         self,
         h_process,
         mbi,
-        max_chunk_size: int = 1024 * 1024  # 1MB chunks
+        max_region_size: int = 32 * 1024 * 1024  # 32MB safety cap
     ) -> Optional[bytes]:
         """
-        Read memory from a specific region
+        Read entire memory region from process (Process Hacker compatible).
+
+        Reads the full region instead of capping at 1MB. If the single-call
+        read fails (e.g. partial guard pages), falls back to 64KB chunked
+        reads and concatenates them to preserve string boundaries.
 
         Args:
             h_process: Process handle
             mbi: Memory region information
-            max_chunk_size: Maximum size to read at once
+            max_region_size: Safety cap to prevent OOM (default 32MB)
 
         Returns:
             Bytes read from memory or None on error
         """
         try:
-            size_to_read = min(mbi.RegionSize, max_chunk_size)
+            region_size = mbi.RegionSize
+            base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
 
             # Skip empty regions
-            if size_to_read == 0:
+            if region_size == 0:
                 return None
 
-            buffer = ctypes.create_string_buffer(size_to_read)
+            # Safety cap to prevent OOM on pathological regions
+            if region_size > max_region_size:
+                region_size = max_region_size
+
+            # Try reading the entire region in one call (fastest path)
+            buffer = ctypes.create_string_buffer(region_size)
             bytes_read = ctypes.c_size_t()
 
             success = ReadProcessMemory(
                 h_process,
-                ctypes.c_void_p(mbi.BaseAddress),
+                ctypes.c_void_p(base_addr),
                 buffer,
-                size_to_read,
+                region_size,
                 ctypes.byref(bytes_read)
             )
 
             if success and bytes_read.value > 0:
                 return buffer.raw[:bytes_read.value]
-            elif self.verbose:
-                # Log first few failures for debugging
-                import random
-                if random.random() < 0.01:  # Log 1% of failures to avoid spam
-                    base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
-                    print(f"[MemoryExtractor] ReadProcessMemory failed at {hex(base_addr)}, bytes_read: {bytes_read.value}")
+
+            # Full read failed — fall back to chunked reading.
+            # Some pages inside the region may be unreadable (guard pages,
+            # decommitted pages).  Read in 64KB chunks and fill unreadable
+            # pages with nulls so that string offsets stay aligned and no
+            # string that spans a chunk boundary is split.
+            chunk_size = 64 * 1024  # 64KB — matches Windows page granularity
+            chunks = []
+            offset = 0
+            got_any_data = False
+
+            while offset < region_size:
+                read_size = min(chunk_size, region_size - offset)
+                chunk_buf = ctypes.create_string_buffer(read_size)
+                chunk_read = ctypes.c_size_t()
+
+                ok = ReadProcessMemory(
+                    h_process,
+                    ctypes.c_void_p(base_addr + offset),
+                    chunk_buf,
+                    read_size,
+                    ctypes.byref(chunk_read)
+                )
+
+                if ok and chunk_read.value > 0:
+                    chunks.append(chunk_buf.raw[:chunk_read.value])
+                    # Pad if partial read to keep alignment
+                    if chunk_read.value < read_size:
+                        chunks.append(b'\x00' * (read_size - chunk_read.value))
+                    got_any_data = True
+                else:
+                    # Fill unreadable chunk with nulls to preserve offsets
+                    chunks.append(b'\x00' * read_size)
+
+                offset += read_size
+
+            if got_any_data:
+                return b''.join(chunks)
 
         except Exception as e:
             if self.verbose:
-                import random
-                if random.random() < 0.01:  # Log 1% of exceptions
-                    base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
-                    print(f"[MemoryExtractor] Exception reading memory at {hex(base_addr)}: {e}")
+                base_addr = mbi.BaseAddress if mbi.BaseAddress is not None else 0
+                print(f"[MemoryExtractor] Exception reading memory at {hex(base_addr)}: {e}")
 
         return None
     
@@ -769,10 +804,6 @@ class MemoryStringExtractor:
 
         # Check for excessive repetition
         if self._has_excessive_repetition(string):
-            return False
-
-        # Check if likely truncated
-        if self._is_likely_truncated(string):
             return False
 
         # Calculate entropy - reject very high entropy (encrypted/random data)

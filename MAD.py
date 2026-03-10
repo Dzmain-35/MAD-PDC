@@ -7180,7 +7180,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         max_length_entry.pack(side="left", padx=2)
 
         # Quality filter toggle
-        quality_filter_var = ctk.BooleanVar(value=True)
+        quality_filter_var = ctk.BooleanVar(value=False)
         quality_filter_checkbox = ctk.CTkCheckBox(
             filter_row,
             text="Quality Filter",
@@ -7402,7 +7402,6 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 extraction_result = self.process_monitor.extract_strings_from_process(
                     pid,
                     min_length=extract_min_length,
-                    limit=20000,
                     enable_quality_filter=use_quality_filter,
                     scan_mode=scan_mode,
                     progress_callback=progress_callback,
@@ -8014,7 +8013,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         max_length_entry.pack(side="left", padx=2)
 
         # Quality filter toggle
-        quality_filter_var = ctk.BooleanVar(value=True)
+        quality_filter_var = ctk.BooleanVar(value=False)
         quality_filter_checkbox = ctk.CTkCheckBox(
             filter_row,
             text="Quality Filter",
