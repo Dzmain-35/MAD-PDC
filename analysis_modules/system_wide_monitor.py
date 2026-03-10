@@ -13,6 +13,7 @@ Combines multiple data sources:
 2. psutil polling - Fallback for basic monitoring
 """
 
+import os
 import threading
 import time
 import re
@@ -239,6 +240,15 @@ class SystemWideMonitor:
         # Sigma rule match callbacks (separate from event callbacks)
         self.sigma_match_callbacks = []
 
+        # Suppress PersistenceMonitor's own schtasks/conhost from process events.
+        # We track PIDs of our own child processes (schtasks.exe, conhost.exe)
+        # by checking parent-PID chains back to our process.
+        self._own_pid = os.getpid()
+        self._internal_child_pids: Set[int] = set()  # PIDs spawned by our process to suppress
+        self._suppress_own_children = False  # Enabled when persistence monitor is active
+        _SUPPRESSED_NAMES = frozenset({"schtasks.exe", "conhost.exe"})
+        self._suppressed_process_names = _SUPPRESSED_NAMES
+
         # Statistics
         self.stats = {
             'total_events': 0,
@@ -309,6 +319,47 @@ class SystemWideMonitor:
     def register_sigma_callback(self, callback):
         """Register a callback for Sigma rule matches. callback(SigmaMatch, event_dict)"""
         self.sigma_match_callbacks.append(callback)
+
+    def set_excluded_pids_ref(self, pids_set: Set[int]):
+        """Enable suppression of PersistenceMonitor's own child processes.
+        The pids_set arg is kept for API compat but the actual filtering
+        uses parent-PID chain detection (immune to race conditions)."""
+        self._suppress_own_children = True
+
+    def _is_own_child_process(self, pid: int, name: str = "") -> bool:
+        """Check if a process is a schtasks/conhost spawned by our own process."""
+        if not self._suppress_own_children:
+            return False
+        # Already known internal child
+        if pid in self._internal_child_pids:
+            return True
+        # Check by name + parent chain
+        name_lower = name.lower() if name else ""
+        if name_lower not in self._suppressed_process_names:
+            return False
+        try:
+            proc = psutil.Process(pid)
+            ppid = proc.ppid()
+            # schtasks.exe: direct child of our process
+            if ppid == self._own_pid:
+                self._internal_child_pids.add(pid)
+                return True
+            # conhost.exe: child of a schtasks that is our child
+            if ppid in self._internal_child_pids:
+                self._internal_child_pids.add(pid)
+                return True
+            # Walk one more level (in case of intermediate processes)
+            try:
+                grandparent = psutil.Process(ppid).ppid()
+                if grandparent == self._own_pid:
+                    self._internal_child_pids.add(ppid)
+                    self._internal_child_pids.add(pid)
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        return False
 
     def start_monitoring(self) -> bool:
         """Start system-wide monitoring"""
@@ -459,6 +510,10 @@ class SystemWideMonitor:
 
                     # New process detected
                     if pid not in self.known_processes:
+                        proc_name = proc.info.get('name', '') or ''
+                        # Skip processes owned by PersistenceMonitor (schtasks/conhost)
+                        if self._is_own_child_process(pid, proc_name):
+                            continue
                         try:
                             cmdline = ' '.join(proc.info.get('cmdline', [])) if proc.info.get('cmdline') else ''
                             exe = proc.info.get('exe', proc.info.get('name', 'Unknown'))
@@ -486,6 +541,10 @@ class SystemWideMonitor:
                 # Detect terminated processes
                 terminated = self.known_processes - current_processes
                 for pid in terminated:
+                    # Skip processes owned by PersistenceMonitor (schtasks/conhost)
+                    if pid in self._internal_child_pids:
+                        self._internal_child_pids.discard(pid)
+                        continue
                     now = datetime.now()
                     event = {
                         'timestamp': now.strftime("%H:%M:%S.%f")[:-3],

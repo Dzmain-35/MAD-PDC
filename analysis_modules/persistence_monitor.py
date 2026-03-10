@@ -21,6 +21,7 @@ try:
 except ImportError:
     winreg = None
 
+
 # ── Registry locations commonly abused for persistence ──────────────────
 REGISTRY_PERSISTENCE_KEYS = [
     # Run / RunOnce (HKLM)
@@ -310,40 +311,41 @@ class PersistenceMonitor:
             pass
 
     # ── snapshot: scheduled tasks ────────────────────────────────────
+    def _run_schtasks(self, args: List[str], timeout: int = 30) -> Optional[str]:
+        """Run schtasks command and return stdout, or None on failure."""
+        try:
+            proc = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            try:
+                stdout, _ = proc.communicate(timeout=timeout)
+                if proc.returncode == 0 and stdout.strip():
+                    return stdout
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                print(f"[PersistenceMonitor] schtasks timed out: {args}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[PersistenceMonitor] schtasks error ({args}): {e}")
+        return None
+
     def _snapshot_scheduled_tasks(self) -> Dict[str, PersistenceEntry]:
         entries: Dict[str, PersistenceEntry] = OrderedDict()
         # Try XML format first (richer data), fall back to LIST format
-        try:
-            result = subprocess.run(
-                ["schtasks", "/query", "/fo", "XML", "/v"],
-                capture_output=True, text=True, timeout=30,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                self._parse_schtasks_xml(result.stdout, entries)
-        except FileNotFoundError:
-            pass
-        except subprocess.TimeoutExpired:
-            print("[PersistenceMonitor] schtasks XML query timed out")
-        except Exception as e:
-            print(f"[PersistenceMonitor] schtasks XML error: {e}")
+        xml_output = self._run_schtasks(["schtasks", "/query", "/fo", "XML", "/v"])
+        if xml_output:
+            self._parse_schtasks_xml(xml_output, entries)
 
         # If XML parsing yielded nothing, fall back to LIST format
         if not entries:
-            try:
-                result = subprocess.run(
-                    ["schtasks", "/query", "/fo", "LIST", "/v"],
-                    capture_output=True, text=True, timeout=30,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    self._parse_schtasks_list(result.stdout, entries)
-            except FileNotFoundError:
-                pass
-            except subprocess.TimeoutExpired:
-                print("[PersistenceMonitor] schtasks LIST query timed out")
-            except Exception as e:
-                print(f"[PersistenceMonitor] schtasks LIST error: {e}")
+            list_output = self._run_schtasks(["schtasks", "/query", "/fo", "LIST", "/v"])
+            if list_output:
+                self._parse_schtasks_list(list_output, entries)
 
         return entries
 
