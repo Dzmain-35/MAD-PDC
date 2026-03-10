@@ -7509,10 +7509,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             filter_row,
             width=60,
             height=30,
-            placeholder_text="4",
+            placeholder_text="8",
             font=Fonts.helper
         )
-        min_length_entry.insert(0, "4")
+        min_length_entry.insert(0, "8")
         min_length_entry.pack(side="left", padx=2)
 
         max_label = ctk.CTkLabel(
@@ -7764,13 +7764,20 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Extract strings list from result
                 strings = extraction_result.get('strings', [])
 
+                # Quick scan: show first 1000 as fast preview
+                # Deep scan: show all strings (up to tk.Text performance limit)
+                if scan_mode == "quick":
+                    display_strings = strings[:1000]
+                else:
+                    display_strings = strings
+
                 result_text = ""
 
-                # Group strings by type
-                urls = [s for s in strings if ('http://' in s or 'https://' in s or 'www.' in s)]
-                ips = [s for s in strings if any(c.isdigit() and '.' in s for c in s)]
-                paths = [s for s in strings if ('\\' in s or '/' in s) and len(s) > 10]
-                others = [s for s in strings if s not in urls and s not in ips and s not in paths]
+                # Group display strings by type for categorized view
+                urls = [s for s in display_strings if ('http://' in s or 'https://' in s or 'www.' in s)]
+                ips = [s for s in display_strings if any(c.isdigit() and '.' in s for c in s)]
+                paths = [s for s in display_strings if ('\\' in s or '/' in s) and len(s) > 10]
+                others = [s for s in display_strings if s not in urls and s not in ips and s not in paths]
 
                 if urls:
                     result_text += f"URLs/Domains ({len(urls)}):\n" + "="*80 + "\n"
@@ -7785,7 +7792,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                     result_text += f"Other Strings ({len(others)}):\n" + "="*80 + "\n"
                     result_text += "\n".join(others[:200]) + "\n"
 
-                # Store strings and full extraction result for export
+                # Store ALL strings for search/filter/export (not just displayed subset)
                 all_strings_data["strings"] = strings
                 all_strings_data["original_text"] = result_text
                 all_strings_data["extraction_result"] = extraction_result  # Store full result with metadata
@@ -7796,9 +7803,18 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 self.root.after(0, lambda: strings_text.delete("1.0", "end"))
                 self.root.after(0, lambda: strings_text.insert("1.0", result_text))
                 self.root.after(0, lambda: strings_text.configure(state="disabled"))
-                self.root.after(0, lambda: status_label.configure(
-                    text=f"Complete: {len(strings)} strings ({scan_mode} mode, {filter_status})"
-                ))
+
+                # Status message differs between quick and deep scan
+                if scan_mode == "quick":
+                    shown = min(1000, len(strings))
+                    if len(strings) > 1000:
+                        status_text = f"Quick scan: {shown:,} of {len(strings):,} strings (IMAGE only) — Deep Scan for all regions"
+                    else:
+                        status_text = f"Quick scan: {len(strings):,} strings (IMAGE only, {filter_status})"
+                else:
+                    status_text = f"Deep scan complete: {len(strings):,} strings (all regions, {filter_status})"
+
+                self.root.after(0, lambda t=status_text: status_label.configure(text=t))
 
                 # Restore button states
                 if scan_mode == "quick":
@@ -8321,10 +8337,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             filter_row,
             width=60,
             height=30,
-            placeholder_text="4",
+            placeholder_text="8",
             font=Fonts.helper
         )
-        min_length_entry.insert(0, "4")
+        min_length_entry.insert(0, "8")
         min_length_entry.pack(side="left", padx=2)
 
         max_label = ctk.CTkLabel(
