@@ -2186,6 +2186,9 @@ class ForensicAnalysisGUI:
                         self.persistence_monitor.start_monitoring()
                         self.persistence_monitor_active = True
 
+                    # Exclude PersistenceMonitor's own schtasks/conhost PIDs from live events
+                    monitor.set_excluded_pids_ref(self.persistence_monitor._internal_pids)
+
                     monitor_btn_text.set("⏸ Stop Monitoring")
                     monitor_btn.configure(fg_color="#059669")  # Green
                     status_label.configure(text="● Monitoring: Active", text_color="#10b981")

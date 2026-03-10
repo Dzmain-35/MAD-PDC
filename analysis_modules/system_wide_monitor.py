@@ -239,6 +239,9 @@ class SystemWideMonitor:
         # Sigma rule match callbacks (separate from event callbacks)
         self.sigma_match_callbacks = []
 
+        # PIDs to exclude from process monitoring (e.g. PersistenceMonitor's own schtasks)
+        self._excluded_pids_ref: Optional[Set[int]] = None
+
         # Statistics
         self.stats = {
             'total_events': 0,
@@ -309,6 +312,11 @@ class SystemWideMonitor:
     def register_sigma_callback(self, callback):
         """Register a callback for Sigma rule matches. callback(SigmaMatch, event_dict)"""
         self.sigma_match_callbacks.append(callback)
+
+    def set_excluded_pids_ref(self, pids_set: Set[int]):
+        """Store a reference to an external set of PIDs to exclude from process events.
+        Used to suppress PersistenceMonitor's own schtasks/conhost processes."""
+        self._excluded_pids_ref = pids_set
 
     def start_monitoring(self) -> bool:
         """Start system-wide monitoring"""
@@ -459,6 +467,9 @@ class SystemWideMonitor:
 
                     # New process detected
                     if pid not in self.known_processes:
+                        # Skip processes owned by PersistenceMonitor (schtasks/conhost)
+                        if self._excluded_pids_ref and pid in self._excluded_pids_ref:
+                            continue
                         try:
                             cmdline = ' '.join(proc.info.get('cmdline', [])) if proc.info.get('cmdline') else ''
                             exe = proc.info.get('exe', proc.info.get('name', 'Unknown'))
@@ -486,6 +497,9 @@ class SystemWideMonitor:
                 # Detect terminated processes
                 terminated = self.known_processes - current_processes
                 for pid in terminated:
+                    # Skip processes owned by PersistenceMonitor (schtasks/conhost)
+                    if self._excluded_pids_ref and pid in self._excluded_pids_ref:
+                        continue
                     now = datetime.now()
                     event = {
                         'timestamp': now.strftime("%H:%M:%S.%f")[:-3],
