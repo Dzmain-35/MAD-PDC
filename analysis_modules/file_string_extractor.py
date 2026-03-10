@@ -26,16 +26,32 @@ class FileStringExtractor:
         """
         self.verbose = verbose
 
-        # Compile regex patterns once
-        self.string_patterns = {
-            'ascii': re.compile(rb'[\x20-\x7E]{4,}'),
-            'unicode': re.compile(rb'(?:[\x20-\x7E]\x00){4,}'),
+        # Pattern cache: min_length -> (ascii_pattern, unicode_pattern)
+        self._pattern_cache = {
+            8: (
+                re.compile(rb'[\x20-\x7E]{8,}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){8,}'),
+            )
         }
+
+        # Pre-compiled categorization and quality filter regex patterns
+        self._url_pattern = re.compile(r'https?://|www\.', re.IGNORECASE)
+        self._ip_pattern = re.compile(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b')
+        self._win_path_pattern = re.compile(r'^[a-zA-Z]:\\')
+
+    def _get_patterns(self, min_length: int):
+        """Get cached compiled regex patterns for the given min_length."""
+        if min_length not in self._pattern_cache:
+            self._pattern_cache[min_length] = (
+                re.compile(rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'),
+            )
+        return self._pattern_cache[min_length]
 
     def extract_strings_from_file(
         self,
         file_path: str,
-        min_length: int = 4,
+        min_length: int = 8,
         max_strings: int = 50000,
         include_unicode: bool = True,
         enable_quality_filter: bool = True,
@@ -103,9 +119,9 @@ class FileStringExtractor:
                     progress_callback, chunk_size, scan_mode
                 )
 
-            # Convert sets to sorted lists
+            # Convert sets to sorted lists (no truncation - export ALL strings)
             for key in result['strings']:
-                result['strings'][key] = sorted(list(result['strings'][key]))[:max_strings]
+                result['strings'][key] = sorted(result['strings'][key])
 
             end_time = datetime.now()
             result['extraction_time'] = (end_time - start_time).total_seconds()
@@ -275,13 +291,9 @@ class FileStringExtractor:
         if not data:
             return
 
-        # Extract ASCII strings
-        if min_length == 4:
-            ascii_pattern = self.string_patterns['ascii']
-        else:
-            pattern = rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'
-            ascii_pattern = re.compile(pattern)
+        ascii_pattern, unicode_pattern = self._get_patterns(min_length)
 
+        # Extract ASCII strings
         for match in ascii_pattern.finditer(data):
             try:
                 string = match.group().decode('ascii', errors='ignore')
@@ -294,12 +306,6 @@ class FileStringExtractor:
 
         # Extract Unicode strings (UTF-16LE)
         if include_unicode:
-            if min_length == 4:
-                unicode_pattern = self.string_patterns['unicode']
-            else:
-                pattern = rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'
-                unicode_pattern = re.compile(pattern)
-
             for match in unicode_pattern.finditer(data):
                 try:
                     string = match.group().decode('utf-16le', errors='ignore')
@@ -313,7 +319,7 @@ class FileStringExtractor:
     def _categorize_string(self, string: str, string_dict: Dict[str, Set[str]]):
         """Categorize strings into specific types"""
         # URLs
-        if re.search(r'https?://', string, re.IGNORECASE) or re.search(r'www\.', string, re.IGNORECASE):
+        if self._url_pattern.search(string):
             string_dict['urls'].add(string)
         # Environment variables
         elif '=' in string and len(string.split('=', 1)) == 2:
@@ -324,10 +330,10 @@ class FileStringExtractor:
                 string_dict['environment'].add(string)
         # File paths
         elif '\\' in string or (string.count('/') > 1 and len(string) > 10):
-            if re.match(r'^[a-zA-Z]:\\', string) or string.startswith('\\\\') or string.startswith('/'):
+            if self._win_path_pattern.match(string) or string.startswith('\\\\') or string.startswith('/'):
                 string_dict['paths'].add(string)
         # IP addresses
-        elif re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', string):
+        elif self._ip_pattern.search(string):
             if self._is_valid_ip(string):
                 string_dict['ips'].add(string)
         # Registry keys
@@ -336,7 +342,7 @@ class FileStringExtractor:
 
     def _is_valid_ip(self, string: str) -> bool:
         """Validate IP address"""
-        ip_match = re.search(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b', string)
+        ip_match = self._ip_pattern.search(string)
         if not ip_match:
             return False
         try:
@@ -378,7 +384,7 @@ class FileStringExtractor:
             return True
         return False
 
-    def _is_quality_string(self, string: str, min_length: int = 4) -> bool:
+    def _is_quality_string(self, string: str, min_length: int = 8) -> bool:
         """
         Determine if string meets quality criteria
 
@@ -393,11 +399,11 @@ class FileStringExtractor:
             return False
 
         # Always keep URLs, IPs, registry keys
-        if re.search(r'https?://', string, re.IGNORECASE):
+        if self._url_pattern.search(string):
             return True
         if string.startswith('HKEY_') or string.startswith('HKLM\\') or string.startswith('HKCU\\'):
             return True
-        if re.match(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', string) and self._is_valid_ip(string):
+        if self._ip_pattern.match(string) and self._is_valid_ip(string):
             return True
 
         # Check for excessive repetition

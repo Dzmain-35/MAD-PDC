@@ -117,18 +117,36 @@ class MemoryStringExtractor:
         self.cache_ttl = cache_ttl
         self.cache = {}  # PID -> (timestamp, results)
 
-        self.string_patterns = {
-            'ascii': re.compile(rb'[\x20-\x7E]{4,}'),
-            'unicode': re.compile(rb'(?:[\x20-\x7E]\x00){4,}'),
+        # Pattern cache: min_length -> (ascii_pattern, unicode_pattern)
+        # Pre-seed with default min_length=8
+        self._pattern_cache = {
+            8: (
+                re.compile(rb'[\x20-\x7E]{8,}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){8,}'),
+            )
         }
+
+        # Pre-compiled categorization and quality filter regex patterns
+        self._url_pattern = re.compile(r'https?://|www\.', re.IGNORECASE)
+        self._ip_pattern = re.compile(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b')
+        self._win_path_pattern = re.compile(r'^[a-zA-Z]:\\')
 
         if self.verbose:
             print(f"[MemoryExtractor] Initialized on {platform.system()}")
+
+    def _get_patterns(self, min_length: int):
+        """Get cached compiled regex patterns for the given min_length."""
+        if min_length not in self._pattern_cache:
+            self._pattern_cache[min_length] = (
+                re.compile(rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'),
+            )
+        return self._pattern_cache[min_length]
     
     def extract_strings_from_memory(
         self,
         pid: int,
-        min_length: int = 10,
+        min_length: int = 8,
         max_strings: int = 20000,
         include_unicode: bool = True,
         filter_regions: Optional[List[str]] = None,
@@ -307,8 +325,8 @@ class MemoryStringExtractor:
                             regions_read += 1
                             result['total_bytes_scanned'] += len(memory_data)
 
-                            # Extract strings from memory data (for backward compatibility)
-                            self._extract_strings_from_buffer(
+                            # Single-pass extraction: populates categorized dict AND returns flat list
+                            region_strings = self._extract_strings_from_buffer_unified(
                                 memory_data,
                                 result['strings'],
                                 min_length,
@@ -316,15 +334,7 @@ class MemoryStringExtractor:
                                 enable_quality_filter
                             )
 
-                            # NEW: Extract strings for this specific region (Process Hacker style)
-                            region_strings = self._extract_strings_from_buffer_simple(
-                                memory_data,
-                                min_length,
-                                include_unicode,
-                                enable_quality_filter
-                            )
-
-                            # Store strings with their region info
+                            # Store strings with their region info for Process Hacker style output
                             if region_strings:
                                 result['strings_by_region'].append({
                                     'region': region_info.copy(),
@@ -332,14 +342,11 @@ class MemoryStringExtractor:
                                     'string_count': len(region_strings)
                                 })
 
-                            # Progressive callback for UI updates
+                            # Lightweight progress callback - pass counts only, not full data
                             total_strings = sum(len(s) for s in result['strings'].values())
                             if progress_callback and regions_read % callback_interval == 0:
                                 try:
-                                    # Convert sets to lists for callback
-                                    current_strings = {k: sorted(list(v))[:max_strings]
-                                                     for k, v in result['strings'].items()}
-                                    progress_callback(current_strings, regions_scanned, regions_read)
+                                    progress_callback(total_strings, regions_scanned, regions_read)
                                 except Exception as e:
                                     if self.verbose:
                                         print(f"[MemoryExtractor] Callback error: {e}")
@@ -369,12 +376,11 @@ class MemoryStringExtractor:
                     total_strings = sum(len(s) for s in result['strings'].values())
                     print(f"[MemoryExtractor] Total strings extracted: {total_strings}")
 
-                # Final callback with complete results
+                # Final callback with complete results (counts only for performance)
                 if progress_callback:
                     try:
-                        current_strings = {k: sorted(list(v))[:max_strings]
-                                         for k, v in result['strings'].items()}
-                        progress_callback(current_strings, regions_scanned, regions_read, final=True)
+                        total_strings = sum(len(s) for s in result['strings'].values())
+                        progress_callback(total_strings, regions_scanned, regions_read, final=True)
                     except Exception as e:
                         if self.verbose:
                             print(f"[MemoryExtractor] Final callback error: {e}")
@@ -390,10 +396,9 @@ class MemoryStringExtractor:
                 import traceback
                 traceback.print_exc()
 
-        # Convert sets to sorted lists and limit
-        # Use more generous per-category limits to match Process Hacker behavior
+        # Convert sets to sorted lists (no truncation - export ALL strings)
         for key in result['strings']:
-            result['strings'][key] = sorted(list(result['strings'][key]))[:max_strings]
+            result['strings'][key] = sorted(result['strings'][key])
 
         # Validate results
         total_extracted = sum(len(s) for s in result['strings'].values())
@@ -535,85 +540,66 @@ class MemoryStringExtractor:
 
         return None
     
-    def _extract_strings_from_buffer(
+    def _extract_strings_from_buffer_unified(
         self,
         data: bytes,
         string_dict: Dict[str, Set[str]],
         min_length: int,
         include_unicode: bool,
         enable_quality_filter: bool = True
-    ):
+    ) -> List[str]:
         """
-        Extract various types of strings from memory buffer
+        Single-pass extraction: populates categorized string_dict AND returns flat list.
+        Replaces the old double-extraction pattern (_extract_strings_from_buffer +
+        _extract_strings_from_buffer_simple) with one pass for ~2x speedup.
 
         Args:
             data: Memory buffer
-            string_dict: Dictionary to store extracted strings
+            string_dict: Dictionary to store categorized extracted strings
             min_length: Minimum string length
             include_unicode: Whether to extract Unicode strings
             enable_quality_filter: Whether to apply quality filtering
+
+        Returns:
+            Flat list of all strings found in this buffer (for per-region output)
         """
         if not data:
-            return
+            return []
 
-        strings_before = sum(len(s) for s in string_dict.values())
+        region_strings = []
+        ascii_pattern, unicode_pattern = self._get_patterns(min_length)
 
         # Extract ASCII strings
-        # Use custom pattern for different min_length, or pre-compiled for length 4
-        if min_length == 4:
-            ascii_pattern = self.string_patterns['ascii']
-        else:
-            pattern = rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'
-            ascii_pattern = re.compile(pattern)
-
         for match in ascii_pattern.finditer(data):
             try:
                 string = match.group().decode('ascii', errors='ignore')
-                # Apply quality filter if enabled
                 if len(string) >= min_length:
                     if not enable_quality_filter or self._is_quality_string(string, min_length):
                         string_dict['ascii'].add(string)
-
-                        # Categorize strings
                         self._categorize_string(string, string_dict)
-
+                        region_strings.append(string)
             except Exception:
                 continue
 
         # Extract Unicode strings (UTF-16LE)
         if include_unicode:
-            # Use custom pattern for different min_length, or pre-compiled for length 4
-            if min_length == 4:
-                unicode_pattern = self.string_patterns['unicode']
-            else:
-                unicode_pattern = rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'
-                unicode_pattern = re.compile(unicode_pattern)
-
             for match in unicode_pattern.finditer(data):
                 try:
                     string = match.group().decode('utf-16le', errors='ignore')
-                    # Apply quality filter if enabled
                     if len(string) >= min_length:
                         if not enable_quality_filter or self._is_quality_string(string, min_length):
                             string_dict['unicode'].add(string)
-
-                            # Categorize strings
                             self._categorize_string(string, string_dict)
-
+                            region_strings.append(string)
                 except Exception:
                     continue
 
-        # Log if verbose and we found strings
-        if self.verbose:
-            strings_after = sum(len(s) for s in string_dict.values())
-            strings_found = strings_after - strings_before
-            if strings_found > 0 and strings_before < 100:  # Log first few buffers with strings
-                print(f"[MemoryExtractor] Found {strings_found} strings in {len(data):,} byte buffer")
-    
+        return region_strings
+
     def _categorize_string(self, string: str, string_dict: Dict[str, Set[str]]):
         """Categorize strings into specific types (URLs, paths, IPs, etc.)"""
         # URLs
-        if re.search(r'https?://', string, re.IGNORECASE) or re.search(r'www\.', string, re.IGNORECASE):
+        if self._url_pattern.search(string):
             string_dict['urls'].add(string)
 
         # Environment variables (detect KEY=VALUE format with common env var names)
@@ -630,77 +616,17 @@ class MemoryStringExtractor:
         # File paths
         elif '\\' in string or (string.count('/') > 1 and len(string) > 10):
             # Windows paths or Unix paths
-            if re.match(r'^[a-zA-Z]:\\', string) or string.startswith('\\\\') or string.startswith('/'):
+            if self._win_path_pattern.match(string) or string.startswith('\\\\') or string.startswith('/'):
                 string_dict['paths'].add(string)
 
         # IP addresses (with proper validation)
-        elif re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', string):
+        elif self._ip_pattern.search(string):
             if self._is_valid_ip(string):
                 string_dict['ips'].add(string)
 
         # Registry keys
         elif string.startswith('HKEY_') or string.startswith('HKLM\\') or string.startswith('HKCU\\'):
             string_dict['registry'].add(string)
-
-    def _extract_strings_from_buffer_simple(
-        self,
-        data: bytes,
-        min_length: int,
-        include_unicode: bool,
-        enable_quality_filter: bool = True
-    ) -> List[str]:
-        """
-        Extract strings from buffer without categorization (Process Hacker style)
-        Returns a simple list of all strings found in this memory buffer
-
-        Args:
-            data: Memory buffer
-            min_length: Minimum string length
-            include_unicode: Whether to extract Unicode strings
-            enable_quality_filter: Whether to apply quality filtering
-
-        Returns:
-            List of strings found in this buffer
-        """
-        if not data:
-            return []
-
-        strings = []
-
-        # Extract ASCII strings
-        if min_length == 4:
-            ascii_pattern = self.string_patterns['ascii']
-        else:
-            pattern = rb'[\x20-\x7E]{' + str(min_length).encode() + rb',}'
-            ascii_pattern = re.compile(pattern)
-
-        for match in ascii_pattern.finditer(data):
-            try:
-                string = match.group().decode('ascii', errors='ignore')
-                if len(string) >= min_length:
-                    if not enable_quality_filter or self._is_quality_string(string, min_length):
-                        strings.append(string)
-            except Exception:
-                continue
-
-        # Extract Unicode strings (UTF-16LE)
-        if include_unicode:
-            if min_length == 4:
-                unicode_pattern = self.string_patterns['unicode']
-            else:
-                unicode_pattern = rb'(?:[\x20-\x7E]\x00){' + str(min_length).encode() + rb',}'
-                unicode_pattern = re.compile(unicode_pattern)
-
-            for match in unicode_pattern.finditer(data):
-                try:
-                    string = match.group().decode('utf-16le', errors='ignore')
-                    if len(string) >= min_length:
-                        if not enable_quality_filter or self._is_quality_string(string, min_length):
-                            strings.append(string)
-                except Exception:
-                    continue
-
-        return strings
 
     def _calculate_entropy(self, string: str) -> float:
         """
@@ -806,7 +732,7 @@ class MemoryStringExtractor:
         Returns:
             True if valid IP address
         """
-        ip_match = re.search(r'\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b', string)
+        ip_match = self._ip_pattern.search(string)
         if not ip_match:
             return False
 
@@ -817,7 +743,7 @@ class MemoryStringExtractor:
         except ValueError:
             return False
 
-    def _is_quality_string(self, string: str, min_length: int = 10) -> bool:
+    def _is_quality_string(self, string: str, min_length: int = 8) -> bool:
         """
         Determine if string meets quality criteria
 
@@ -834,11 +760,11 @@ class MemoryStringExtractor:
 
         # Allow certain types without further filtering
         # URLs, IPs, registry keys are always kept if properly formatted
-        if re.search(r'https?://', string, re.IGNORECASE):
+        if self._url_pattern.search(string):
             return True
         if string.startswith('HKEY_') or string.startswith('HKLM\\') or string.startswith('HKCU\\'):
             return True
-        if re.match(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', string) and self._is_valid_ip(string):
+        if self._ip_pattern.match(string) and self._is_valid_ip(string):
             return True
 
         # Check for excessive repetition
@@ -1031,12 +957,9 @@ class MemoryStringExtractor:
                         f.write(f"Strings Found: {len(strings)}\n")
                         f.write("-" * 80 + "\n")
 
-                        # Write strings from this region
-                        for string in strings[:500]:  # Limit to 500 strings per region
+                        # Write ALL strings from this region (no truncation)
+                        for string in strings:
                             f.write(f"{string}\n")
-
-                        if len(strings) > 500:
-                            f.write(f"... and {len(strings) - 500} more strings\n")
 
                         f.write("\n")
 
@@ -1048,24 +971,20 @@ class MemoryStringExtractor:
 
                     strings_data = extraction_result['strings']
 
-                    # All ASCII strings
+                    # All ASCII strings (no truncation)
                     if strings_data.get('ascii') and len(strings_data['ascii']) > 0:
                         f.write(f"ASCII STRINGS ({len(strings_data['ascii'])}):\n")
                         f.write("-" * 80 + "\n")
-                        for s in list(strings_data['ascii'])[:1000]:
+                        for s in strings_data['ascii']:
                             f.write(f"{s}\n")
-                        if len(strings_data['ascii']) > 1000:
-                            f.write(f"... and {len(strings_data['ascii']) - 1000} more\n")
                         f.write("\n")
 
-                    # All Unicode strings
+                    # All Unicode strings (no truncation)
                     if strings_data.get('unicode') and len(strings_data['unicode']) > 0:
                         f.write(f"UNICODE STRINGS ({len(strings_data['unicode'])}):\n")
                         f.write("-" * 80 + "\n")
-                        for s in list(strings_data['unicode'])[:1000]:
+                        for s in strings_data['unicode']:
                             f.write(f"{s}\n")
-                        if len(strings_data['unicode']) > 1000:
-                            f.write(f"... and {len(strings_data['unicode']) - 1000} more\n")
                         f.write("\n")
 
                 # Errors if any

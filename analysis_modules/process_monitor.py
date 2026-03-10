@@ -581,7 +581,7 @@ class ProcessMonitor:
     def extract_strings_from_process(
         self,
         pid: int,
-        min_length: int = 4,
+        min_length: int = 8,
         limit: int = 1000,
         enable_quality_filter: bool = False,
         scan_mode: str = "quick",
@@ -657,9 +657,9 @@ class ProcessMonitor:
             Dictionary with 'strings' list and optional metadata
         """
         try:
-            # Extract strings from process memory with relaxed min_length to catch more
-            # Use min_length of 4 to catch short malware indicators
-            extraction_min_length = min(min_length, 4)
+            # Use the requested min_length directly - default 8 catches all meaningful
+            # malware indicators (DLL names, API names, URLs, paths) while cutting noise
+            extraction_min_length = min_length
 
             results = self.memory_extractor.extract_strings_from_memory(
                 pid=pid,
@@ -672,7 +672,7 @@ class ProcessMonitor:
                 progress_callback=progress_callback
             )
 
-            # Combine all string types into a single list
+            # Combine all string types into a single list, prioritizing high-value strings
             all_strings = []
 
             # FIRST: Add YARA-matched strings at the top (highest priority)
@@ -680,24 +680,13 @@ class ProcessMonitor:
                 print(f"[MemoryExtractor] Including {len(yara_matched_strings)} YARA-matched strings")
                 all_strings.extend(yara_matched_strings)
 
-            # Prioritize interesting strings
-            interesting = self.memory_extractor.get_interesting_strings(results)
-
-            # Add in priority order: suspicious, network, commands, crypto, files
-            priority_order = ['suspicious', 'network', 'commands', 'crypto', 'files']
-            for category in priority_order:
-                all_strings.extend(interesting.get(category, []))
-
-            # Add remaining strings from categorized results
-            # Environment variables are important for malware analysis
-            for str_type in ['environment', 'urls', 'paths', 'ips', 'registry']:
+            # Add categorized results in priority order (most valuable to analyst first)
+            for str_type in ['urls', 'ips', 'registry', 'environment', 'paths']:
                 all_strings.extend(results['strings'].get(str_type, []))
 
-            # Add general ASCII/Unicode strings if we need more
-            if len(all_strings) < limit:
-                remaining = limit - len(all_strings)
-                all_strings.extend(list(results['strings'].get('ascii', []))[:remaining // 2])
-                all_strings.extend(list(results['strings'].get('unicode', []))[:remaining // 2])
+            # Add general ASCII/Unicode strings
+            all_strings.extend(results['strings'].get('ascii', []))
+            all_strings.extend(results['strings'].get('unicode', []))
 
             # Remove duplicates while preserving order (keep first occurrence)
             seen = set()
@@ -716,6 +705,7 @@ class ProcessMonitor:
                 # Return full extraction result with metadata
                 return {
                     'strings': unique_strings,
+                    'strings_by_region': results.get('strings_by_region', []),
                     'memory_regions': results.get('memory_regions', []),
                     'total_bytes_scanned': results.get('total_bytes_scanned', 0),
                     'scan_mode': scan_mode,
