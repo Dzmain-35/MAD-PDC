@@ -7291,12 +7291,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             if not search_term:
                 # Show all strings (with length filter applied)
                 if length_filtered:
-                    display_text = "\n".join(length_filtered[:1000])  # Limit display for performance
+                    display_limit = 1000
+                    display_text = "\n".join(length_filtered[:display_limit])
                     strings_text.insert("1.0", display_text)
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (filtered by length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Showing: {len(length_filtered)} strings{filter_msg}")
+                    if len(length_filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(length_filtered):,} strings{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Showing: {len(length_filtered):,} strings{filter_msg}")
                 else:
                     strings_text.insert("1.0", "No strings match the length filter")
                     status_label.configure(text="No matches")
@@ -7328,7 +7332,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Found: {len(filtered)} matches{filter_msg}")
+                    if len(filtered) > 1000:
+                        status_label.configure(text=f"Showing 1,000 of {len(filtered):,} matches{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Found: {len(filtered):,} matches{filter_msg}")
                 else:
                     strings_text.insert("1.0", f"No strings found matching '{search_term}' with current filters")
                     status_label.configure(text="No matches")
@@ -7372,35 +7379,22 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
                 # Get minimum length for extraction
                 try:
-                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 4
-                    extract_min_length = max(4, min(extract_min_length, 10))
+                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 8
+                    extract_min_length = max(8, min(extract_min_length, 50))
                 except ValueError:
-                    extract_min_length = 4
+                    extract_min_length = 8
 
                 # Get quality filter setting
                 use_quality_filter = quality_filter_var.get()
 
-                # Progressive callback for UI updates
-                def progress_callback(current_strings, regions_total, regions_read, final=False):
-                    """Update UI with progressive results"""
+                # Lightweight progress callback - receives counts only for performance
+                def progress_callback(total_strings, regions_total, regions_read, final=False):
+                    """Update UI status with extraction progress (counts only, no data)"""
                     try:
-                        # Flatten strings for display
-                        flat_strings = []
-                        for category_strings in current_strings.values():
-                            if isinstance(category_strings, list):
-                                flat_strings.extend(category_strings)
-
-                        # Update status
-                        status_msg = f"{scan_mode.capitalize()} scan: {len(flat_strings)} strings | {regions_read}/{regions_total} regions"
+                        status_msg = f"{scan_mode.capitalize()} scan: {total_strings:,} strings | {regions_read}/{regions_total} regions"
                         if final:
-                            status_msg = f"Complete: {len(flat_strings)} strings ({scan_mode} mode)"
-
+                            status_msg = f"Complete: {total_strings:,} strings ({scan_mode} mode)"
                         self.root.after(0, lambda msg=status_msg: status_label.configure(text=msg))
-
-                        # Update display every 10 regions or on final
-                        if final or regions_read % 10 == 0:
-                            all_strings_data["strings"] = flat_strings
-                            self.root.after(0, search_strings)
                     except Exception as e:
                         print(f"Progress callback error: {e}")
 
@@ -7553,16 +7547,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                         process_name=name
                     )
                     if success:
-                        # Also copy to network case folder if enabled
-                        network_copy_msg = ""
-                        if self.current_case and self.current_case.get("network_case_path"):
-                            try:
-                                network_path = self.current_case["network_case_path"]
-                                network_strings_path = os.path.join(network_path, os.path.basename(file_path))
-                                shutil.copy2(file_path, network_strings_path)
-                                network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
-                            except Exception as e:
-                                print(f"Warning: Could not copy strings to network folder: {e}")
+                        # Distribute to desktop and network case folder
+                        dist_messages = self._save_and_distribute_export(
+                            file_path, os.path.basename(file_path)
+                        )
 
                         # Show summary including metadata
                         mem_regions = len(extraction_result.get('memory_regions', []))
@@ -7571,7 +7559,8 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                         summary += f"Memory Regions Scanned: {mem_regions}\n"
                         summary += f"Total Bytes Scanned: {bytes_scanned:,}\n"
                         summary += f"Extraction Method: {extraction_result.get('extraction_method', 'unknown')}"
-                        summary += network_copy_msg
+                        if dist_messages:
+                            summary += "\n\nAlso copied to:\n" + "\n".join(dist_messages)
                         messagebox.showinfo("Export Complete", summary)
                     else:
                         messagebox.showerror("Export Failed", "Failed to export strings")
@@ -8082,12 +8071,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
             if not search_term:
                 if length_filtered:
-                    display_text = "\n".join(length_filtered[:5000])  # Limit for performance
+                    display_limit = 5000
+                    display_text = "\n".join(length_filtered[:display_limit])
                     strings_text.insert("1.0", display_text)
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (filtered by length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Showing: {len(length_filtered)} strings{filter_msg}")
+                    if len(length_filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(length_filtered):,} strings{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Showing: {len(length_filtered):,} strings{filter_msg}")
                 else:
                     strings_text.insert("1.0", "No strings match the filters")
                     status_label.configure(text="No matches")
@@ -8096,12 +8089,16 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 filtered = [s for s in length_filtered if search_term in s.lower()]
 
                 if filtered:
-                    for s in filtered[:5000]:
+                    display_limit = 5000
+                    for s in filtered[:display_limit]:
                         strings_text.insert("end", s + "\n")
                     filter_msg = ""
                     if min_len > 0 or max_len < float('inf'):
                         filter_msg = f" (length: {min_len}-{max_len if max_len != float('inf') else '∞'})"
-                    status_label.configure(text=f"Found: {len(filtered)} matches{filter_msg}")
+                    if len(filtered) > display_limit:
+                        status_label.configure(text=f"Showing {display_limit:,} of {len(filtered):,} matches{filter_msg} (all available in export)")
+                    else:
+                        status_label.configure(text=f"Found: {len(filtered):,} matches{filter_msg}")
                 else:
                     strings_text.insert("1.0", f"No strings found matching '{search_term}'")
                     status_label.configure(text="No matches")
@@ -8139,7 +8136,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Extract strings
                 result = extractor.extract_strings_from_file(
                     file_path,
-                    min_length=4,
+                    min_length=8,
                     max_strings=50000,
                     include_unicode=True,
                     enable_quality_filter=use_quality_filter,
@@ -8226,18 +8223,15 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 )
 
                 if success:
-                    # Also copy to network case folder if enabled
-                    network_copy_msg = ""
-                    if self.current_case and self.current_case.get("network_case_path"):
-                        try:
-                            network_path = self.current_case["network_case_path"]
-                            network_strings_path = os.path.join(network_path, os.path.basename(save_path))
-                            shutil.copy2(save_path, network_strings_path)
-                            network_copy_msg = f"\n\nAlso copied to network folder:\n{network_strings_path}"
-                        except Exception as e:
-                            print(f"Warning: Could not copy strings to network folder: {e}")
+                    # Distribute to desktop and network case folder
+                    dist_messages = self._save_and_distribute_export(
+                        save_path, os.path.basename(save_path)
+                    )
 
-                    messagebox.showinfo("Export Complete", f"Strings exported to:\n{save_path}{network_copy_msg}")
+                    summary = f"Strings exported to:\n{save_path}"
+                    if dist_messages:
+                        summary += "\n\nAlso copied to:\n" + "\n".join(dist_messages)
+                    messagebox.showinfo("Export Complete", summary)
                 else:
                     messagebox.showerror("Export Failed", "Failed to export strings")
 
@@ -8253,6 +8247,33 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         # Start initial extraction
         import threading
         threading.Thread(target=extract_file_strings, daemon=True).start()
+
+    def _save_and_distribute_export(self, local_path, file_basename):
+        """Copy exported file to desktop and network case folder for the case."""
+        import shutil
+        messages = []
+
+        # Copy to Desktop
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+        desktop_dest = os.path.join(desktop_path, file_basename)
+        try:
+            if os.path.abspath(local_path) != os.path.abspath(desktop_dest):
+                shutil.copy2(local_path, desktop_dest)
+                messages.append(f"Desktop: {desktop_dest}")
+        except Exception as e:
+            print(f"Warning: Could not copy to desktop: {e}")
+
+        # Copy to network case folder
+        if self.current_case and self.current_case.get("network_case_path"):
+            try:
+                network_path = self.current_case["network_case_path"]
+                network_dest = os.path.join(network_path, file_basename)
+                shutil.copy2(local_path, network_dest)
+                messages.append(f"Network: {network_dest}")
+            except Exception as e:
+                print(f"Warning: Could not copy to network folder: {e}")
+
+        return messages
 
     def open_folder_location(self):
         """Open the folder containing the selected process's executable"""
