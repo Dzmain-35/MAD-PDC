@@ -234,16 +234,22 @@ class PersistenceMonitor:
         # Added
         for key in new_keys - old_keys:
             entry = new[key]
+            if self._is_known_system_task(entry):
+                continue
             self._record_change("added", entry)
 
         # Removed
         for key in old_keys - new_keys:
             entry = old[key]
+            if self._is_known_system_task(entry):
+                continue
             self._record_change("removed", entry)
 
         # Modified (value changed)
         for key in old_keys & new_keys:
             if old[key].value != new[key].value:
+                if self._is_known_system_task(new[key]):
+                    continue
                 new[key].extra["previous_value"] = old[key].value
                 self._record_change("modified", new[key])
 
@@ -488,6 +494,26 @@ class PersistenceMonitor:
         # Flush last task
         if current:
             _flush(current)
+
+    @staticmethod
+    def _is_known_system_task(entry: 'PersistenceEntry') -> bool:
+        """Return True if this scheduled task is a known Windows system task.
+
+        Matches tasks authored by Microsoft or residing under the standard
+        \\Microsoft\\Windows\\ task namespace.  These are legitimate OS
+        maintenance tasks that should not trigger analyst-facing alerts.
+        """
+        if entry.entry_type != "scheduled_task":
+            return False
+        author = entry.extra.get("author", "").lower()
+        full_path = entry.extra.get("full_path", "").lower()
+        # Microsoft-authored tasks
+        if "microsoft" in author:
+            return True
+        # Tasks under the standard Windows task namespace
+        if full_path.startswith("\\microsoft\\windows\\"):
+            return True
+        return False
 
     @staticmethod
     def _score_task_severity(command: str) -> str:
