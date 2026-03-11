@@ -6335,8 +6335,6 @@ falsepositives:
 
     def create_cases_tab(self):
         """Create the Cases tab for browsing previous cases"""
-        import threading
-
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
         self.tabs["cases"] = frame
 
@@ -6352,23 +6350,44 @@ falsepositives:
                                           font=_action_font, height=30)
         btn_refresh_cases.pack(side="left")
 
+        # ── Filter bar ─────────────────────────────────────────
+        filter_bar = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"], height=44)
+        filter_bar.pack(fill="x", padx=0, pady=0)
+        filter_bar.pack_propagate(False)
+
+        ctk.CTkLabel(filter_bar, text="Filter by Date:",
+                     font=Fonts.label_large,
+                     text_color=self.colors["text_secondary"]).pack(side="left", padx=(16, 8))
+
+        self.cases_date_filter = ctk.CTkComboBox(
+            filter_bar, values=["All Dates"],
+            command=self._on_cases_date_filter_changed,
+            width=180, height=30,
+            font=Fonts.label,
+            fg_color=self.colors["navy"],
+            border_color=self.colors["border"],
+            button_color=self.colors["border"],
+            button_hover_color=self.colors["accent"],
+            dropdown_fg_color=self.colors["navy"],
+            dropdown_hover_color=self.colors["accent"],
+            state="readonly"
+        )
+        self.cases_date_filter.set("All Dates")
+        self.cases_date_filter.pack(side="left", padx=4)
+
+        self.cases_count_label = ctk.CTkLabel(filter_bar, text="0 cases",
+                                              font=Fonts.label,
+                                              text_color=self.colors["text_secondary"])
+        self.cases_count_label.pack(side="left", padx=(16, 0))
+
         # Main content: split into left (case list) and right (case detail)
         content_pane = ctk.CTkFrame(frame, fg_color="transparent")
         content_pane.pack(fill="both", expand=True, padx=0, pady=0)
 
         # ── Left panel: Case browser ──────────────────────────
-        left_panel = ctk.CTkFrame(content_pane, fg_color=self.colors["navy"], width=400)
-        left_panel.pack(side="left", fill="both", padx=(16, 8), pady=16)
+        left_panel = ctk.CTkFrame(content_pane, fg_color=self.colors["navy"], width=360)
+        left_panel.pack(side="left", fill="both", padx=(16, 8), pady=(8, 16))
         left_panel.pack_propagate(False)
-
-        cases_header = ctk.CTkLabel(left_panel, text="Case Folders",
-                                    font=Fonts.label_large, text_color="white")
-        cases_header.pack(anchor="w", padx=12, pady=(10, 5))
-
-        self.cases_count_label = ctk.CTkLabel(left_panel, text="0 cases",
-                                              font=Fonts.label,
-                                              text_color=self.colors["text_secondary"])
-        self.cases_count_label.pack(anchor="w", padx=12, pady=(0, 8))
 
         # Cases Treeview
         style = ttk.Style()
@@ -6392,7 +6411,7 @@ falsepositives:
                  background=[('selected', self.colors["accent"])])
 
         tree_frame = tk.Frame(left_panel, bg=self.colors["surface_elevated"])
-        tree_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        tree_frame.pack(fill="both", expand=True, padx=6, pady=6)
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical")
         vsb.pack(side="right", fill="y")
@@ -6407,20 +6426,21 @@ falsepositives:
         )
         vsb.config(command=self.cases_tree.yview)
 
-        self.cases_tree.heading("case", text="Case Folder", anchor="w")
+        self.cases_tree.heading("case", text="Case", anchor="w")
         self.cases_tree.heading("date", text="Date", anchor="center")
         self.cases_tree.column("case", width=220, anchor="w")
-        self.cases_tree.column("date", width=120, anchor="center")
+        self.cases_tree.column("date", width=100, anchor="center")
         self.cases_tree.pack(fill="both", expand=True)
 
         self.cases_tree.bind("<<TreeviewSelect>>", self._on_case_selected)
 
-        # Store case paths for lookup
+        # Store case paths for lookup and full cached list for filtering
         self._cases_path_map = {}
+        self._all_cases = []
 
         # ── Right panel: Case detail viewer ───────────────────
         right_panel = ctk.CTkFrame(content_pane, fg_color=self.colors["navy"])
-        right_panel.pack(side="right", fill="both", expand=True, padx=(8, 16), pady=16)
+        right_panel.pack(side="right", fill="both", expand=True, padx=(8, 16), pady=(8, 16))
 
         self.case_detail_scroll = ctk.CTkScrollableFrame(right_panel, fg_color="transparent",
                                                           scrollbar_button_color=self.colors["border"])
@@ -6443,8 +6463,10 @@ falsepositives:
             self.cases_count_label.configure(text="Network path not configured")
             return
 
-        # Show loading state
         self.cases_count_label.configure(text="Loading cases...")
+
+        # Date folder pattern: M_DD_YYYY (e.g. 3_10_2026, 12_05_2025)
+        date_pattern = re.compile(r'^\d{1,2}_\d{2}_\d{4}$')
 
         def _scan():
             cases = []
@@ -6453,15 +6475,24 @@ falsepositives:
                     self.root.after(0, lambda: self._populate_cases_tree([], "Network path not accessible"))
                     return
 
-                # Walk 2 levels: date folders -> case folders
                 for date_folder in sorted(os.listdir(network_path), reverse=True):
                     date_path = os.path.join(network_path, date_folder)
-                    if not os.path.isdir(date_path) or date_folder.startswith('.'):
+                    # Only process directories matching date pattern
+                    if not os.path.isdir(date_path) or not date_pattern.match(date_folder):
                         continue
+
                     for case_folder in sorted(os.listdir(date_path)):
                         case_path = os.path.join(date_path, case_folder)
                         if not os.path.isdir(case_path) or case_folder.startswith('.'):
                             continue
+
+                        # Validate: must be a real case folder (has metadata, files/, or notes)
+                        has_metadata = os.path.exists(os.path.join(case_path, "case_metadata.json"))
+                        has_files = os.path.isdir(os.path.join(case_path, "files"))
+                        has_notes = os.path.exists(os.path.join(case_path, "case_notes.txt"))
+                        if not (has_metadata or has_files or has_notes):
+                            continue
+
                         cases.append({
                             "name": case_folder,
                             "date": date_folder,
@@ -6476,22 +6507,54 @@ falsepositives:
         threading.Thread(target=_scan, daemon=True).start()
 
     def _populate_cases_tree(self, cases, error_msg=None):
-        """Populate the cases treeview (called on main thread)"""
+        """Populate the cases treeview and date filter dropdown (called on main thread)"""
+        self._all_cases = cases
+        self._cases_path_map.clear()
+
+        # Update date filter dropdown with unique dates from scan
+        if cases:
+            unique_dates = sorted(set(c["date"] for c in cases), reverse=True)
+            self.cases_date_filter.configure(values=["All Dates"] + unique_dates)
+        else:
+            self.cases_date_filter.configure(values=["All Dates"])
+
+        # Keep current filter selection if still valid, otherwise reset
+        current_filter = self.cases_date_filter.get()
+        valid_dates = [c["date"] for c in cases]
+        if current_filter != "All Dates" and current_filter not in valid_dates:
+            self.cases_date_filter.set("All Dates")
+
+        if error_msg:
+            for item in self.cases_tree.get_children():
+                self.cases_tree.delete(item)
+            self.cases_count_label.configure(text=error_msg)
+            return
+
+        self._apply_cases_filter()
+
+    def _on_cases_date_filter_changed(self, value):
+        """Handle date filter dropdown change"""
+        self._apply_cases_filter()
+
+    def _apply_cases_filter(self):
+        """Filter and repopulate cases treeview based on selected date"""
         for item in self.cases_tree.get_children():
             self.cases_tree.delete(item)
         self._cases_path_map.clear()
 
-        if error_msg:
-            self.cases_count_label.configure(text=error_msg)
-            return
+        date_filter = self.cases_date_filter.get()
+        if date_filter == "All Dates":
+            filtered = self._all_cases
+        else:
+            filtered = [c for c in self._all_cases if c["date"] == date_filter]
 
-        self.cases_count_label.configure(text=f"{len(cases)} cases")
+        self.cases_count_label.configure(text=f"{len(filtered)} cases")
 
-        if not cases:
+        if not filtered:
             self.cases_tree.insert("", "end", values=("No cases found", ""))
             return
 
-        for case in cases:
+        for case in filtered:
             iid = self.cases_tree.insert("", "end",
                                          values=(case["name"], case["date"]))
             self._cases_path_map[iid] = case["path"]
