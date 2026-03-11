@@ -3331,6 +3331,8 @@ class ForensicAnalysisGUI:
             self.update_current_case_display()
         elif tab_name == "rules":
             self.refresh_active_rules_subtab()
+        elif tab_name == "cases":
+            self.refresh_cases_list()
 
     def show_analysis_subtab(self, subtab_name):
         """Switch between analysis sub-tabs"""
@@ -6359,20 +6361,20 @@ falsepositives:
                      font=Fonts.label_large,
                      text_color=self.colors["text_secondary"]).pack(side="left", padx=(16, 8))
 
-        self.cases_date_filter = ctk.CTkComboBox(
+        self.cases_date_var = ctk.StringVar(value="All Dates")
+        self.cases_date_filter = ctk.CTkOptionMenu(
             filter_bar, values=["All Dates"],
+            variable=self.cases_date_var,
             command=self._on_cases_date_filter_changed,
             width=180, height=30,
             font=Fonts.label,
             fg_color=self.colors["navy"],
-            border_color=self.colors["border"],
             button_color=self.colors["border"],
             button_hover_color=self.colors["accent"],
             dropdown_fg_color=self.colors["navy"],
             dropdown_hover_color=self.colors["accent"],
-            state="readonly"
+            text_color="white",
         )
-        self.cases_date_filter.set("All Dates")
         self.cases_date_filter.pack(side="left", padx=4)
 
         self.cases_count_label = ctk.CTkLabel(filter_bar, text="0 cases",
@@ -6573,18 +6575,12 @@ falsepositives:
         self._load_case_details(case_path)
 
     def _load_case_details(self, case_path):
-        """Load and display details for a selected case"""
+        """Load and display details for a selected case (mirrors Current Case tab style)"""
         # Clear existing detail content
         for widget in self.case_detail_scroll.winfo_children():
             widget.destroy()
 
         case_name = os.path.basename(case_path)
-
-        # ── Case title ──
-        title_label = ctk.CTkLabel(self.case_detail_scroll, text=case_name,
-                                   font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
-                                   text_color=self.colors["accent"])
-        title_label.pack(anchor="w", padx=12, pady=(10, 5))
 
         # ── Load metadata ──
         metadata_path = os.path.join(case_path, "case_metadata.json")
@@ -6596,188 +6592,301 @@ falsepositives:
             except Exception:
                 pass
 
+        # ── Case Details Card (mirrors Current Case) ──
+        details_card = ctk.CTkFrame(self.case_detail_scroll, corner_radius=8,
+                                    fg_color=self.colors["surface_elevated"])
+        details_card.pack(fill="x", pady=(0, 6))
+
+        details_title = ctk.CTkLabel(details_card, text="Case Details",
+                                     font=Fonts.title_medium,
+                                     text_color=self.colors["text_primary"])
+        details_title.pack(pady=10, padx=15, anchor="w")
+
+        info_frame = ctk.CTkFrame(details_card, fg_color="transparent")
+        info_frame.pack(fill="x", padx=15, pady=(0, 10))
+
         if metadata:
-            self._render_case_metadata(metadata)
-            self._render_case_iocs(metadata)
+            left_details = [
+                ("Case Name:", case_name),
+                ("Report URL:", metadata.get("report_url", "N/A")),
+                ("Case ID:", metadata.get("id", "N/A")),
+                ("Status:", metadata.get("status", "N/A")),
+                ("Created:", metadata.get("created", "N/A")),
+                ("Threats:", str(metadata.get("total_threats", 0))),
+            ]
+        else:
+            left_details = [("Case Name:", case_name)]
 
-        # ── Files section ──
+        for i, (label, value) in enumerate(left_details):
+            row = i // 2
+            col = i % 2
+            detail_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
+            detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
+            ctk.CTkLabel(detail_frame, text=label,
+                        text_color="gray60", font=Fonts.helper).pack(anchor="w")
+            ctk.CTkLabel(detail_frame, text=str(value),
+                        font=Fonts.body_bold,
+                        text_color="white").pack(anchor="w")
+
+        # ── Files Section (collapsible, mirrors Current Case) ──
         files_dir = os.path.join(case_path, "files")
+        files_list = []
         if os.path.isdir(files_dir):
-            self._render_case_files(files_dir)
+            try:
+                files_list = [f for f in sorted(os.listdir(files_dir))
+                              if os.path.isfile(os.path.join(files_dir, f))]
+            except Exception:
+                pass
 
-        # ── Screenshots section ──
-        self._render_case_screenshots(case_path)
+        if files_list:
+            self._render_case_files_section(files_dir, files_list)
 
-        # ── Notes section ──
+        # ── IOCs Section (collapsible, mirrors Current Case) ──
+        if metadata:
+            iocs = metadata.get("iocs", {})
+            has_iocs = any(bool(v) for v in iocs.values() if isinstance(v, (list, dict)))
+            if has_iocs:
+                self._render_case_iocs_section(iocs)
+
+        # ── Screenshots Section (collapsible, mirrors Current Case) ──
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
+        screenshots = []
+        for search_dir in [case_path, os.path.join(case_path, "screenshots")]:
+            if os.path.isdir(search_dir):
+                try:
+                    for f in os.listdir(search_dir):
+                        if os.path.splitext(f)[1].lower() in image_exts:
+                            screenshots.append(os.path.join(search_dir, f))
+                except Exception:
+                    continue
+
+        if screenshots:
+            self._render_case_screenshots_section(sorted(screenshots))
+
+        # ── Notes Section (collapsible) ──
         notes_path = os.path.join(case_path, "case_notes.txt")
         if os.path.exists(notes_path):
-            self._render_case_notes(notes_path)
+            try:
+                with open(notes_path, 'r', encoding='utf-8') as f:
+                    notes_content = f.read()
+                if notes_content.strip():
+                    self._render_case_notes_section(notes_content)
+            except Exception:
+                pass
 
-    def _make_case_section_header(self, text):
-        """Create a section header label in the case detail panel"""
-        sep = ctk.CTkFrame(self.case_detail_scroll, height=1,
-                           fg_color=self.colors["border_dim"])
-        sep.pack(fill="x", padx=12, pady=(12, 4))
+    def _make_case_collapsible_section(self, title, auto_expand=True):
+        """Create a collapsible section header matching Current Case tab style.
+        Returns (header_frame, container_frame, expand_indicator, visible_flag)
+        """
+        parent = self.case_detail_scroll
 
-        lbl = ctk.CTkLabel(self.case_detail_scroll, text=text,
-                           font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                           text_color="white")
-        lbl.pack(anchor="w", padx=12, pady=(4, 6))
+        header = ctk.CTkFrame(parent, corner_radius=10,
+                              fg_color=self.colors["surface_elevated"],
+                              cursor="hand2")
+        header.pack(fill="x", pady=(10, 5))
 
-    def _render_case_metadata(self, metadata):
-        """Render case metadata in the detail panel"""
-        self._make_case_section_header("METADATA")
+        header_inner = ctk.CTkFrame(header, fg_color="transparent", cursor="hand2")
+        header_inner.pack(fill="x", padx=15, pady=10)
 
-        fields = [
-            ("Case ID", metadata.get("id", "N/A")),
-            ("Created", metadata.get("created", "N/A")),
-            ("Status", metadata.get("status", "N/A")),
-            ("Report URL", metadata.get("report_url", "N/A")),
-            ("Total Threats", str(metadata.get("total_threats", 0))),
-            ("Total VT Hits", str(metadata.get("total_vt_hits", 0))),
-        ]
+        indicator = ctk.CTkLabel(header_inner, text="▶",
+                                 font=Fonts.body_large,
+                                 text_color=self.colors["text_dim"],
+                                 cursor="hand2")
+        indicator.pack(side="left", padx=(0, 10))
 
-        for label, value in fields:
-            row = ctk.CTkFrame(self.case_detail_scroll, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=1)
-            ctk.CTkLabel(row, text=f"{label}:",
-                        font=Fonts.label,
-                        text_color=self.colors["text_secondary"],
-                        width=120, anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=str(value),
-                        font=Fonts.label,
-                        text_color=self.colors["text_primary"],
-                        wraplength=400, anchor="w").pack(side="left", fill="x", expand=True)
+        title_lbl = ctk.CTkLabel(header_inner, text=title,
+                                 font=Fonts.title_medium,
+                                 text_color="white",
+                                 cursor="hand2")
+        title_lbl.pack(side="left")
 
-    def _render_case_iocs(self, metadata):
-        """Render IOCs from case metadata"""
-        iocs = metadata.get("iocs", {})
-        if not iocs:
-            return
+        container = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=10)
+        visible = [False]
 
-        # Check if there are any actual IOC values
-        has_iocs = any(bool(v) for v in iocs.values() if isinstance(v, (list, dict)))
-        if not has_iocs:
-            return
+        def toggle(e=None):
+            if visible[0]:
+                container.pack_forget()
+                indicator.configure(text="▶")
+                visible[0] = False
+            else:
+                container.pack(fill="x", pady=(0, 10))
+                indicator.configure(text="▼")
+                visible[0] = True
 
-        self._make_case_section_header("IOCs")
+        for w in (header, header_inner, indicator, title_lbl):
+            w.bind("<Button-1>", toggle)
 
+        if auto_expand:
+            toggle()
+
+        return header, container, indicator, visible
+
+    def _render_case_files_section(self, files_dir, files_list):
+        """Render files section with collapsible header, View + Download buttons"""
+        _, container, _, _ = self._make_case_collapsible_section(
+            f"Case Files ({len(files_list)})", auto_expand=True)
+
+        for filename in files_list:
+            file_path = os.path.join(files_dir, filename)
+
+            file_row = ctk.CTkFrame(container, fg_color=self.colors["surface"],
+                                    corner_radius=6)
+            file_row.pack(fill="x", padx=10, pady=2)
+
+            ctk.CTkLabel(file_row, text=filename,
+                        font=Fonts.body_bold,
+                        text_color="white").pack(side="left", padx=12, pady=8)
+
+            # Download button
+            btn_dl = ctk.CTkButton(
+                file_row, text="Download",
+                command=lambda fp=file_path: self._download_case_file(fp),
+                fg_color=self.colors["red"],
+                hover_color=self.colors["red_dark"],
+                font=Fonts.helper, height=28, width=90)
+            btn_dl.pack(side="right", padx=(4, 10), pady=6)
+
+            # View button
+            btn_view = ctk.CTkButton(
+                file_row, text="View",
+                command=lambda fp=file_path: self._view_case_file(fp),
+                fg_color="transparent",
+                border_width=2,
+                border_color=self.colors["red"],
+                hover_color=self.colors["navy"],
+                font=Fonts.helper, height=28, width=70)
+            btn_view.pack(side="right", padx=4, pady=6)
+
+    def _render_case_iocs_section(self, iocs):
+        """Render IOCs section with collapsible header and grouped textboxes"""
+        # Extract IOC values
+        urls = []
+        ips = []
+        domains = []
         for ioc_type, ioc_values in iocs.items():
             if not ioc_values:
                 continue
             if isinstance(ioc_values, list):
                 values_list = ioc_values
             elif isinstance(ioc_values, dict):
-                values_list = list(ioc_values.keys()) if ioc_values else []
+                values_list = list(ioc_values.keys())
             else:
                 continue
-
             if not values_list:
                 continue
+            key = ioc_type.lower()
+            if "url" in key:
+                urls.extend(values_list)
+            elif "ip" in key:
+                ips.extend(values_list)
+            elif "domain" in key or "host" in key:
+                domains.extend(values_list)
+            else:
+                # Put unknown types into domains as fallback
+                domains.extend(values_list)
 
-            type_label = ctk.CTkLabel(self.case_detail_scroll,
-                                     text=f"  {ioc_type.upper()} ({len(values_list)}):",
-                                     font=ctk.CTkFont(size=11, weight="bold"),
-                                     text_color=self.colors["amber"])
-            type_label.pack(anchor="w", padx=12, pady=(4, 2))
+        _, container, _, _ = self._make_case_collapsible_section(
+            "IOCs", auto_expand=True)
 
-            for val in values_list[:50]:  # Cap display at 50 per type
-                val_label = ctk.CTkLabel(self.case_detail_scroll,
-                                        text=f"    {val}",
-                                        font=("Courier", 10),
-                                        text_color=self.colors["text_primary"],
-                                        wraplength=500, anchor="w")
-                val_label.pack(anchor="w", padx=16, pady=0)
+        def _make_ioc_box(parent, label_text, values):
+            box_frame = ctk.CTkFrame(parent, fg_color=self.colors["surface"],
+                                     corner_radius=8)
+            box_frame.pack(fill="x", padx=10, pady=4)
+            ctk.CTkLabel(box_frame, text=label_text,
+                        font=Fonts.body_bold,
+                        text_color="white").pack(anchor="w", padx=12, pady=(8, 4))
+            tb = ctk.CTkTextbox(box_frame, fg_color=self.colors["navy"],
+                               height=80, corner_radius=5,
+                               text_color=self.colors["text_primary"],
+                               font=("Courier", 11))
+            tb.pack(fill="x", padx=12, pady=(0, 8))
+            tb.insert("1.0", "\n".join(values) if values else "None recorded")
+            tb.configure(state="disabled")
 
-    def _render_case_files(self, files_dir):
-        """Render file list from the case's files directory"""
-        try:
-            files = [f for f in os.listdir(files_dir)
-                     if os.path.isfile(os.path.join(files_dir, f))]
-        except Exception:
-            return
+        _make_ioc_box(container, "URLs", urls)
+        _make_ioc_box(container, "IP Addresses", ips)
+        _make_ioc_box(container, "Domains", domains)
 
-        if not files:
-            return
+    def _render_case_screenshots_section(self, screenshots):
+        """Render screenshots section with collapsible header and thumbnail gallery"""
+        _, container, _, _ = self._make_case_collapsible_section(
+            f"Screenshots ({len(screenshots)})", auto_expand=True)
 
-        self._make_case_section_header(f"FILES ({len(files)})")
+        gallery = ctk.CTkScrollableFrame(container, fg_color="transparent",
+                                          height=160, orientation="horizontal",
+                                          scrollbar_button_color=self.colors["border"])
+        gallery.pack(fill="x", padx=10, pady=4)
 
-        for filename in sorted(files):
-            file_path = os.path.join(files_dir, filename)
-            file_row = ctk.CTkFrame(self.case_detail_scroll, fg_color="transparent")
-            file_row.pack(fill="x", padx=12, pady=1)
-
-            ctk.CTkLabel(file_row, text=filename,
-                        font=Fonts.label,
-                        text_color=self.colors["text_primary"]).pack(side="left")
-
-            btn_view_file = ctk.CTkButton(file_row, text="View",
-                                          command=lambda fp=file_path: self._view_case_file(fp),
-                                          fg_color=self.colors["navy"],
-                                          hover_color=self.colors["dark_blue"],
-                                          font=Fonts.label, height=24, width=60)
-            btn_view_file.pack(side="right", padx=4)
-
-    def _render_case_screenshots(self, case_path):
-        """Render screenshots found in the case folder"""
-        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
-        screenshots = []
-
-        # Check root of case path and common subdirs
-        search_dirs = [case_path]
-        screenshots_dir = os.path.join(case_path, "screenshots")
-        if os.path.isdir(screenshots_dir):
-            search_dirs.append(screenshots_dir)
-
-        for search_dir in search_dirs:
+        for img_path in screenshots:
             try:
-                for f in os.listdir(search_dir):
-                    if os.path.splitext(f)[1].lower() in image_exts:
-                        screenshots.append(os.path.join(search_dir, f))
+                img = Image.open(img_path)
+                img_w, img_h = img.size
+                # Scale to max 120px height
+                max_h = 120
+                ratio = max_h / img_h
+                new_w = min(int(img_w * ratio), 200)
+                new_h = max_h
+                thumb = img.resize((new_w, new_h), Image.LANCZOS)
+
+                thumb_frame = ctk.CTkFrame(gallery, fg_color=self.colors["surface"],
+                                           corner_radius=8)
+                thumb_frame.pack(side="left", padx=5, pady=5)
+
+                ctk_img = ctk.CTkImage(light_image=thumb, dark_image=thumb,
+                                       size=(new_w, new_h))
+                img_label = ctk.CTkLabel(thumb_frame, image=ctk_img, text="",
+                                         cursor="hand2")
+                img_label.pack(padx=4, pady=(4, 2))
+                img_label._ctk_img_ref = ctk_img
+                img_label.bind("<Button-1>",
+                              lambda e, ip=img_path: self._view_case_screenshot(ip))
+
+                name_lbl = ctk.CTkLabel(thumb_frame,
+                                        text=os.path.basename(img_path)[:20],
+                                        font=Fonts.helper,
+                                        text_color=self.colors["text_dim"])
+                name_lbl.pack(pady=(0, 4))
             except Exception:
                 continue
 
-        if not screenshots:
-            return
+    def _render_case_notes_section(self, notes_content):
+        """Render notes section with collapsible header"""
+        _, container, _, _ = self._make_case_collapsible_section(
+            "Notes", auto_expand=True)
 
-        self._make_case_section_header(f"SCREENSHOTS ({len(screenshots)})")
-
-        for img_path in sorted(screenshots):
-            img_name = os.path.basename(img_path)
-            img_row = ctk.CTkFrame(self.case_detail_scroll, fg_color="transparent")
-            img_row.pack(fill="x", padx=12, pady=1)
-
-            ctk.CTkLabel(img_row, text=img_name,
-                        font=Fonts.label,
-                        text_color=self.colors["text_primary"]).pack(side="left")
-
-            btn_view_img = ctk.CTkButton(img_row, text="View",
-                                         command=lambda ip=img_path: self._view_case_screenshot(ip),
-                                         fg_color=self.colors["navy"],
-                                         hover_color=self.colors["dark_blue"],
-                                         font=Fonts.label, height=24, width=60)
-            btn_view_img.pack(side="right", padx=4)
-
-    def _render_case_notes(self, notes_path):
-        """Render case notes"""
-        try:
-            with open(notes_path, 'r', encoding='utf-8') as f:
-                notes_content = f.read()
-        except Exception:
-            return
-
-        if not notes_content.strip():
-            return
-
-        self._make_case_section_header("NOTES")
-
-        notes_text = ctk.CTkTextbox(self.case_detail_scroll, font=("Courier", 11),
-                                    fg_color=self.colors["surface_elevated"],
+        notes_text = ctk.CTkTextbox(container, font=("Courier", 11),
+                                    fg_color=self.colors["navy"],
                                     text_color=self.colors["text_primary"],
-                                    height=150)
-        notes_text.pack(fill="x", padx=12, pady=(0, 10))
+                                    height=150, corner_radius=5)
+        notes_text.pack(fill="x", padx=10, pady=4)
         notes_text.insert("1.0", notes_content)
         notes_text.configure(state="disabled")
+
+    def _download_case_file(self, file_path):
+        """Download (copy) a case file to the Desktop for review"""
+        filename = os.path.basename(file_path)
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        if not os.path.isdir(desktop_path):
+            os.makedirs(desktop_path, exist_ok=True)
+
+        dest = os.path.join(desktop_path, filename)
+
+        # Avoid overwriting — append counter if needed
+        if os.path.exists(dest):
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(dest):
+                dest = os.path.join(desktop_path, f"{base}_{counter}{ext}")
+                counter += 1
+
+        try:
+            shutil.copy2(file_path, dest)
+            messagebox.showinfo("Download Complete",
+                                f"File saved to:\n{dest}")
+        except Exception as e:
+            messagebox.showerror("Download Failed",
+                                 f"Could not copy file:\n{e}")
 
     def _view_case_file(self, file_path):
         """View a case file in a read-only dialog"""
