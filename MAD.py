@@ -7157,10 +7157,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             filter_row,
             width=60,
             height=30,
-            placeholder_text="8",
+            placeholder_text="10",
             font=Fonts.helper
         )
-        min_length_entry.insert(0, "8")
+        min_length_entry.insert(0, "10")
         min_length_entry.pack(side="left", padx=2)
 
         max_label = ctk.CTkLabel(
@@ -7191,10 +7191,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         )
         quality_filter_checkbox.pack(side="left", padx=15)
 
-        # Quick Scan button (default)
+        # Quick Scan button (default — private regions, matches Process Hacker)
         quick_scan_btn = ctk.CTkButton(
             filter_row,
-            text="⚡ Quick Scan",
+            text="⚡ Quick Scan (Private)",
             command=lambda: None,  # Will be set later
             height=30,
             width=120,
@@ -7204,10 +7204,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
         )
         quick_scan_btn.pack(side="left", padx=5)
 
-        # Deep Scan button
+        # Deep Scan button (all regions: private + image + mapped)
         deep_scan_btn = ctk.CTkButton(
             filter_row,
-            text="🔬 Deep Scan",
+            text="🔬 Deep Scan (All)",
             command=lambda: None,  # Will be set later
             height=30,
             width=120,
@@ -7367,22 +7367,22 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                     self.root.after(0, lambda: quick_scan_btn.configure(
                         fg_color=self.colors["red"], text="⚡ Scanning..."))
                     self.root.after(0, lambda: deep_scan_btn.configure(
-                        fg_color="transparent", text="🔬 Deep Scan"))
+                        fg_color="transparent", text="🔬 Deep Scan (All)"))
                 else:
                     self.root.after(0, lambda: deep_scan_btn.configure(
                         fg_color=self.colors["red"], text="🔬 Scanning..."))
                     self.root.after(0, lambda: quick_scan_btn.configure(
-                        fg_color="transparent", text="⚡ Quick Scan"))
+                        fg_color="transparent", text="⚡ Quick Scan (Private)"))
 
                 self.root.after(0, lambda: export_btn.configure(state="disabled"))
                 status_label.configure(text=f"Extracting strings ({scan_mode} mode)...")
 
-                # Get minimum length for extraction
+                # Get minimum length for extraction (default 10, matches Process Hacker)
                 try:
-                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 8
-                    extract_min_length = max(8, min(extract_min_length, 50))
+                    extract_min_length = int(min_length_entry.get()) if min_length_entry.get() else 10
+                    extract_min_length = max(4, min(extract_min_length, 50))
                 except ValueError:
-                    extract_min_length = 8
+                    extract_min_length = 10
 
                 # Get quality filter setting
                 use_quality_filter = quality_filter_var.get()
@@ -7455,9 +7455,9 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 if scan_mode == "quick":
                     shown = min(1000, len(strings))
                     if len(strings) > 1000:
-                        status_text = f"Quick scan: {shown:,} of {len(strings):,} strings (IMAGE only) — Deep Scan for all regions"
+                        status_text = f"Quick scan: {shown:,} of {len(strings):,} strings (private regions) — Deep Scan for all"
                     else:
-                        status_text = f"Quick scan: {len(strings):,} strings (IMAGE only, {filter_status})"
+                        status_text = f"Quick scan: {len(strings):,} strings (private regions, {filter_status})"
                 else:
                     status_text = f"Deep scan complete: {len(strings):,} strings (all regions, {filter_status})"
 
@@ -7466,10 +7466,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Restore button states
                 if scan_mode == "quick":
                     self.root.after(0, lambda: quick_scan_btn.configure(
-                        fg_color=self.colors["red"], text="⚡ Quick Scan"))
+                        fg_color=self.colors["red"], text="⚡ Quick Scan (Private)"))
                 else:
                     self.root.after(0, lambda: deep_scan_btn.configure(
-                        fg_color=self.colors["red"], text="🔬 Deep Scan"))
+                        fg_color=self.colors["red"], text="🔬 Deep Scan (All)"))
 
                 self.root.after(0, lambda: export_btn.configure(state="normal"))
 
@@ -7488,9 +7488,9 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
 
                 # Restore button states
                 if scan_mode == "quick":
-                    self.root.after(0, lambda: quick_scan_btn.configure(text="⚡ Quick Scan"))
+                    self.root.after(0, lambda: quick_scan_btn.configure(text="⚡ Quick Scan (Private)"))
                 else:
-                    self.root.after(0, lambda: deep_scan_btn.configure(text="🔬 Deep Scan"))
+                    self.root.after(0, lambda: deep_scan_btn.configure(text="🔬 Deep Scan (All)"))
 
                 self.root.after(0, lambda: export_btn.configure(state="normal"))
 
@@ -7990,10 +7990,10 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
             filter_row,
             width=60,
             height=30,
-            placeholder_text="8",
+            placeholder_text="10",
             font=Fonts.helper
         )
-        min_length_entry.insert(0, "8")
+        min_length_entry.insert(0, "10")
         min_length_entry.pack(side="left", padx=2)
 
         max_label = ctk.CTkLabel(
@@ -8151,7 +8151,7 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Extract strings
                 result = extractor.extract_strings_from_file(
                     file_path,
-                    min_length=8,
+                    min_length=10,
                     max_strings=50000,
                     include_unicode=True,
                     enable_quality_filter=use_quality_filter,

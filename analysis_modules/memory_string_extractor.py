@@ -118,11 +118,11 @@ class MemoryStringExtractor:
         self.cache = {}  # PID -> (timestamp, results)
 
         # Pattern cache: min_length -> (ascii_pattern, unicode_pattern)
-        # Pre-seed with default min_length=8
+        # Pre-seed with default min_length=10 (Process Hacker default)
         self._pattern_cache = {
-            8: (
-                re.compile(rb'[\x20-\x7E]{8,}'),
-                re.compile(rb'(?:[\x20-\x7E]\x00){8,}'),
+            10: (
+                re.compile(rb'[\x20-\x7E]{10,}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){10,}'),
             )
         }
 
@@ -146,7 +146,7 @@ class MemoryStringExtractor:
     def extract_strings_from_memory(
         self,
         pid: int,
-        min_length: int = 8,
+        min_length: int = 10,
         max_strings: int = 20000,
         include_unicode: bool = True,
         filter_regions: Optional[List[str]] = None,
@@ -169,7 +169,7 @@ class MemoryStringExtractor:
                                  (entropy, vowel ratio, repetition checks). OFF by default
                                  for Process Hacker compatible raw extraction.
             use_cache: Use cached results if available and within TTL
-            scan_mode: 'quick' (IMAGE regions only, ~1-3 sec) or 'deep' (all regions, slower)
+            scan_mode: 'quick' (PRIVATE regions only — Process Hacker default) or 'deep' (all regions)
             progress_callback: Optional callback(current_strings, total_regions, regions_scanned)
                              for progressive updates
 
@@ -179,7 +179,7 @@ class MemoryStringExtractor:
         # Set default filter_regions based on scan_mode
         if filter_regions is None:
             if scan_mode == "quick":
-                filter_regions = ['image']  # Quick scan: only executable regions
+                filter_regions = ['private']  # Quick scan: private only (Process Hacker default)
             else:  # deep scan
                 filter_regions = ['private', 'image', 'mapped']  # Deep scan: all regions
 
@@ -778,7 +778,7 @@ class MemoryStringExtractor:
         except ValueError:
             return False
 
-    def _is_quality_string(self, string: str, min_length: int = 8) -> bool:
+    def _is_quality_string(self, string: str, min_length: int = 10) -> bool:
         """
         Determine if string meets quality criteria
 

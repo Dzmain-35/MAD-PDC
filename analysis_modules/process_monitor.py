@@ -581,7 +581,7 @@ class ProcessMonitor:
     def extract_strings_from_process(
         self,
         pid: int,
-        min_length: int = 8,
+        min_length: int = 10,
         limit: int = 1000,
         enable_quality_filter: bool = False,
         scan_mode: str = "quick",

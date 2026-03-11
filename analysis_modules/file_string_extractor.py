@@ -28,9 +28,9 @@ class FileStringExtractor:
 
         # Pattern cache: min_length -> (ascii_pattern, unicode_pattern)
         self._pattern_cache = {
-            8: (
-                re.compile(rb'[\x20-\x7E]{8,}'),
-                re.compile(rb'(?:[\x20-\x7E]\x00){8,}'),
+            10: (
+                re.compile(rb'[\x20-\x7E]{10,}'),
+                re.compile(rb'(?:[\x20-\x7E]\x00){10,}'),
             )
         }
 
@@ -51,7 +51,7 @@ class FileStringExtractor:
     def extract_strings_from_file(
         self,
         file_path: str,
-        min_length: int = 8,
+        min_length: int = 10,
         max_strings: int = 50000,
         include_unicode: bool = True,
         enable_quality_filter: bool = True,
@@ -384,7 +384,7 @@ class FileStringExtractor:
             return True
         return False
 
-    def _is_quality_string(self, string: str, min_length: int = 8) -> bool:
+    def _is_quality_string(self, string: str, min_length: int = 10) -> bool:
         """
         Determine if string meets quality criteria
 
