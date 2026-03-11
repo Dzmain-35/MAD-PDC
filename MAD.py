@@ -7411,12 +7411,13 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 # Extract strings list from result
                 strings = extraction_result.get('strings', [])
 
-                # Quick scan: show first 1000 as fast preview
-                # Deep scan: show all strings (up to tk.Text performance limit)
+                # Cap display strings for UI performance (tk.Text can't handle 100K+ lines)
+                # Quick scan: first 1000 as fast preview
+                # Deep scan: first 5000 (still all available in export/search)
                 if scan_mode == "quick":
                     display_strings = strings[:1000]
                 else:
-                    display_strings = strings
+                    display_strings = strings[:5000]
 
                 result_text = ""
 
@@ -7424,7 +7425,9 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                 urls = [s for s in display_strings if ('http://' in s or 'https://' in s or 'www.' in s)]
                 ips = [s for s in display_strings if any(c.isdigit() and '.' in s for c in s)]
                 paths = [s for s in display_strings if ('\\' in s or '/' in s) and len(s) > 10]
-                others = [s for s in display_strings if s not in urls and s not in ips and s not in paths]
+                # Use sets for O(1) membership check instead of O(n) list scan
+                categorized = set(id(s) for s in urls) | set(id(s) for s in ips) | set(id(s) for s in paths)
+                others = [s for s in display_strings if id(s) not in categorized]
 
                 if urls:
                     result_text += f"URLs/Domains ({len(urls)}):\n" + "="*80 + "\n"
@@ -7459,7 +7462,11 @@ Parent PID: {info.get('parent_pid', 'N/A')} ({info.get('parent_name', 'N/A')})
                     else:
                         status_text = f"Quick scan: {len(strings):,} strings (private regions, {filter_status})"
                 else:
-                    status_text = f"Deep scan complete: {len(strings):,} strings (all regions, {filter_status})"
+                    shown = min(5000, len(strings))
+                    if len(strings) > 5000:
+                        status_text = f"Deep scan: {shown:,} of {len(strings):,} strings (all regions) — use search to filter, export for all"
+                    else:
+                        status_text = f"Deep scan complete: {len(strings):,} strings (all regions, {filter_status})"
 
                 self.root.after(0, lambda t=status_text: status_label.configure(text=t))
 
