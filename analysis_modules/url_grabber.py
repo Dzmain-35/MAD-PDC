@@ -12,7 +12,8 @@ import hashlib
 import logging
 import argparse
 from datetime import datetime, UTC
-from urllib.parse import urljoin
+import socket
+from urllib.parse import urljoin, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -89,6 +90,138 @@ PIA_SERVER_MAP = {
     "pe":        "Peru",
     "ec":        "Ecuador",
 }
+
+# Country name / ISO-code → region profile key (for geo-IP disambiguation).
+COUNTRY_TO_REGION = {
+    "United States": "us-east", "US": "us-east",
+    "Brazil": "br",            "BR": "br",
+    "Mexico": "mx",            "MX": "mx",
+    "Argentina": "ar",         "AR": "ar",
+    "Colombia": "co",          "CO": "co",
+    "Chile": "cl",             "CL": "cl",
+    "Peru": "pe",              "PE": "pe",
+    "Ecuador": "ec",           "EC": "ec",
+}
+
+# Reverse lookup: IANA timezone name → region key.
+_TZ_TO_REGION = {profile["n"]: key for key, profile in REGION_PROFILES.items()}
+
+
+def _geoip_lookup(ip: str | None = None) -> dict:
+    """
+    Query external geo-IP APIs for location info.
+
+    Args:
+        ip: Specific IP to look up. If None, queries for the caller's own IP.
+
+    Returns:
+        dict with keys: ip, country, city, timezone, error
+    """
+    result = {"ip": "unknown", "country": "unknown", "city": "unknown",
+              "timezone": "unknown", "error": None}
+
+    ip_suffix = f"/{ip}" if ip else ""
+    apis = [
+        f"http://ip-api.com/json{ip_suffix}?fields=query,country,countryCode,city,timezone,status",
+        f"https://ipinfo.io{ip_suffix}/json",
+    ]
+
+    for api_url in apis:
+        try:
+            r = requests.get(api_url, timeout=5)
+            r.raise_for_status()
+            data = r.json()
+
+            if "ip-api" in api_url:
+                if data.get("status") != "success":
+                    continue
+                result["ip"] = data.get("query", "unknown")
+                result["country"] = data.get("country", "unknown")
+                result["country_code"] = data.get("countryCode", "")
+                result["city"] = data.get("city", "unknown")
+                result["timezone"] = data.get("timezone", "unknown")
+            else:
+                result["ip"] = data.get("ip", "unknown")
+                result["country"] = data.get("country", "unknown")
+                result["country_code"] = data.get("country", "")
+                result["city"] = data.get("city", "unknown")
+                result["timezone"] = data.get("timezone", "unknown")
+
+            return result
+
+        except Exception as exc:
+            log.debug("Geo-IP lookup failed for %s: %s", api_url, exc)
+            continue
+
+    result["error"] = "Could not determine location (geo-IP lookup failed)"
+    return result
+
+
+def detect_region_from_url(url: str) -> dict:
+    """
+    Determine the target region profile by geolocating the URL's domain IP.
+
+    Returns:
+        dict with keys: region (str|None), domain, domain_ip, country,
+                        timezone, error (str|None)
+    """
+    result = {"region": None, "domain": "", "domain_ip": "",
+              "country": "", "timezone": "", "error": None}
+
+    # Extract domain from URL
+    try:
+        parsed = urlparse(url)
+        domain = parsed.hostname
+        if not domain:
+            result["error"] = "Could not parse domain from URL"
+            return result
+        result["domain"] = domain
+    except Exception as exc:
+        result["error"] = f"URL parse error: {exc}"
+        return result
+
+    # Resolve domain to IP
+    try:
+        addr_info = socket.getaddrinfo(domain, None, socket.AF_INET)
+        if not addr_info:
+            result["error"] = f"Could not resolve domain: {domain}"
+            return result
+        domain_ip = addr_info[0][4][0]
+        result["domain_ip"] = domain_ip
+    except socket.gaierror as exc:
+        result["error"] = f"DNS resolution failed for {domain}: {exc}"
+        return result
+
+    # Geolocate the domain IP
+    geo = _geoip_lookup(domain_ip)
+    if geo.get("error"):
+        result["error"] = geo["error"]
+        return result
+
+    result["country"] = geo["country"]
+    result["timezone"] = geo["timezone"]
+
+    # Match by IANA timezone name first (all current profiles have unique names)
+    region = _TZ_TO_REGION.get(geo["timezone"])
+    if region:
+        result["region"] = region
+        log.info("URL domain %s (%s) → region %s via timezone %s",
+                 domain, domain_ip, region, geo["timezone"])
+        return result
+
+    # Fall back to country-based matching
+    country = geo.get("country", "")
+    country_code = geo.get("country_code", "")
+    region = COUNTRY_TO_REGION.get(country) or COUNTRY_TO_REGION.get(country_code)
+    if region:
+        result["region"] = region
+        log.info("URL domain %s (%s) → region %s via country %s",
+                 domain, domain_ip, region, country)
+        return result
+
+    log.warning("URL domain %s (%s) in %s (tz=%s) — no matching region profile",
+                domain, domain_ip, country, geo["timezone"])
+    return result
 
 
 def build_fingerprint(region: str) -> dict:
@@ -482,54 +615,28 @@ class MalwareRetriever:
         target_tz = target_profile["n"]
         pia_server = PIA_SERVER_MAP.get(self._region, "US East")
 
+        geo = _geoip_lookup()
+
         result = {
-            "ip": "unknown",
-            "country": "unknown",
-            "city": "unknown",
-            "timezone": "unknown",
+            "ip": geo["ip"],
+            "country": geo["country"],
+            "city": geo["city"],
+            "timezone": geo["timezone"],
             "target_timezone": target_tz,
             "match": False,
             "pia_server": pia_server,
-            "error": None,
+            "error": geo.get("error"),
         }
 
-        # Try ip-api.com first (no key required, returns timezone)
-        for api_url in [
-            "http://ip-api.com/json/?fields=query,country,city,timezone,status",
-            "https://ipinfo.io/json",
-        ]:
-            try:
-                r = requests.get(api_url, timeout=5)
-                r.raise_for_status()
-                data = r.json()
+        if result["error"]:
+            log.warning(result["error"])
+            return result
 
-                if "ip-api" in api_url:
-                    if data.get("status") != "success":
-                        continue
-                    result["ip"] = data.get("query", "unknown")
-                    result["country"] = data.get("country", "unknown")
-                    result["city"] = data.get("city", "unknown")
-                    result["timezone"] = data.get("timezone", "unknown")
-                else:
-                    # ipinfo.io format
-                    result["ip"] = data.get("ip", "unknown")
-                    result["country"] = data.get("country", "unknown")
-                    result["city"] = data.get("city", "unknown")
-                    result["timezone"] = data.get("timezone", "unknown")
-
-                result["match"] = result["timezone"] == target_tz
-                log.info("Current location: %s, %s (tz=%s, ip=%s) — target: %s — %s",
-                         result["city"], result["country"], result["timezone"],
-                         result["ip"], target_tz,
-                         "MATCH" if result["match"] else "MISMATCH")
-                return result
-
-            except Exception as e:
-                log.debug("Geo-IP lookup failed for %s: %s", api_url, e)
-                continue
-
-        result["error"] = "Could not determine current location (geo-IP lookup failed)"
-        log.warning(result["error"])
+        result["match"] = result["timezone"] == target_tz
+        log.info("Current location: %s, %s (tz=%s, ip=%s) — target: %s — %s",
+                 result["city"], result["country"], result["timezone"],
+                 result["ip"], target_tz,
+                 "MATCH" if result["match"] else "MISMATCH")
         return result
 
     def get_region_info(self) -> dict:

@@ -18,7 +18,7 @@ from analysis_modules.procmon_events import ProcmonLiveMonitor, ProcmonEvent
 from analysis_modules.system_wide_monitor import SystemWideMonitor, EventFilter
 from analysis_modules.sysmon_parser import SysmonLogMonitor
 from analysis_modules.file_viewer_executor import get_viewer_executor
-from analysis_modules.url_grabber import MalwareRetriever, REGION_PROFILES
+from analysis_modules.url_grabber import MalwareRetriever, REGION_PROFILES, detect_region_from_url
 import tkinter as tk
 from tkinter import ttk
 import re
@@ -800,32 +800,24 @@ class ForensicAnalysisGUI:
         )
         self.url_entry.pack(anchor="w")
 
-        # Region selector for URL Grabber (VPN location hint)
+        # Region display — auto-detected from URL domain on scan start
         region_frame = ctk.CTkFrame(self.url_input_frame, fg_color="transparent")
         region_frame.pack(fill="x", pady=(8, 0))
 
-        region_label = ctk.CTkLabel(
+        ctk.CTkLabel(
             region_frame,
-            text="Target Region (VPN):",
+            text="Target Region:",
             font=Fonts.body_large,
             text_color="white"
-        )
-        region_label.pack(side="left", padx=(0, 10))
+        ).pack(side="left", padx=(0, 10))
 
-        region_choices = list(REGION_PROFILES.keys())
-        default_region = self.settings_manager.get("url_grabber.default_region", "us-east")
-        self.url_region_var = tk.StringVar(value=default_region)
-        self.url_region_dropdown = ctk.CTkOptionMenu(
+        self.url_region_label = ctk.CTkLabel(
             region_frame,
-            variable=self.url_region_var,
-            values=region_choices,
+            text="auto-detected from URL",
             font=Fonts.body_large,
-            fg_color=self.colors["navy"],
-            button_color=self.colors["red"],
-            button_hover_color=self.colors["red_dark"],
-            width=200
+            text_color=self.colors["text_secondary"]
         )
-        self.url_region_dropdown.pack(side="left")
+        self.url_region_label.pack(side="left")
 
         # Upload button
         btn_upload = ctk.CTkButton(
@@ -3479,8 +3471,7 @@ class ForensicAnalysisGUI:
             if not download_url.startswith(('http://', 'https://')):
                 download_url = 'https://' + download_url
 
-            region = self.url_region_var.get()
-            self.process_new_case_urls([download_url], analyst_name, report_url, region=region)
+            self.process_new_case_urls([download_url], analyst_name, report_url)
         else:
             # File upload mode
             files = filedialog.askopenfilenames(title="Select files to analyze")
@@ -3603,7 +3594,77 @@ class ForensicAnalysisGUI:
         finally:
             self.scan_in_progress = False
 
-    def process_new_case_urls(self, urls, analyst_name, report_url, region="us-east"):
+    def _show_region_picker_dialog(self, detected_info: dict) -> str | None:
+        """
+        Show a modal dialog for manual region selection when auto-detection fails.
+        Called from the background scan thread via root.after().
+
+        Returns the selected region key, or None if cancelled.
+        """
+        _PENDING = "__pending__"
+        result = [_PENDING]
+        default_region = self.settings_manager.get("url_grabber.default_region", "us-east")
+
+        def show_dialog():
+            dialog = ctk.CTkToplevel(self.root)
+            dialog.title("Select Target Region")
+            dialog.geometry("420x320")
+            dialog.resizable(False, False)
+            dialog.grab_set()
+            dialog.attributes("-topmost", True)
+
+            domain = detected_info.get("domain", "unknown")
+            country = detected_info.get("country", "unknown")
+            timezone = detected_info.get("timezone", "unknown")
+            error = detected_info.get("error", "")
+
+            info_text = "Could not auto-detect region from URL domain.\n\n"
+            if error:
+                info_text += f"Reason: {error}\n\n"
+            else:
+                info_text += (f"Domain: {domain}\n"
+                              f"Country: {country}\n"
+                              f"Timezone: {timezone}\n\n")
+            info_text += "Please select a target region profile:"
+
+            ctk.CTkLabel(
+                dialog, text=info_text, font=Fonts.body_large,
+                justify="left", wraplength=380
+            ).pack(padx=20, pady=(20, 10), anchor="w")
+
+            region_var = tk.StringVar(value=default_region)
+            region_choices = list(REGION_PROFILES.keys())
+            ctk.CTkOptionMenu(
+                dialog, variable=region_var, values=region_choices,
+                font=Fonts.body_large, width=200
+            ).pack(padx=20, pady=10)
+
+            btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+            btn_frame.pack(pady=20)
+
+            def on_ok():
+                result[0] = region_var.get()
+                dialog.destroy()
+
+            def on_cancel():
+                result[0] = None
+                dialog.destroy()
+
+            ctk.CTkButton(btn_frame, text="OK", command=on_ok, width=100).pack(side="left", padx=10)
+            ctk.CTkButton(btn_frame, text="Cancel", command=on_cancel, width=100).pack(side="left", padx=10)
+
+            dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+            dialog.wait_window()
+
+        self.root.after(0, show_dialog)
+
+        import time
+        while result[0] == _PENDING:
+            time.sleep(0.1)
+
+        return result[0]
+
+    def process_new_case_urls(self, urls, analyst_name, report_url, region=None):
         """Process URLs for new case with progress bar"""
         if self.scan_in_progress:
             messagebox.showwarning("Scan in Progress", "Please wait for current scan to complete")
@@ -3623,7 +3684,7 @@ class ForensicAnalysisGUI:
         )
         scan_thread.start()
 
-    def _scan_urls_thread(self, urls, analyst_name, report_url, region="us-east"):
+    def _scan_urls_thread(self, urls, analyst_name, report_url, region=None):
         """Background thread for URL downloading and file scanning using MalwareRetriever"""
         try:
             # Create case structure
@@ -3644,6 +3705,56 @@ class ForensicAnalysisGUI:
                         print(f"Created network case folder: {network_path}")
                     except Exception as e:
                         print(f"Warning: Could not create network folder: {e}")
+
+            downloaded_files = []
+            failed_downloads = []
+            vpn_recommendation = None
+
+            # Determine whether to use advanced retrieval (MalwareRetriever)
+            use_advanced = self.settings_manager.get("url_grabber.enable_advanced_retrieval", True)
+
+            # Auto-detect region from URL domain if not explicitly provided
+            if region is None and use_advanced and urls:
+                self.root.after(0, self.update_progress, 0, len(urls),
+                                "Detecting target region from URL...")
+                url_region_info = detect_region_from_url(urls[0])
+
+                if url_region_info.get("error"):
+                    print(f"Region auto-detection error: {url_region_info['error']}")
+                elif url_region_info.get("region"):
+                    region = url_region_info["region"]
+                    print(f"Auto-detected region from URL domain: {region} "
+                          f"(domain={url_region_info['domain']}, "
+                          f"ip={url_region_info['domain_ip']}, "
+                          f"country={url_region_info['country']}, "
+                          f"tz={url_region_info['timezone']})")
+                    self.root.after(0, self.url_region_label.configure,
+                                    {"text": f"{region}",
+                                     "text_color": "white"})
+                else:
+                    print(f"Could not map URL domain to a region profile "
+                          f"(domain={url_region_info['domain']}, "
+                          f"country={url_region_info['country']}, "
+                          f"tz={url_region_info['timezone']})")
+
+                # If auto-detection failed, prompt the analyst to pick a region
+                if region is None:
+                    region = self._show_region_picker_dialog(url_region_info)
+                    if region is None:
+                        # User cancelled
+                        self.root.after(0, self.close_progress_window)
+                        self.root.after(0, lambda: self.new_case_status.configure(
+                            text="Cancelled — no region selected"
+                        ))
+                        self.scan_in_progress = False
+                        return
+                    self.root.after(0, self.url_region_label.configure,
+                                    {"text": f"{region}",
+                                     "text_color": "white"})
+
+            # Fall back to default region if still None (e.g. advanced retrieval off)
+            if region is None:
+                region = self.settings_manager.get("url_grabber.default_region", "us-east")
 
             # Initialize case data
             case_data = {
@@ -3669,13 +3780,6 @@ class ForensicAnalysisGUI:
             # Set current case so downloads are tracked
             self.case_manager.current_case = case_data
 
-            downloaded_files = []
-            failed_downloads = []
-            vpn_recommendation = None
-
-            # Determine whether to use advanced retrieval (MalwareRetriever)
-            use_advanced = self.settings_manager.get("url_grabber.enable_advanced_retrieval", True)
-
             # Initialize MalwareRetriever if advanced retrieval is enabled
             retriever = None
             if use_advanced:
@@ -3693,7 +3797,7 @@ class ForensicAnalysisGUI:
                     print(f"URL Grabber initialized: region={region_info['region']}, "
                           f"tz={region_info['timezone']}, offset={region_info['utc_offset_minutes']}")
 
-                    # Check current VPN location before downloading
+                    # Check current VPN location against URL-derived region
                     self.root.after(0, self.update_progress, 0, len(urls), "Checking VPN location...")
                     loc = retriever.check_current_location()
 
@@ -3710,20 +3814,21 @@ class ForensicAnalysisGUI:
                     if loc["error"]:
                         print(f"VPN location check: {loc['error']}")
                     elif not loc["match"]:
-                        # Mismatch — warn analyst and let them decide
+                        # VPN does not match the URL's target region — warn analyst
                         proceed_result = [None]
 
                         def show_vpn_mismatch():
                             result = messagebox.askyesno(
-                                "VPN Location Mismatch",
-                                f"Your current IP location does not match the target region.\n\n"
-                                f"Current location:\n"
+                                "VPN Region Mismatch",
+                                f"Your VPN connection does not match the URL's target region.\n\n"
+                                f"URL targets:\n"
+                                f"  Region: {region}\n"
+                                f"  PIA Server: {loc['pia_server']}\n"
+                                f"  Timezone: {loc['target_timezone']}\n\n"
+                                f"Your connection:\n"
                                 f"  IP: {loc['ip']}\n"
                                 f"  Location: {loc['city']}, {loc['country']}\n"
                                 f"  Timezone: {loc['timezone']}\n\n"
-                                f"Target region:\n"
-                                f"  PIA Server: {loc['pia_server']}\n"
-                                f"  Timezone: {loc['target_timezone']}\n\n"
                                 f"Connect PIA to \"{loc['pia_server']}\" on the Linux host.\n\n"
                                 f"Continue downloading anyway?"
                             )
