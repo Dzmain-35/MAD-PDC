@@ -583,10 +583,10 @@ class ForensicAnalysisGUI:
 
         lbl_color = self.colors["accent"] if accent else self.colors["text_secondary"]
         ctk.CTkLabel(title_blk, text=label,
-                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
                      text_color=lbl_color).pack(anchor="w")
         ctk.CTkLabel(title_blk, text=subtitle,
-                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     font=ctk.CTkFont(family="Segoe UI", size=12),
                      text_color=self.colors["text_secondary"]).pack(anchor="w")
 
         # Right actions frame (caller populates)
@@ -674,10 +674,10 @@ class ForensicAnalysisGUI:
         lp_title_block.pack(side="left", padx=16, pady=8)
 
         ctk.CTkLabel(lp_title_block, text="NEW CASE",
-                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
                      text_color=self.colors["accent"]).pack(anchor="w")
         ctk.CTkLabel(lp_title_block, text="Initialize Malware Analysis Session",
-                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     font=ctk.CTkFont(family="Segoe UI", size=12),
                      text_color=self.colors["text_secondary"]).pack(anchor="w")
 
         # Guide toggle button (far right of header)
@@ -1817,7 +1817,7 @@ class ForensicAnalysisGUI:
         """Show or hide the Analyst Workflow guide sidecar in the New Case tab."""
         if self._workflow_visible:
             self.workflow_sidecar.grid_remove()
-            self.workflow_sidecar.master.columnconfigure(1, weight=0)
+            self.workflow_sidecar.master.columnconfigure(1, weight=0, minsize=0)
             self._workflow_visible = False
             self.workflow_toggle_btn.configure(text="≡ Guide")
         else:
