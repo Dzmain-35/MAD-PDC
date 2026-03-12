@@ -4197,7 +4197,7 @@ class ForensicAnalysisGUI:
         # Create dialog window
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Add IOC")
-        dialog.geometry("500x310")
+        dialog.geometry("500x420")
         dialog.configure(fg_color=self.colors["dark_blue"])
         dialog.transient(self.root)
         dialog.grab_set()
@@ -4205,8 +4205,8 @@ class ForensicAnalysisGUI:
         # Center the dialog
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (310 // 2)
-        dialog.geometry(f"500x310+{x}+{y}")
+        y = (dialog.winfo_screenheight() // 2) - (420 // 2)
+        dialog.geometry(f"500x420+{x}+{y}")
 
         self._make_popup_header(dialog, "ADD INDICATOR OF COMPROMISE",
                                 "URL / IP Address / Domain",
@@ -4234,15 +4234,15 @@ class ForensicAnalysisGUI:
         ctk.CTkRadioButton(type_frame, text="Domain", variable=ioc_type_var, value="domains",
                           fg_color=self.colors["red"]).pack(side="left")
 
-        # IOC Value input
-        value_label = ctk.CTkLabel(content, text="IOC Value:",
+        # IOC Value input (multi-line for bulk entry)
+        value_label = ctk.CTkLabel(content, text="IOC Values (one per line):",
                                    font=Fonts.body_bold,
                                    anchor="w")
         value_label.pack(anchor="w", pady=(0, 5))
 
-        ioc_value_entry = ctk.CTkEntry(content, width=450, height=35)
-        ioc_value_entry.pack(pady=(0, 20))
-        ioc_value_entry.focus()
+        ioc_value_text = ctk.CTkTextbox(content, width=450, height=120)
+        ioc_value_text.pack(pady=(0, 20))
+        ioc_value_text.focus()
 
         # Buttons
         btn_frame = ctk.CTkFrame(content, fg_color="transparent")
@@ -4250,22 +4250,40 @@ class ForensicAnalysisGUI:
 
         def add_ioc():
             ioc_type = ioc_type_var.get()
-            ioc_value = ioc_value_entry.get().strip()
+            raw_text = ioc_value_text.get("1.0", "end").strip()
 
-            if not ioc_value:
-                messagebox.showwarning("Empty Value", "Please enter an IOC value")
+            if not raw_text:
+                messagebox.showwarning("Empty Value", "Please enter at least one IOC value")
                 return
 
-            # Add IOC to case
-            self.case_manager.add_ioc(ioc_type, ioc_value)
+            # Split by newlines and filter empty lines
+            values = [v.strip() for v in raw_text.splitlines() if v.strip()]
+
+            if not values:
+                messagebox.showwarning("Empty Value", "Please enter at least one IOC value")
+                return
+
+            # Add each IOC to case
+            added_count = 0
+            for value in values:
+                iocs = self.current_case.get("iocs", {})
+                existing = iocs.get(ioc_type, [])
+                if value not in existing:
+                    self.case_manager.add_ioc(ioc_type, value)
+                    added_count += 1
 
             # Refresh IOC display
             self.refresh_iocs_display()
 
-            messagebox.showinfo("Success", f"IOC added successfully!\n\nType: {ioc_type}\nValue: {ioc_value}")
+            total = len(values)
+            skipped = total - added_count
+            msg = f"{added_count} IOC(s) added successfully!"
+            if skipped > 0:
+                msg += f"\n{skipped} duplicate(s) skipped."
+            messagebox.showinfo("Success", msg)
             dialog.destroy()
 
-        btn_add = ctk.CTkButton(btn_frame, text="Add IOC", command=add_ioc,
+        btn_add = ctk.CTkButton(btn_frame, text="Add IOC(s)", command=add_ioc,
                                width=120, height=32,
                                fg_color=self.colors["accent"],
                                hover_color=self.colors["accent_hover"])
