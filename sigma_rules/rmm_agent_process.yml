@@ -1,0 +1,46 @@
+title: RMM Agent Process Execution
+id: c6c8b3f1-6cc2-4d6d-92b5-5e7e4a1a8c42
+status: experimental
+description: Detects execution of common Generic RMM Agent components including the main agent, launcher, and tray launcher binaries.
+author: OpenAI
+date: 2026-03-17
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+  selection_names:
+    Image|endswith:
+      - '\RMM.Agent.exe'
+      - '\RMM.Agent.Launcher.exe'
+      - '\RMM.TrayAppLauncher.exe'
+
+  selection_path:
+    Image|startswith: 'C:\Program Files\RMM Agent'
+
+  selection_cmd:
+    CommandLine|contains:
+      - 'C:\Program Files\RMM Agent'
+      - 'RMM.Agent.exe'
+      - 'RMM.Agent.Launcher.exe'
+      - 'RMM.TrayAppLauncher.exe'
+
+  condition: selection_names or (selection_path and selection_cmd)
+
+fields:
+  - Image
+  - CommandLine
+  - ParentImage
+  - ParentCommandLine
+  - OriginalFileName
+  - User
+  - Hashes
+
+falsepositives:
+  - Legitimate remote monitoring and management software usage
+level: medium
+
+tags:
+  - attack.execution
+  - attack.t1219
+  - detection.rmm
