@@ -6393,29 +6393,36 @@ falsepositives:
 
         # Cases Treeview
         style = ttk.Style()
+        style.theme_use('default')
         _cases_font_size = 14 if self._is_large_screen else 11
         _cases_heading_size = 15 if self._is_large_screen else 12
         _cases_row_height = 32 if self._is_large_screen else 24
 
         style.configure("Cases.Treeview",
-                       background=self.colors["surface_elevated"],
-                       foreground="white",
-                       fieldbackground=self.colors["surface_elevated"],
+                       background=self.colors["surface"],
+                       foreground=self.colors["text_primary"],
+                       fieldbackground=self.colors["surface"],
                        borderwidth=0,
+                       relief="flat",
                        font=('Segoe UI', _cases_font_size),
                        rowheight=_cases_row_height)
         style.configure("Cases.Treeview.Heading",
                        background=self.colors["navy"],
                        foreground="white",
-                       borderwidth=0,
+                       borderwidth=1,
+                       relief="flat",
                        font=('Segoe UI', _cases_heading_size, 'bold'))
         style.map('Cases.Treeview',
-                 background=[('selected', self.colors["accent"])])
+                 background=[('selected', self.colors["accent"])],
+                 foreground=[('selected', 'white')])
+        style.map('Cases.Treeview.Heading',
+                 background=[('active', self.colors["surface_elevated"])])
 
-        tree_frame = tk.Frame(left_panel, bg=self.colors["surface_elevated"])
+        tree_frame = tk.Frame(left_panel, bg=self.colors["surface"])
         tree_frame.pack(fill="both", expand=True, padx=6, pady=6)
 
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical")
+        vsb = tk.Scrollbar(tree_frame, orient="vertical",
+                           bg=self.colors["surface"], troughcolor=self.colors["navy"])
         vsb.pack(side="right", fill="y")
 
         self.cases_tree = ttk.Treeview(
@@ -6517,13 +6524,13 @@ falsepositives:
         if cases:
             unique_dates = sorted(set(c["date"] for c in cases), reverse=True)
             self.cases_date_filter.configure(values=["All Dates"] + unique_dates)
+            # Auto-select the most recent date on fresh load
+            current_filter = self.cases_date_filter.get()
+            valid_dates = set(c["date"] for c in cases)
+            if current_filter == "All Dates" or current_filter not in valid_dates:
+                self.cases_date_filter.set(unique_dates[0])
         else:
             self.cases_date_filter.configure(values=["All Dates"])
-
-        # Keep current filter selection if still valid, otherwise reset
-        current_filter = self.cases_date_filter.get()
-        valid_dates = [c["date"] for c in cases]
-        if current_filter != "All Dates" and current_filter not in valid_dates:
             self.cases_date_filter.set("All Dates")
 
         if error_msg:
