@@ -44,6 +44,7 @@ def install_packages():
             return
 
         playwright_requested = False
+        failed_packages = []
 
         for package in packages:
             success = run_command(
@@ -52,24 +53,23 @@ def install_packages():
             )
 
             if not success:
-                print(f"[!] Stopping due to install failure: {package}")
-                return
+                failed_packages.append(package)
 
             normalized = package.lower()
             if normalized == "playwright" or normalized.startswith("playwright=="):
-                playwright_requested = True
+                if success:
+                    playwright_requested = True
 
         if playwright_requested:
-            success = run_command(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                "Successfully installed Playwright Chromium runtime"
+            run_command(
+                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                "Successfully installed Playwright Chromium browser and system dependencies"
             )
 
-            if not success:
-                print("[!] Python packages installed, but Playwright Chromium install failed.")
-                return
-
-        print("[+] All installations completed successfully.")
+        if failed_packages:
+            print(f"\n[!] The following packages failed to install: {', '.join(failed_packages)}")
+        else:
+            print("\n[+] All installations completed successfully.")
 
     except Exception as e:
         print(f"[!] Unexpected error: {e}")
