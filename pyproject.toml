@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MAD-PDC"
+version = "1.0.0"
+description = "Malware Analysis Dashboard - Post Detection Capabilities"
+requires-python = ">=3.11"
+dependencies = [
+    "psutil",
+    "tqdm",
+    "pyperclip",
+    "virustotal-api",
+    "yara-python",
+    "watchdog",
+    "reportlab",
+    "plyer",
+    "pefile",
+    "customtkinter",
+    "scikit-learn",
+    "pandas",
+    "requests",
+    "urllib3",
+    "Pillow",
+    "pyyaml",
+    "playwright",
+]
+
+[project.optional-dependencies]
+# Windows-only dependencies
+windows = [
+    "wmi",
+    "win10toast",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "ruff>=0.4.0",
+]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+]
+
+[project.scripts]
+mad-pdc = "MAD:main"
+
+[tool.setuptools]
+py-modules = ["MAD", "case_manager", "settings_manager", "sigma_rule_manager", "yara_rule_manager", "typography"]
+
+[tool.setuptools.packages.find]
+include = ["analysis_modules*"]
+
+# -- Pytest configuration --
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "-p", "cacheprovider",
+]
+cache_dir = ".pytest_cache"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests requiring external services",
+    "windows: marks tests that require Windows OS",
+]
+
+# -- Coverage configuration --
+[tool.coverage.run]
+source = ["analysis_modules", "."]
+omit = [
+    "tests/*",
+    "archive/*",
+    "Install_Reqs.py",
+    "setup.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 0
+
+# -- Ruff linter/formatter configuration --
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+cache-dir = ".ruff_cache"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "E402",  # module level import not at top of file
+    "B007",  # unused loop variable
+    "B008",  # function call in default argument
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["analysis_modules"]
