@@ -1,0 +1,32 @@
+title: Tiflux Agent Process Execution
+id: a9d2c2a1-5d8e-4d69-9a37-c3b1e4d7b812
+status: experimental
+description: Detects execution of the Tiflux agent process TiAgent.exe.
+author: Dmain
+date: 2026-03-17
+logsource:
+  category: process_creation
+  product: windows
+
+detection:
+  selection_image:
+    Image|endswith: '\TiAgent.exe'
+  selection_name:
+    OriginalFileName: 'TiAgent.exe'
+  condition: 1 of selection_*
+
+fields:
+  - Image
+  - OriginalFileName
+  - CommandLine
+  - ParentImage
+  - ParentCommandLine
+  - User
+  - Hashes
+
+falsepositives:
+  - Authorized Tiflux remote management activity
+level: medium
+tags:
+  - attack.execution
+  - attack.rmm
