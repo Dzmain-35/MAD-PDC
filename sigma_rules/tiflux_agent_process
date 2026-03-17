@@ -1,32 +1,62 @@
-title: Tiflux Agent Process Execution
-id: a9d2c2a1-5d8e-4d69-9a37-c3b1e4d7b812
+title: TiFlux Agent Execution or TiFlux Artifact Access
+id: 0c4f5d7c-6a63-4e0b-9ec5-7c6b8f9e2c11
 status: experimental
-description: Detects execution of the Tiflux agent process TiAgent.exe.
+description: Detects execution of TiAgent.exe and related TiFlux artifacts such as known install paths, registry keys, and tiflux infrastructure references.
 author: Dmain
 date: 2026-03-17
+references:
+  - Internal string analysis of TiAgent.exe / TiFlux artifacts
 logsource:
-  category: process_creation
   product: windows
+  category: process_creation
 
 detection:
   selection_image:
     Image|endswith: '\TiAgent.exe'
-  selection_name:
-    OriginalFileName: 'TiAgent.exe'
+
+  selection_path:
+    Image:
+      - 'C:\Program Files (x86)\TiFLUX\desktop\TiAgent.exe'
+      - 'C:/Program Files (x86)/TiFLUX/desktop/TiAgent.exe'
+
+  selection_cmd:
+    CommandLine|contains:
+      - 'agent.tiflux.com'
+      - 'app.tiflux.com'
+      - 'equipment_users/get_or_create.json'
+      - '\TiFLUX\desktop\TiAgent.exe'
+      - '/TiFLUX/desktop/TiAgent.exe'
+
+  selection_parent_or_child_context:
+    CurrentDirectory|contains:
+      - '\TiFLUX\desktop'
+      - '/TiFLUX/desktop'
+
+  selection_registry_strings:
+    CommandLine|contains:
+      - 'HKEY_CURRENT_USER\Software\TiFlux'
+      - 'HKEY_LOCAL_MACHINE\Software\TiFlux'
+      - 'Software\TiFlux'
+
   condition: 1 of selection_*
 
 fields:
   - Image
   - OriginalFileName
   - CommandLine
+  - CurrentDirectory
   - ParentImage
   - ParentCommandLine
   - User
   - Hashes
 
 falsepositives:
-  - Authorized Tiflux remote management activity
+  - Legitimate TiFlux remote management software usage
 level: medium
+
 tags:
   - attack.execution
-  - attack.rmm
+  - attack.persistence
+  - attack.t1059
+  - attack.t1219
+  - detection.rmm
