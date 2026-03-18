@@ -5214,6 +5214,25 @@ File Size: {file_info['file_size']} bytes"""
         )
         self.assessment_source_lbl.pack(anchor="w", padx=16, pady=(0, 2))
 
+        # Analyst name entry
+        name_row = ctk.CTkFrame(self.assessment_select_frame, fg_color="transparent")
+        name_row.pack(fill="x", padx=16, pady=(4, 6))
+        ctk.CTkLabel(
+            name_row, text="Analyst Name:",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color=self.colors["text_secondary"],
+        ).pack(side="left")
+        self.assessment_analyst_entry = ctk.CTkEntry(
+            name_row, width=220, height=30,
+            fg_color=self.colors["navy"],
+            text_color=self.colors["text_primary"],
+            border_color=self.colors["border"],
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            placeholder_text="Enter your name",
+        )
+        self.assessment_analyst_entry.pack(side="left", padx=(8, 0))
+
         self.assessment_case_list = ctk.CTkScrollableFrame(
             self.assessment_select_frame,
             fg_color=self.colors["surface"],
@@ -5655,6 +5674,13 @@ File Size: {file_info['file_size']} bytes"""
 
     def _assessment_load_case(self, case_dir):
         """Load a case and start an assessment session."""
+        analyst_name = self.assessment_analyst_entry.get().strip()
+        if not analyst_name:
+            messagebox.showwarning(
+                "Name Required",
+                "Please enter your name before starting an assessment.")
+            return
+
         try:
             case_data = self.assessment_engine.load_case_for_assessment(case_dir)
         except Exception as e:
@@ -5669,6 +5695,7 @@ File Size: {file_info['file_size']} bytes"""
             case_data, custom_steps=custom_steps)
         self.assessment_session["_case_dir"] = case_dir
         self.assessment_session["_case_data"] = case_data
+        self.assessment_session["analyst_name"] = analyst_name
 
         # Populate the Case Files panel
         self._assessment_render_files(case_data, case_dir)
@@ -5872,14 +5899,31 @@ File Size: {file_info['file_size']} bytes"""
         self._assessment_render_step()
 
     def _assessment_show_complete(self):
-        """Show the completion screen."""
+        """Show the completion screen and auto-save results JSON."""
         session = self.assessment_session
         self.assessment_walk_frame.pack_forget()
 
         cat = session["category"]
         steps_done = len(session["analyst_answers"])
+        analyst_name = session.get("analyst_name", "Unknown")
+        case_id = session.get("case_id", "UNKNOWN")
+
+        # Auto-save answers JSON to the assessment case folder
+        case_dir = session.get("_case_dir", "")
+        answers_filename = f"{analyst_name}_{case_id}_Answers.json"
+        save_msg = ""
+        if case_dir:
+            answers_path = os.path.join(case_dir, answers_filename)
+            try:
+                result_data = self.assessment_engine.export_session_json(session)
+                with open(answers_path, "w", encoding="utf-8") as f:
+                    json.dump(result_data, f, indent=4)
+                save_msg = f"\nResults saved: {answers_filename}"
+            except OSError as e:
+                save_msg = f"\nFailed to save results: {e}"
+
         self.assessment_summary_lbl.configure(
-            text=f"Category: {cat}   |   Steps completed: {steps_done}"
+            text=f"Analyst: {analyst_name}   |   Category: {cat}   |   Steps completed: {steps_done}{save_msg}"
         )
         self.assessment_complete_frame.pack(fill="both", expand=True)
 

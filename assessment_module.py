@@ -498,3 +498,15 @@ class AssessmentEngine:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
+
+    def export_session_json(self, session: dict) -> dict:
+        """Return a JSON-serialisable dict summarising the completed assessment."""
+        return {
+            "analyst_name": session.get("analyst_name", "Unknown"),
+            "case_id": session.get("case_id", "UNKNOWN"),
+            "category": session.get("category", "generic"),
+            "started_at": session.get("started_at", ""),
+            "completed_at": datetime.now().isoformat(),
+            "total_steps": len(session.get("steps", [])),
+            "answers": session.get("analyst_answers", []),
+        }
