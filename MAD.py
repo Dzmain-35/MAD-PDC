@@ -5245,6 +5245,54 @@ File Size: {file_info['file_size']} bytes"""
         )
         self.assessment_phase_lbl.pack(anchor="w", padx=16, pady=(4, 4))
 
+        # ── Case Files panel (collapsible) ──
+        self.assessment_files_header = ctk.CTkFrame(
+            self.assessment_walk_frame,
+            fg_color=self.colors["surface_elevated"],
+            corner_radius=8, cursor="hand2",
+        )
+        self.assessment_files_header.pack(fill="x", padx=16, pady=(0, 6))
+
+        af_inner = ctk.CTkFrame(self.assessment_files_header, fg_color="transparent")
+        af_inner.pack(fill="x", padx=12, pady=8)
+
+        self.assessment_files_indicator = ctk.CTkLabel(
+            af_inner, text="\u25b6", width=16,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color=self.colors["text_dim"],
+        )
+        self.assessment_files_indicator.pack(side="left")
+
+        ctk.CTkLabel(
+            af_inner, text="Case Files",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color=self.colors["text_primary"],
+        ).pack(side="left", padx=(6, 0))
+
+        self.assessment_files_container = ctk.CTkScrollableFrame(
+            self.assessment_walk_frame,
+            fg_color=self.colors["surface"],
+            corner_radius=8, height=140,
+        )
+        # Start collapsed
+        self._assessment_files_visible = False
+
+        def _toggle_assessment_files(event=None):
+            if self._assessment_files_visible:
+                self.assessment_files_container.pack_forget()
+                self.assessment_files_indicator.configure(text="\u25b6")
+                self._assessment_files_visible = False
+            else:
+                self.assessment_files_container.pack(
+                    fill="x", padx=16, pady=(0, 6),
+                    before=self.assessment_step_card)
+                self.assessment_files_indicator.configure(text="\u25bc")
+                self._assessment_files_visible = True
+
+        for w in (self.assessment_files_header, af_inner,
+                  self.assessment_files_indicator):
+            w.bind("<Button-1>", _toggle_assessment_files)
+
         # Step card
         self.assessment_step_card = ctk.CTkFrame(
             self.assessment_walk_frame,
@@ -5292,6 +5340,14 @@ File Size: {file_info['file_size']} bytes"""
             text_color=self.colors["text_secondary"],
         )
         # ack label is packed/forgotten dynamically
+
+        # Feedback label for incorrect answers (hidden by default)
+        self.assessment_feedback_lbl = ctk.CTkLabel(
+            self.assessment_step_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#ef4444",
+        )
+        # packed/forgotten dynamically
 
         # Hint area (hidden by default)
         self.assessment_hint_lbl = ctk.CTkLabel(
@@ -5416,13 +5472,26 @@ File Size: {file_info['file_size']} bytes"""
     # ── Assessment helper methods ──
 
     def _get_assessment_cases_path(self):
-        """Return the directory to scan for assessment cases (network share preferred)."""
+        """Return the directory to scan for assessment cases.
+
+        Defaults to ``<network_case_folder_path>/Assessment Cases``.
+        Falls back to local case storage if the network path is unreachable.
+        """
         if self._assessment_case_path:
             return self._assessment_case_path
-        # Try network path first
+        # Try network path + Assessment Cases subfolder first
         net_path = self.settings_manager.get("network.network_case_folder_path", "")
-        if net_path and os.path.isdir(net_path):
-            return net_path
+        if net_path:
+            assessment_path = os.path.join(net_path, "Assessment Cases")
+            if os.path.isdir(assessment_path):
+                return assessment_path
+            # Try creating it if parent exists
+            if os.path.isdir(net_path):
+                try:
+                    os.makedirs(assessment_path, exist_ok=True)
+                    return assessment_path
+                except OSError:
+                    pass
         # Fallback to local
         return self.case_manager.case_storage_path
 
@@ -5481,7 +5550,7 @@ File Size: {file_info['file_size']} bytes"""
             ).pack(side="right", padx=10, pady=8)
 
     def _upload_case_for_assessment(self):
-        """Upload the current case to the network assessment share."""
+        """Upload the current case to the Assessment Cases network subfolder."""
         if not self.current_case:
             messagebox.showwarning("No Case", "No active case to upload.")
             return
@@ -5495,7 +5564,8 @@ File Size: {file_info['file_size']} bytes"""
 
         case_id = self.current_case["id"]
         case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
-        dest_dir = os.path.join(net_path, case_id)
+        assessment_root = os.path.join(net_path, "Assessment Cases")
+        dest_dir = os.path.join(assessment_root, case_id)
 
         def do_upload():
             try:
@@ -5503,9 +5573,15 @@ File Size: {file_info['file_size']} bytes"""
                 os.makedirs(os.path.join(dest_dir, "files"), exist_ok=True)
                 success = self.case_manager.sync_case_to_network(case_dir, dest_dir)
                 if success:
+                    # Generate editable assessment questions template
+                    self.assessment_engine.generate_assessment_template(
+                        self.current_case, dest_dir)
                     self.root.after(0, lambda: messagebox.showinfo(
                         "Upload Complete",
-                        f"Case {case_id} uploaded for assessment.\n\n{dest_dir}"))
+                        f"Case {case_id} uploaded for assessment.\n\n{dest_dir}\n\n"
+                        f"An assessment_questions.json template has been created.\n"
+                        f"The overseer can edit it to customise questions, hints,\n"
+                        f"answers and required_keywords."))
                 else:
                     self.root.after(0, lambda: messagebox.showerror(
                         "Upload Failed", "sync_case_to_network returned False."))
@@ -5523,7 +5599,7 @@ File Size: {file_info['file_size']} bytes"""
             self._assessment_refresh_cases()
 
     def _assessment_upload_from_picker(self):
-        """Pick a local case folder and upload it to the network assessment share."""
+        """Pick a local case folder and upload it to the Assessment Cases network subfolder."""
         net_path = self.settings_manager.get("network.network_case_folder_path", "")
         if not net_path:
             messagebox.showerror("Not Configured",
@@ -5546,7 +5622,8 @@ File Size: {file_info['file_size']} bytes"""
             return
 
         case_name = os.path.basename(folder)
-        dest_dir = os.path.join(net_path, case_name)
+        assessment_root = os.path.join(net_path, "Assessment Cases")
+        dest_dir = os.path.join(assessment_root, case_name)
 
         def do_upload():
             try:
@@ -5554,6 +5631,14 @@ File Size: {file_info['file_size']} bytes"""
                 os.makedirs(os.path.join(dest_dir, "files"), exist_ok=True)
                 success = self.case_manager.sync_case_to_network(folder, dest_dir)
                 if success:
+                    # Generate assessment questions template from case data
+                    try:
+                        with open(meta_file, "r", encoding="utf-8") as f:
+                            case_data = json.load(f)
+                        self.assessment_engine.generate_assessment_template(
+                            case_data, dest_dir)
+                    except Exception:
+                        pass  # Non-fatal — template can be created manually
                     self.root.after(0, lambda: messagebox.showinfo(
                         "Upload Complete",
                         f"Case uploaded for assessment.\n\n{dest_dir}"))
@@ -5575,8 +5660,16 @@ File Size: {file_info['file_size']} bytes"""
             messagebox.showerror("Load Error", f"Failed to load case:\n{e}")
             return
 
-        self.assessment_session = self.assessment_engine.start_session(case_data)
+        # Try loading overseer-authored questions from the case folder
+        custom_steps = self.assessment_engine.load_assessment_questions(case_dir)
+
+        self.assessment_session = self.assessment_engine.start_session(
+            case_data, custom_steps=custom_steps)
         self.assessment_session["_case_dir"] = case_dir
+        self.assessment_session["_case_data"] = case_data
+
+        # Populate the Case Files panel
+        self._assessment_render_files(case_data, case_dir)
 
         # Switch from selection panel to walkthrough
         self.assessment_select_frame.pack_forget()
@@ -5584,6 +5677,87 @@ File Size: {file_info['file_size']} bytes"""
         self.assessment_walk_frame.pack(fill="both", expand=True)
 
         self._assessment_render_step()
+
+    def _assessment_render_files(self, case_data, case_dir):
+        """Populate the Case Files panel with viewable/downloadable file rows."""
+        for child in self.assessment_files_container.winfo_children():
+            child.destroy()
+
+        files = case_data.get("files", [])
+        if not files:
+            ctk.CTkLabel(
+                self.assessment_files_container, text="No files in this case.",
+                font=ctk.CTkFont(family="Segoe UI", size=11),
+                text_color=self.colors["text_dim"],
+            ).pack(pady=10)
+            return
+
+        files_dir = os.path.join(case_dir, "files")
+
+        for fi in files:
+            row = ctk.CTkFrame(self.assessment_files_container,
+                               fg_color=self.colors["surface_elevated"],
+                               corner_radius=6)
+            row.pack(fill="x", pady=2, padx=4)
+
+            fname = fi.get("filename", "unknown")
+            fsize = fi.get("file_size", 0)
+            size_str = f"{fsize:,} bytes" if fsize else ""
+
+            ctk.CTkLabel(
+                row, text=f"{fname}  ({size_str})",
+                font=ctk.CTkFont(family="Segoe UI", size=11),
+                text_color=self.colors["text_primary"],
+            ).pack(side="left", padx=10, pady=6)
+
+            # Resolve the file path (prefer storage_path, fall back to files dir)
+            file_path = fi.get("storage_path", "")
+            if not file_path or not os.path.isfile(file_path):
+                file_path = os.path.join(files_dir, fname)
+
+            _btn_style = dict(
+                height=26, corner_radius=5,
+                fg_color=self.colors["surface"],
+                hover_color=self.colors["navy"],
+                text_color=self.colors["text_primary"],
+                border_width=1, border_color=self.colors["border"],
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+            )
+
+            def _make_save(fp=file_path, fn=fname):
+                def _save():
+                    dest = filedialog.asksaveasfilename(
+                        initialfile=fn, title="Save file copy")
+                    if dest:
+                        import shutil
+                        shutil.copy2(fp, dest)
+                        messagebox.showinfo("Saved", f"File saved to:\n{dest}")
+                return _save
+
+            def _make_view(fp=file_path, fn=fname):
+                def _view():
+                    if not os.path.isfile(fp):
+                        messagebox.showerror("Not Found", f"File not found:\n{fp}")
+                        return
+                    try:
+                        viewer = get_viewer_executor()
+                        info = viewer.get_file_info(fp)
+                        if info.get("is_text", False):
+                            self.view_file_text(fp, fn)
+                        else:
+                            self.view_file_hex(fp, fn)
+                    except Exception:
+                        self.view_file_hex(fp, fn)
+                return _view
+
+            ctk.CTkButton(
+                row, text="Save Copy", width=80,
+                command=_make_save(), **_btn_style,
+            ).pack(side="right", padx=(0, 10), pady=6)
+            ctk.CTkButton(
+                row, text="View", width=60,
+                command=_make_view(), **_btn_style,
+            ).pack(side="right", padx=(0, 4), pady=6)
 
     def _assessment_render_step(self):
         """Render the current step in the walkthrough panel."""
@@ -5626,10 +5800,11 @@ File Size: {file_info['file_size']} bytes"""
             self.assessment_ack_lbl.pack(fill="x", padx=16, pady=(0, 6))
             self.assessment_submit_btn.configure(text="Continue")
 
-        # Hide hint and reveal
+        # Hide hint, reveal, and feedback
         self.assessment_hint_lbl.pack_forget()
         self.assessment_hint_btn.configure(state="normal")
         self.assessment_reveal_frame.pack_forget()
+        self.assessment_feedback_lbl.pack_forget()
 
         # Re-show step card if it was hidden
         self.assessment_step_card.pack(fill="both", expand=True, padx=16, pady=(0, 8))
@@ -5646,7 +5821,7 @@ File Size: {file_info['file_size']} bytes"""
             self.assessment_hint_lbl.pack(anchor="w", padx=16, pady=(0, 6))
 
     def _assessment_submit(self):
-        """Submit the current step answer and show reveal."""
+        """Submit the current step answer — validate before advancing."""
         session = self.assessment_session
         if not session:
             return
@@ -5659,6 +5834,16 @@ File Size: {file_info['file_size']} bytes"""
             answer = self.assessment_answer_box.get("1.0", "end").strip()
         else:
             answer = "(acknowledged)"
+
+        # Validate answer against required_keywords
+        if not self.assessment_engine.validate_answer(step, answer):
+            self.assessment_feedback_lbl.configure(
+                text="Incorrect \u2014 check your answer and try again.")
+            self.assessment_feedback_lbl.pack(anchor="w", padx=16, pady=(0, 4))
+            return
+
+        # Hide feedback on correct answer
+        self.assessment_feedback_lbl.pack_forget()
 
         result = self.assessment_engine.submit_step(session, answer)
 

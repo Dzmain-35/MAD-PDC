@@ -365,10 +365,67 @@ class AssessmentEngine:
 
         return sorted(steps, key=sort_key)
 
-    def start_session(self, case_data: dict) -> dict:
-        """Create and return a new assessment session dict."""
+    def load_assessment_questions(self, case_dir: str):
+        """Load assessment_questions.json from a case directory.
+
+        Returns the questions list, or None if the file doesn't exist.
+        """
+        qpath = os.path.join(case_dir, "assessment_questions.json")
+        if not os.path.isfile(qpath):
+            return None
+        with open(qpath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("questions", [])
+
+    def generate_assessment_template(self, case_data: dict, dest_dir: str):
+        """Write an assessment_questions.json template into *dest_dir*.
+
+        Uses the QUESTION_BANK category for the case, adds empty
+        ``required_keywords`` so the overseer knows what to fill in.
+        """
         category = self.infer_category(case_data)
-        steps = [s.copy() for s in QUESTION_BANK.get(category, QUESTION_BANK["generic"])]
+        steps = QUESTION_BANK.get(category, QUESTION_BANK["generic"])
+        questions = []
+        for s in steps:
+            q = dict(s)
+            q.setdefault("required_keywords", [])
+            questions.append(q)
+
+        payload = {"questions": questions}
+        qpath = os.path.join(dest_dir, "assessment_questions.json")
+        with open(qpath, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=4)
+
+    @staticmethod
+    def validate_answer(step: dict, answer: str) -> bool:
+        """Check that *answer* contains every required keyword (case-insensitive).
+
+        Returns True when ``required_keywords`` is empty or missing (free-pass).
+        """
+        keywords = step.get("required_keywords", [])
+        if not keywords:
+            return True
+        answer_lower = answer.lower()
+        return all(kw.lower() in answer_lower for kw in keywords)
+
+    def start_session(self, case_data: dict, custom_steps: list = None) -> dict:
+        """Create and return a new assessment session dict.
+
+        If *custom_steps* is provided (from assessment_questions.json) they
+        are used instead of QUESTION_BANK.
+        """
+        category = self.infer_category(case_data)
+
+        if custom_steps:
+            steps = [s.copy() for s in custom_steps]
+            # Ensure defaults for optional fields
+            for s in steps:
+                s.setdefault("free_text", True)
+                s.setdefault("required_keywords", [])
+                s.setdefault("evidence_fields", [])
+        else:
+            steps = [s.copy() for s in QUESTION_BANK.get(category, QUESTION_BANK["generic"])]
+
         steps = self._prioritize_steps(steps, case_data)
 
         return {
