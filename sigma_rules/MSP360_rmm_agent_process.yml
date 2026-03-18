@@ -1,4 +1,4 @@
-title: RMM Agent Process Execution
+title: MSP360 RMM Process Execution
 id: c6c8b3f1-6cc2-4d6d-92b5-5e7e4a1a8c42
 status: experimental
 description: Detects execution of common Generic RMM Agent components including the main agent, launcher, and tray launcher binaries.
