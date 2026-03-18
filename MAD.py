@@ -3,6 +3,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import datetime
 from case_manager import CaseManager
+from assessment_module import AssessmentEngine
 from PIL import Image
 import os
 import shutil
@@ -108,6 +109,10 @@ class ForensicAnalysisGUI:
             settings_manager=self.settings_manager
         )
         print(f"Case storage initialized at: {self.case_manager.case_storage_path}")
+
+        # Initialize assessment engine
+        self.assessment_engine = AssessmentEngine()
+        self.assessment_session = None
 
         # Initialize YARA rule manager
         self.yara_rule_manager = YaraRuleManager(
@@ -446,6 +451,7 @@ class ForensicAnalysisGUI:
         self.create_new_case_tab()
         self.create_current_case_tab()
         self.create_analysis_tab()
+        self.create_assessment_tab()
         self.create_yara_rules_tab()
         self.create_settings_tab()
 
@@ -477,6 +483,7 @@ class ForensicAnalysisGUI:
             ("btn_new_case",     "⊕", "New Case",      "new_case"),
             ("btn_current_case", "◈", "Current Case",  "current_case"),
             ("btn_analysis",     "◉", "Analysis",      "analysis"),
+            ("btn_assessment",   "◆", "Assessment",    "assessment"),
             ("btn_yara_rules",   "⬡", "YARA Rules",    "yara_rules"),
             ("btn_settings",     "⚙", "Settings",      "settings"),
         ]
@@ -3294,6 +3301,7 @@ class ForensicAnalysisGUI:
             self.btn_new_case,
             self.btn_current_case,
             self.btn_analysis,
+            self.btn_assessment,
             self.btn_yara_rules,
             self.btn_settings,
         ]
@@ -3312,6 +3320,7 @@ class ForensicAnalysisGUI:
             "new_case": self.btn_new_case,
             "current_case": self.btn_current_case,
             "analysis": self.btn_analysis,
+            "assessment": self.btn_assessment,
             "yara_rules": self.btn_yara_rules,
             "settings": self.btn_settings,
         }
@@ -5146,6 +5155,434 @@ File Size: {file_info['file_size']} bytes"""
         except Exception as e:
             messagebox.showerror("Delete Error", f"Failed to delete file:\n\n{str(e)}")
             print(f"Error deleting file: {e}")
+    # ==================== ASSESSMENT TAB ====================
+    def create_assessment_tab(self):
+        """Create the Assessment tab — guided malware analysis walkthrough."""
+        frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
+
+        # ── Tab header ──
+        self._make_tab_header(frame, "MALWARE ASSESSMENT",
+                              "Guided analyst walkthrough")
+
+        # ── Case selection panel ──
+        self.assessment_select_frame = ctk.CTkFrame(frame, fg_color="transparent")
+
+        sel_top = ctk.CTkFrame(self.assessment_select_frame, fg_color="transparent")
+        sel_top.pack(fill="x", padx=16, pady=(12, 6))
+        ctk.CTkLabel(sel_top, text="Select a saved case to begin assessment:",
+                     font=ctk.CTkFont(family="Segoe UI", size=13),
+                     text_color=self.colors["text_secondary"]).pack(side="left")
+        ctk.CTkButton(
+            sel_top, text="Refresh", width=80, height=30,
+            fg_color=self.colors["surface_elevated"],
+            hover_color=self.colors["navy"],
+            text_color=self.colors["text_primary"],
+            border_width=1, border_color=self.colors["border"],
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=self._assessment_refresh_cases,
+        ).pack(side="right")
+
+        self.assessment_case_list = ctk.CTkScrollableFrame(
+            self.assessment_select_frame,
+            fg_color=self.colors["surface"],
+            corner_radius=8,
+        )
+        self.assessment_case_list.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
+        self.assessment_select_frame.pack(fill="both", expand=True)
+
+        # ── Walkthrough panel ──
+        self.assessment_walk_frame = ctk.CTkFrame(frame, fg_color="transparent")
+
+        # Progress bar
+        prog_frame = ctk.CTkFrame(self.assessment_walk_frame, fg_color="transparent")
+        prog_frame.pack(fill="x", padx=16, pady=(12, 4))
+        self.assessment_progress = ctk.CTkProgressBar(
+            prog_frame, height=8, corner_radius=4,
+            fg_color=self.colors["surface"],
+            progress_color=self.colors["accent"],
+        )
+        self.assessment_progress.pack(fill="x")
+        self.assessment_progress.set(0)
+
+        # Phase label
+        self.assessment_phase_lbl = ctk.CTkLabel(
+            self.assessment_walk_frame, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color=self.colors["accent"],
+        )
+        self.assessment_phase_lbl.pack(anchor="w", padx=16, pady=(4, 4))
+
+        # Step card
+        self.assessment_step_card = ctk.CTkFrame(
+            self.assessment_walk_frame,
+            fg_color=self.colors["surface"],
+            corner_radius=10,
+        )
+        self.assessment_step_card.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        self.assessment_step_num_lbl = ctk.CTkLabel(
+            self.assessment_step_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=self.colors["text_dim"],
+        )
+        self.assessment_step_num_lbl.pack(anchor="w", padx=16, pady=(12, 2))
+
+        self.assessment_question_lbl = ctk.CTkLabel(
+            self.assessment_step_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=14),
+            text_color=self.colors["text_primary"],
+            wraplength=700, justify="left",
+        )
+        self.assessment_question_lbl.pack(anchor="w", padx=16, pady=(0, 4))
+
+        self.assessment_evidence_lbl = ctk.CTkLabel(
+            self.assessment_step_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=self.colors["info"],
+        )
+        self.assessment_evidence_lbl.pack(anchor="w", padx=16, pady=(0, 6))
+
+        # Answer area (textbox or ack label)
+        self.assessment_answer_box = ctk.CTkTextbox(
+            self.assessment_step_card, height=140,
+            fg_color=self.colors["navy"],
+            text_color=self.colors["text_primary"],
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            corner_radius=6,
+        )
+        self.assessment_answer_box.pack(fill="x", padx=16, pady=(0, 6))
+
+        self.assessment_ack_lbl = ctk.CTkLabel(
+            self.assessment_step_card,
+            text="Review the data above, then acknowledge to continue.",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color=self.colors["text_secondary"],
+        )
+        # ack label is packed/forgotten dynamically
+
+        # Hint area (hidden by default)
+        self.assessment_hint_lbl = ctk.CTkLabel(
+            self.assessment_step_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=self.colors["amber"],
+            wraplength=700, justify="left",
+        )
+
+        # Buttons row
+        btn_row = ctk.CTkFrame(self.assessment_step_card, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        self.assessment_hint_btn = ctk.CTkButton(
+            btn_row, text="Show Hint", width=100, height=32,
+            fg_color=self.colors["surface_elevated"],
+            hover_color=self.colors["navy"],
+            text_color=self.colors["amber"],
+            border_width=1, border_color=self.colors["border"],
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            command=self._assessment_show_hint,
+        )
+        self.assessment_hint_btn.pack(side="left", padx=(0, 8))
+
+        self.assessment_submit_btn = ctk.CTkButton(
+            btn_row, text="Submit", width=100, height=32,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            command=self._assessment_submit,
+        )
+        self.assessment_submit_btn.pack(side="left")
+
+        # Reveal panel (hidden until Submit)
+        self.assessment_reveal_frame = ctk.CTkFrame(
+            self.assessment_walk_frame,
+            fg_color=self.colors["surface_elevated"],
+            corner_radius=10,
+        )
+
+        ctk.CTkLabel(
+            self.assessment_reveal_frame, text="Reveal",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=self.colors["accent"],
+        ).pack(anchor="w", padx=16, pady=(10, 2))
+
+        self.assessment_reveal_text = ctk.CTkTextbox(
+            self.assessment_reveal_frame, height=120,
+            fg_color=self.colors["navy"],
+            text_color=self.colors["text_primary"],
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            corner_radius=6,
+        )
+        self.assessment_reveal_text.pack(fill="x", padx=16, pady=(0, 6))
+
+        self.assessment_next_btn = ctk.CTkButton(
+            self.assessment_reveal_frame, text="Next Step →",
+            width=120, height=32,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            command=self._assessment_next_step,
+        )
+        self.assessment_next_btn.pack(anchor="e", padx=16, pady=(0, 10))
+
+        # ── Completion screen ──
+        self.assessment_complete_frame = ctk.CTkFrame(frame, fg_color="transparent")
+
+        comp_card = ctk.CTkFrame(
+            self.assessment_complete_frame,
+            fg_color=self.colors["surface"],
+            corner_radius=10,
+        )
+        comp_card.pack(padx=40, pady=40, fill="x")
+
+        ctk.CTkLabel(
+            comp_card, text="Assessment Complete",
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            text_color=self.colors["green"],
+        ).pack(pady=(24, 4))
+
+        self.assessment_summary_lbl = ctk.CTkLabel(
+            comp_card, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            text_color=self.colors["text_secondary"],
+        )
+        self.assessment_summary_lbl.pack(pady=(0, 16))
+
+        comp_btn_row = ctk.CTkFrame(comp_card, fg_color="transparent")
+        comp_btn_row.pack(pady=(0, 24))
+
+        ctk.CTkButton(
+            comp_btn_row, text="Export Report", width=140, height=36,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=self._assessment_export_report,
+        ).pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(
+            comp_btn_row, text="Start New Assessment", width=180, height=36,
+            fg_color=self.colors["surface_elevated"],
+            hover_color=self.colors["navy"],
+            text_color=self.colors["text_primary"],
+            border_width=1, border_color=self.colors["border"],
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            command=self._assessment_reset,
+        ).pack(side="left")
+
+        # Register tab and populate case list
+        self.tabs["assessment"] = frame
+        self._assessment_refresh_cases()
+
+    # ── Assessment helper methods ──
+
+    def _assessment_refresh_cases(self):
+        """Refresh the case list in the selection panel."""
+        for child in self.assessment_case_list.winfo_children():
+            child.destroy()
+
+        cases = self.assessment_engine.load_cases_from_disk(
+            self.case_manager.case_storage_path
+        )
+
+        if not cases:
+            ctk.CTkLabel(
+                self.assessment_case_list,
+                text="No saved cases found.\nCreate and save a case first, then return here.",
+                font=ctk.CTkFont(family="Segoe UI", size=13),
+                text_color=self.colors["text_dim"],
+                justify="center",
+            ).pack(pady=40)
+            return
+
+        for case in cases:
+            row = ctk.CTkFrame(self.assessment_case_list,
+                               fg_color=self.colors["surface_elevated"],
+                               corner_radius=6)
+            row.pack(fill="x", pady=3, padx=4)
+
+            info_frame = ctk.CTkFrame(row, fg_color="transparent")
+            info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=8)
+
+            ctk.CTkLabel(
+                info_frame, text=case["id"],
+                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+                text_color=self.colors["text_primary"],
+            ).pack(anchor="w")
+
+            created_short = case["created"][:19].replace("T", "  ") if case["created"] else "—"
+            detail_text = f"{created_short}   |   {case['file_count']} file(s)   |   {case['total_threats']} threat(s)   |   {case['status']}"
+            ctk.CTkLabel(
+                info_frame, text=detail_text,
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color=self.colors["text_dim"],
+            ).pack(anchor="w")
+
+            case_dir = case["case_dir"]
+            ctk.CTkButton(
+                row, text="Load", width=70, height=28,
+                fg_color=self.colors["accent"],
+                hover_color=self.colors["accent_hover"],
+                text_color="white",
+                corner_radius=5,
+                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                command=lambda d=case_dir: self._assessment_load_case(d),
+            ).pack(side="right", padx=10, pady=8)
+
+    def _assessment_load_case(self, case_dir):
+        """Load a case and start an assessment session."""
+        try:
+            case_data = self.assessment_engine.load_case_for_assessment(case_dir)
+        except Exception as e:
+            messagebox.showerror("Load Error", f"Failed to load case:\n{e}")
+            return
+
+        self.assessment_session = self.assessment_engine.start_session(case_data)
+        self.assessment_session["_case_dir"] = case_dir
+
+        # Switch from selection panel to walkthrough
+        self.assessment_select_frame.pack_forget()
+        self.assessment_complete_frame.pack_forget()
+        self.assessment_walk_frame.pack(fill="both", expand=True)
+
+        self._assessment_render_step()
+
+    def _assessment_render_step(self):
+        """Render the current step in the walkthrough panel."""
+        session = self.assessment_session
+        if not session:
+            return
+
+        if self.assessment_engine.is_complete(session):
+            self._assessment_show_complete()
+            return
+
+        step = self.assessment_engine.get_current_step(session)
+        total = len(session["steps"])
+        idx = session["current_step_index"]
+
+        # Progress
+        self.assessment_progress.set((idx) / total if total else 0)
+
+        # Phase
+        self.assessment_phase_lbl.configure(text=f"Phase: {step['phase']}")
+
+        # Step number
+        self.assessment_step_num_lbl.configure(text=f"Step {idx + 1} of {total}")
+
+        # Question
+        self.assessment_question_lbl.configure(text=step["question"])
+
+        # Evidence fields
+        ev = ", ".join(step.get("evidence_fields", []))
+        self.assessment_evidence_lbl.configure(text=f"Look at: {ev}" if ev else "")
+
+        # Answer box vs ack label
+        if step.get("free_text", True):
+            self.assessment_ack_lbl.pack_forget()
+            self.assessment_answer_box.pack(fill="x", padx=16, pady=(0, 6))
+            self.assessment_answer_box.delete("1.0", "end")
+            self.assessment_submit_btn.configure(text="Submit")
+        else:
+            self.assessment_answer_box.pack_forget()
+            self.assessment_ack_lbl.pack(fill="x", padx=16, pady=(0, 6))
+            self.assessment_submit_btn.configure(text="Continue")
+
+        # Hide hint and reveal
+        self.assessment_hint_lbl.pack_forget()
+        self.assessment_hint_btn.configure(state="normal")
+        self.assessment_reveal_frame.pack_forget()
+
+        # Re-show step card if it was hidden
+        self.assessment_step_card.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+    def _assessment_show_hint(self):
+        """Show the hint for the current step."""
+        session = self.assessment_session
+        if not session:
+            return
+        step = self.assessment_engine.get_current_step(session)
+        if step:
+            self.assessment_hint_lbl.configure(text=f"Hint: {step['hint']}")
+            self.assessment_hint_lbl.pack_forget()
+            self.assessment_hint_lbl.pack(anchor="w", padx=16, pady=(0, 6))
+
+    def _assessment_submit(self):
+        """Submit the current step answer and show reveal."""
+        session = self.assessment_session
+        if not session:
+            return
+
+        step = self.assessment_engine.get_current_step(session)
+        if not step:
+            return
+
+        if step.get("free_text", True):
+            answer = self.assessment_answer_box.get("1.0", "end").strip()
+        else:
+            answer = "(acknowledged)"
+
+        result = self.assessment_engine.submit_step(session, answer)
+
+        # Show reveal panel
+        self.assessment_reveal_text.configure(state="normal")
+        self.assessment_reveal_text.delete("1.0", "end")
+        self.assessment_reveal_text.insert("1.0", result["reveal"])
+        self.assessment_reveal_text.configure(state="disabled")
+        self.assessment_reveal_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+        # Disable submit while reveal is shown
+        self.assessment_submit_btn.configure(state="disabled")
+        self.assessment_hint_btn.configure(state="disabled")
+
+    def _assessment_next_step(self):
+        """Advance to the next step or show completion."""
+        self.assessment_submit_btn.configure(state="normal")
+        self.assessment_reveal_frame.pack_forget()
+        self.assessment_hint_lbl.pack_forget()
+        self._assessment_render_step()
+
+    def _assessment_show_complete(self):
+        """Show the completion screen."""
+        session = self.assessment_session
+        self.assessment_walk_frame.pack_forget()
+
+        cat = session["category"]
+        steps_done = len(session["analyst_answers"])
+        self.assessment_summary_lbl.configure(
+            text=f"Category: {cat}   |   Steps completed: {steps_done}"
+        )
+        self.assessment_complete_frame.pack(fill="both", expand=True)
+
+    def _assessment_export_report(self):
+        """Export the session report to the case directory."""
+        session = self.assessment_session
+        if not session:
+            return
+        case_dir = session.get("_case_dir", ".")
+        output = os.path.join(case_dir, "assessment_report.txt")
+        try:
+            self.assessment_engine.export_session_report(session, output)
+            messagebox.showinfo("Report Saved", f"Assessment report saved to:\n{output}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to save report:\n{e}")
+
+    def _assessment_reset(self):
+        """Reset to case selection view."""
+        self.assessment_session = None
+        self.assessment_walk_frame.pack_forget()
+        self.assessment_complete_frame.pack_forget()
+        self.assessment_select_frame.pack(fill="both", expand=True)
+        self._assessment_refresh_cases()
+
     # ==================== YARA RULES TAB ====================
     def create_yara_rules_tab(self):
         """Create the YARA Rules Management tab"""
