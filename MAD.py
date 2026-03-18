@@ -996,6 +996,18 @@ class ForensicAnalysisGUI:
                                               font=Fonts.label)
         self.case_status_label.pack(side="right")
 
+        self.btn_upload_assessment = ctk.CTkButton(
+            actions_frame, text="Upload for Assessment",
+            command=self._upload_case_for_assessment,
+            height=26, width=170,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+        )
+        self.btn_upload_assessment.pack(side="right", padx=(0, 8))
+
         # Scrollable frame for content
         scroll_frame = ctk.CTkScrollableFrame(frame, corner_radius=0,
                                               fg_color=self.colors["dark_blue"],
@@ -5167,21 +5179,40 @@ File Size: {file_info['file_size']} bytes"""
         # ── Case selection panel ──
         self.assessment_select_frame = ctk.CTkFrame(frame, fg_color="transparent")
 
+        # Track which directory to scan (default: network share, fallback: local)
+        self._assessment_case_path = None
+
         sel_top = ctk.CTkFrame(self.assessment_select_frame, fg_color="transparent")
         sel_top.pack(fill="x", padx=16, pady=(12, 6))
         ctk.CTkLabel(sel_top, text="Select a saved case to begin assessment:",
                      font=ctk.CTkFont(family="Segoe UI", size=13),
                      text_color=self.colors["text_secondary"]).pack(side="left")
-        ctk.CTkButton(
-            sel_top, text="Refresh", width=80, height=30,
-            fg_color=self.colors["surface_elevated"],
-            hover_color=self.colors["navy"],
-            text_color=self.colors["text_primary"],
+
+        _sel_btn_style = dict(
+            height=30, fg_color=self.colors["surface_elevated"],
+            hover_color=self.colors["navy"], text_color=self.colors["text_primary"],
             border_width=1, border_color=self.colors["border"],
-            corner_radius=6,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            command=self._assessment_refresh_cases,
+            corner_radius=6, font=ctk.CTkFont(family="Segoe UI", size=11),
+        )
+        ctk.CTkButton(
+            sel_top, text="Refresh", width=80,
+            command=self._assessment_refresh_cases, **_sel_btn_style,
         ).pack(side="right")
+        ctk.CTkButton(
+            sel_top, text="Browse Folder", width=110,
+            command=self._assessment_browse_folder, **_sel_btn_style,
+        ).pack(side="right", padx=(0, 6))
+        ctk.CTkButton(
+            sel_top, text="Upload Case", width=100,
+            command=self._assessment_upload_from_picker, **_sel_btn_style,
+        ).pack(side="right", padx=(0, 6))
+
+        self.assessment_source_lbl = ctk.CTkLabel(
+            self.assessment_select_frame, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color=self.colors["text_dim"],
+        )
+        self.assessment_source_lbl.pack(anchor="w", padx=16, pady=(0, 2))
 
         self.assessment_case_list = ctk.CTkScrollableFrame(
             self.assessment_select_frame,
@@ -5384,14 +5415,26 @@ File Size: {file_info['file_size']} bytes"""
 
     # ── Assessment helper methods ──
 
+    def _get_assessment_cases_path(self):
+        """Return the directory to scan for assessment cases (network share preferred)."""
+        if self._assessment_case_path:
+            return self._assessment_case_path
+        # Try network path first
+        net_path = self.settings_manager.get("network.network_case_folder_path", "")
+        if net_path and os.path.isdir(net_path):
+            return net_path
+        # Fallback to local
+        return self.case_manager.case_storage_path
+
     def _assessment_refresh_cases(self):
         """Refresh the case list in the selection panel."""
         for child in self.assessment_case_list.winfo_children():
             child.destroy()
 
-        cases = self.assessment_engine.load_cases_from_disk(
-            self.case_manager.case_storage_path
-        )
+        scan_path = self._get_assessment_cases_path()
+        self.assessment_source_lbl.configure(text=f"Source: {scan_path}")
+
+        cases = self.assessment_engine.load_cases_from_disk(scan_path)
 
         if not cases:
             ctk.CTkLabel(
@@ -5436,6 +5479,93 @@ File Size: {file_info['file_size']} bytes"""
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
                 command=lambda d=case_dir: self._assessment_load_case(d),
             ).pack(side="right", padx=10, pady=8)
+
+    def _upload_case_for_assessment(self):
+        """Upload the current case to the network assessment share."""
+        if not self.current_case:
+            messagebox.showwarning("No Case", "No active case to upload.")
+            return
+
+        net_path = self.settings_manager.get("network.network_case_folder_path", "")
+        if not net_path:
+            messagebox.showerror("Not Configured",
+                                 "Network case folder path is not configured.\n"
+                                 "Set it in Settings → Network.")
+            return
+
+        case_id = self.current_case["id"]
+        case_dir = os.path.join(self.case_manager.case_storage_path, case_id)
+        dest_dir = os.path.join(net_path, case_id)
+
+        def do_upload():
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+                os.makedirs(os.path.join(dest_dir, "files"), exist_ok=True)
+                success = self.case_manager.sync_case_to_network(case_dir, dest_dir)
+                if success:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Upload Complete",
+                        f"Case {case_id} uploaded for assessment.\n\n{dest_dir}"))
+                else:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Upload Failed", "sync_case_to_network returned False."))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Upload Error", f"Failed to upload case:\n{e}"))
+
+        threading.Thread(target=do_upload, daemon=True).start()
+
+    def _assessment_browse_folder(self):
+        """Let the analyst pick a custom folder to load assessment cases from."""
+        folder = filedialog.askdirectory(title="Select assessment cases folder")
+        if folder:
+            self._assessment_case_path = folder
+            self._assessment_refresh_cases()
+
+    def _assessment_upload_from_picker(self):
+        """Pick a local case folder and upload it to the network assessment share."""
+        net_path = self.settings_manager.get("network.network_case_folder_path", "")
+        if not net_path:
+            messagebox.showerror("Not Configured",
+                                 "Network case folder path is not configured.\n"
+                                 "Set it in Settings → Network.")
+            return
+
+        # Let user pick a case folder (should contain case_metadata.json)
+        folder = filedialog.askdirectory(
+            title="Select a case folder to upload",
+            initialdir=self.case_manager.case_storage_path,
+        )
+        if not folder:
+            return
+
+        meta_file = os.path.join(folder, "case_metadata.json")
+        if not os.path.isfile(meta_file):
+            messagebox.showwarning("Invalid Folder",
+                                   "Selected folder does not contain case_metadata.json.")
+            return
+
+        case_name = os.path.basename(folder)
+        dest_dir = os.path.join(net_path, case_name)
+
+        def do_upload():
+            try:
+                os.makedirs(dest_dir, exist_ok=True)
+                os.makedirs(os.path.join(dest_dir, "files"), exist_ok=True)
+                success = self.case_manager.sync_case_to_network(folder, dest_dir)
+                if success:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Upload Complete",
+                        f"Case uploaded for assessment.\n\n{dest_dir}"))
+                    self.root.after(0, self._assessment_refresh_cases)
+                else:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Upload Failed", "sync_case_to_network returned False."))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Upload Error", f"Failed to upload case:\n{e}"))
+
+        threading.Thread(target=do_upload, daemon=True).start()
 
     def _assessment_load_case(self, case_dir):
         """Load a case and start an assessment session."""
