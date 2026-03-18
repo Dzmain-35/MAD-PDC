@@ -374,13 +374,14 @@ class AssessmentEngine:
         if not os.path.isfile(qpath):
             return None
         try:
-            with open(qpath, "r", encoding="utf-8") as f:
+            with open(qpath, "r", encoding="utf-8-sig") as f:
                 content = f.read().strip()
             if not content:
                 return None
             data = json.loads(content)
             return data.get("questions", [])
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[Assessment] Failed to load {qpath}: {e}")
             return None
 
     def generate_assessment_template(self, case_data: dict, dest_dir: str):
