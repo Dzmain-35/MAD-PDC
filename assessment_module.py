@@ -373,9 +373,15 @@ class AssessmentEngine:
         qpath = os.path.join(case_dir, "assessment_questions.json")
         if not os.path.isfile(qpath):
             return None
-        with open(qpath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("questions", [])
+        try:
+            with open(qpath, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if not content:
+                return None
+            data = json.loads(content)
+            return data.get("questions", [])
+        except (json.JSONDecodeError, OSError):
+            return None
 
     def generate_assessment_template(self, case_data: dict, dest_dir: str):
         """Write an assessment_questions.json template into *dest_dir*.
