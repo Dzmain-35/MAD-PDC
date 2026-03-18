@@ -424,16 +424,15 @@ class AssessmentEngine:
         category = self.infer_category(case_data)
 
         if custom_steps:
+            # Use overseer-authored questions as-is (preserve their order)
             steps = [s.copy() for s in custom_steps]
-            # Ensure defaults for optional fields
             for s in steps:
                 s.setdefault("free_text", True)
                 s.setdefault("required_keywords", [])
                 s.setdefault("evidence_fields", [])
         else:
             steps = [s.copy() for s in QUESTION_BANK.get(category, QUESTION_BANK["generic"])]
-
-        steps = self._prioritize_steps(steps, case_data)
+            steps = self._prioritize_steps(steps, case_data)
 
         return {
             "case_id": case_data.get("id", "UNKNOWN"),

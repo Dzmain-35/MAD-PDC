@@ -5662,6 +5662,7 @@ File Size: {file_info['file_size']} bytes"""
 
         # Try loading overseer-authored questions from the case folder
         custom_steps = self.assessment_engine.load_assessment_questions(case_dir)
+        print(f"[Assessment] case_dir={case_dir}, custom_steps={'loaded ' + str(len(custom_steps)) + ' questions' if custom_steps else 'None (using QUESTION_BANK)'}")
 
         self.assessment_session = self.assessment_engine.start_session(
             case_data, custom_steps=custom_steps)
