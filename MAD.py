@@ -5391,11 +5391,12 @@ File Size: {file_info['file_size']} bytes"""
             corner_radius=10,
         )
 
-        ctk.CTkLabel(
+        self.assessment_reveal_lbl = ctk.CTkLabel(
             self.assessment_reveal_frame, text="Reveal",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             text_color=self.colors["accent"],
-        ).pack(anchor="w", padx=16, pady=(10, 2))
+        )
+        self.assessment_reveal_lbl.pack(anchor="w", padx=16, pady=(10, 2))
 
         self.assessment_reveal_text = ctk.CTkTextbox(
             self.assessment_reveal_frame, height=120,
@@ -5805,6 +5806,8 @@ File Size: {file_info['file_size']} bytes"""
         self.assessment_hint_lbl.pack_forget()
         self.assessment_hint_btn.configure(state="normal")
         self.assessment_reveal_frame.pack_forget()
+        self.assessment_reveal_lbl.configure(
+            text="Reveal", text_color=self.colors["accent"])
         self.assessment_feedback_lbl.pack_forget()
 
         # Re-show step card if it was hidden
@@ -5848,7 +5851,9 @@ File Size: {file_info['file_size']} bytes"""
 
         result = self.assessment_engine.submit_step(session, answer)
 
-        # Show reveal panel
+        # Show reveal panel with "Correct!" header in green
+        self.assessment_reveal_lbl.configure(
+            text="Correct!", text_color=self.colors["green"])
         self.assessment_reveal_text.configure(state="normal")
         self.assessment_reveal_text.delete("1.0", "end")
         self.assessment_reveal_text.insert("1.0", result["reveal"])
