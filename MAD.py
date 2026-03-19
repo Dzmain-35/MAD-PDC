@@ -3345,6 +3345,9 @@ class ForensicAnalysisGUI:
         # Tab-specific side-effects
         if tab_name == "current_case":
             self.update_current_case_display()
+        elif tab_name == "assessment":
+            if not self.assessment_session:
+                self._assessment_refresh_cases()
         elif tab_name == "yara_rules":
             self.refresh_yara_rules_list()
 
@@ -5928,15 +5931,22 @@ File Size: {file_info['file_size']} bytes"""
         case_dir = session.get("_case_dir", "")
         answers_filename = f"{analyst_name}_{case_id}_Answers.json"
         save_msg = ""
+        print(f"[Assessment] Complete — analyst={analyst_name}, case={case_id}, "
+              f"answers={len(session.get('analyst_answers', []))}, case_dir={case_dir}")
         if case_dir:
             answers_path = os.path.join(case_dir, answers_filename)
             try:
                 result_data = self.assessment_engine.export_session_json(session)
+                json_text = json.dumps(result_data, indent=4)
                 with open(answers_path, "w", encoding="utf-8") as f:
-                    json.dump(result_data, f, indent=4)
+                    f.write(json_text)
+                    f.flush()
+                    os.fsync(f.fileno())
                 save_msg = f"\nResults saved: {answers_filename}"
-            except OSError as e:
+                print(f"[Assessment] Saved {len(json_text)} bytes to {answers_path}")
+            except Exception as e:
                 save_msg = f"\nFailed to save results: {e}"
+                print(f"[Assessment] Error saving results: {e}")
 
         self.assessment_summary_lbl.configure(
             text=f"Analyst: {analyst_name}   |   Category: {cat}   |   Steps completed: {steps_done}{save_msg}"

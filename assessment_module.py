@@ -294,19 +294,19 @@ class AssessmentEngine:
                     meta = json.load(f)
                 # Detect completion: look for any *_Answers.json file
                 completed_by = []
-                for fname in os.listdir(case_dir):
-                    if fname.endswith("_Answers.json"):
-                        # Extract analyst name (format: Name_CaseID_Answers.json)
-                        parts = fname[:-len("_Answers.json")]
-                        # The case ID may contain underscores, so split from
-                        # the known case_id suffix
-                        cid = meta.get("id", entry)
-                        if parts.endswith("_" + cid):
-                            analyst = parts[:-len("_" + cid)]
-                        else:
-                            analyst = parts
-                        if analyst:
-                            completed_by.append(analyst)
+                try:
+                    cid = meta.get("id", entry)
+                    for fname in os.listdir(case_dir):
+                        if fname.endswith("_Answers.json"):
+                            parts = fname[:-len("_Answers.json")]
+                            if parts.endswith("_" + cid):
+                                analyst = parts[:-len("_" + cid)]
+                            else:
+                                analyst = parts
+                            if analyst:
+                                completed_by.append(analyst)
+                except OSError:
+                    pass  # network hiccup — still show the case
 
                 cases.append({
                     "id": meta.get("id", entry),
