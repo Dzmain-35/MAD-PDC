@@ -4,6 +4,7 @@ from tkinter import filedialog, messagebox
 from datetime import datetime
 from case_manager import CaseManager
 from PIL import Image
+import json
 import os
 import shutil
 import socket
@@ -445,8 +446,9 @@ class ForensicAnalysisGUI:
         self.tabs = {}
         self.create_new_case_tab()
         self.create_current_case_tab()
+        self.create_cases_tab()
         self.create_analysis_tab()
-        self.create_yara_rules_tab()
+        self.create_rules_tab()
         self.create_settings_tab()
 
         # Show initial tab
@@ -476,8 +478,9 @@ class ForensicAnalysisGUI:
         nav_items = [
             ("btn_new_case",     "⊕", "New Case",      "new_case"),
             ("btn_current_case", "◈", "Current Case",  "current_case"),
+            ("btn_cases",        "◆", "Cases",          "cases"),
             ("btn_analysis",     "◉", "Analysis",      "analysis"),
-            ("btn_yara_rules",   "⬡", "YARA Rules",    "yara_rules"),
+            ("btn_rules",        "⬡", "Rules",          "rules"),
             ("btn_settings",     "⚙", "Settings",      "settings"),
         ]
 
@@ -3293,8 +3296,9 @@ class ForensicAnalysisGUI:
         _nav_btns = [
             self.btn_new_case,
             self.btn_current_case,
+            self.btn_cases,
             self.btn_analysis,
-            self.btn_yara_rules,
+            self.btn_rules,
             self.btn_settings,
         ]
         for btn in _nav_btns:
@@ -3311,8 +3315,9 @@ class ForensicAnalysisGUI:
         _active_map = {
             "new_case": self.btn_new_case,
             "current_case": self.btn_current_case,
+            "cases": self.btn_cases,
             "analysis": self.btn_analysis,
-            "yara_rules": self.btn_yara_rules,
+            "rules": self.btn_rules,
             "settings": self.btn_settings,
         }
         if tab_name in _active_map:
@@ -3324,8 +3329,10 @@ class ForensicAnalysisGUI:
         # Tab-specific side-effects
         if tab_name == "current_case":
             self.update_current_case_display()
-        elif tab_name == "yara_rules":
-            self.refresh_yara_rules_list()
+        elif tab_name == "rules":
+            self.refresh_active_rules_subtab()
+        elif tab_name == "cases":
+            self.refresh_cases_list()
 
     def show_analysis_subtab(self, subtab_name):
         """Switch between analysis sub-tabs"""
@@ -5147,31 +5154,136 @@ File Size: {file_info['file_size']} bytes"""
             messagebox.showerror("Delete Error", f"Failed to delete file:\n\n{str(e)}")
             print(f"Error deleting file: {e}")
     # ==================== YARA RULES TAB ====================
-    def create_yara_rules_tab(self):
-        """Create the YARA Rules Management tab"""
+    def create_rules_tab(self):
+        """Create the combined Rules tab with YARA/Sigma sub-tabs"""
         frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
-        self.tabs["yara_rules"] = frame
 
-        # ── Unified tab header ─────────────────────────────────────────
-        btn_frame = self._make_tab_header(frame, "YARA RULES",
-                                          "Detection Ruleset Management")
+        # ── Header with sub-nav pills (mirrors Analysis tab pattern) ───
+        hdr_wrapper = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"],
+                                   corner_radius=0, height=54)
+        hdr_wrapper.pack(fill="x")
+        hdr_wrapper.pack_propagate(False)
+
+        # Red left accent stripe
+        ctk.CTkFrame(hdr_wrapper, width=4, corner_radius=0,
+                     fg_color=self.colors["accent"]).pack(side="left", fill="y")
+
+        # Title block
+        title_blk = ctk.CTkFrame(hdr_wrapper, fg_color="transparent")
+        title_blk.pack(side="left", padx=16, pady=8)
+        ctk.CTkLabel(title_blk, text="RULES",
+                     font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                     text_color=self.colors["accent"]).pack(anchor="w")
+        ctk.CTkLabel(title_blk, text="Detection Ruleset Management",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=self.colors["text_secondary"]).pack(anchor="w")
+
+        # Sub-nav pills (right side of header)
+        subnav_frame = ctk.CTkFrame(hdr_wrapper, fg_color="transparent")
+        subnav_frame.pack(side="right", padx=14)
+
+        self.btn_yara_pill = ctk.CTkButton(
+            subnav_frame, text="YARA Rules",
+            command=lambda: self.show_rules_subtab("yara"),
+            height=30, width=110,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="white",
+            corner_radius=5,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
+        )
+        self.btn_yara_pill.pack(side="left", padx=(0, 6))
+
+        self.btn_sigma_pill = ctk.CTkButton(
+            subnav_frame, text="Sigma Rules",
+            command=lambda: self.show_rules_subtab("sigma"),
+            height=30, width=110,
+            fg_color="transparent",
+            hover_color=self.colors["navy"],
+            text_color=self.colors["text_secondary"],
+            border_width=1,
+            border_color=self.colors["border"],
+            corner_radius=5,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold")
+        )
+        self.btn_sigma_pill.pack(side="left")
+
+        # Content area for sub-tabs
+        self.rules_content = ctk.CTkFrame(frame, corner_radius=0,
+                                           fg_color=self.colors["dark_blue"])
+        self.rules_content.pack(fill="both", expand=True)
+
+        # Create sub-tab frames
+        self.rules_subtabs = {}
+        self._active_rules_subtab = "yara"
+        self._create_yara_rules_subtab()
+        self._create_sigma_rules_subtab()
+
+        self.tabs["rules"] = frame
+        self.show_rules_subtab("yara")
+
+    def show_rules_subtab(self, subtab_name):
+        """Switch between YARA and Sigma rules sub-tabs"""
+        for subtab in self.rules_subtabs.values():
+            subtab.pack_forget()
+
+        _inactive_cfg = dict(
+            fg_color="transparent",
+            text_color=self.colors["text_secondary"],
+            border_width=1,
+            border_color=self.colors["border"],
+        )
+        self.btn_yara_pill.configure(**_inactive_cfg)
+        self.btn_sigma_pill.configure(**_inactive_cfg)
+
+        self.rules_subtabs[subtab_name].pack(fill="both", expand=True)
+
+        _active_cfg = dict(
+            fg_color=self.colors["accent"],
+            text_color="white",
+            border_width=0,
+        )
+        if subtab_name == "yara":
+            self.btn_yara_pill.configure(**_active_cfg)
+            self.refresh_yara_rules_list()
+        elif subtab_name == "sigma":
+            self.btn_sigma_pill.configure(**_active_cfg)
+            self.refresh_sigma_rules_list()
+
+        self._active_rules_subtab = subtab_name
+
+    def refresh_active_rules_subtab(self):
+        """Refresh whichever rules sub-tab is currently active"""
+        if getattr(self, '_active_rules_subtab', 'yara') == 'sigma':
+            self.refresh_sigma_rules_list()
+        else:
+            self.refresh_yara_rules_list()
+
+    def _create_yara_rules_subtab(self):
+        """Create the YARA rules sub-tab content"""
+        frame = ctk.CTkFrame(self.rules_content, fg_color="transparent")
 
         _action_font = Fonts.label_large if self._is_large_screen else Fonts.label
-        btn_refresh = ctk.CTkButton(btn_frame, text="Refresh",
+
+        # Action buttons bar
+        action_bar = ctk.CTkFrame(frame, fg_color="transparent")
+        action_bar.pack(fill="x", padx=20, pady=(10, 0))
+
+        btn_refresh = ctk.CTkButton(action_bar, text="Refresh",
                                     command=self.refresh_yara_rules_list,
                                     fg_color=self.colors["navy"],
                                     hover_color=self.colors["dark_blue"],
                                     font=_action_font, height=30)
         btn_refresh.pack(side="left", padx=(0, 6))
 
-        btn_import_rule = ctk.CTkButton(btn_frame, text="Import File",
+        btn_import_rule = ctk.CTkButton(action_bar, text="Import File",
                                         command=self.import_yara_rule_file,
                                         fg_color=self.colors["navy"],
                                         hover_color=self.colors["dark_blue"],
                                         font=_action_font, height=30)
         btn_import_rule.pack(side="left", padx=(0, 6))
 
-        self.btn_add_yara_rule = ctk.CTkButton(btn_frame, text="+ Add Rule",
+        self.btn_add_yara_rule = ctk.CTkButton(action_bar, text="+ Add Rule",
                                                command=self.add_yara_rule_dialog,
                                                fg_color=self.colors["accent"],
                                                hover_color=self.colors["accent_hover"],
@@ -5181,7 +5293,7 @@ File Size: {file_info['file_size']} bytes"""
 
         # Info bar
         info_frame = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"], height=40)
-        info_frame.pack(fill="x", padx=0, pady=(0, 0))
+        info_frame.pack(fill="x", padx=0, pady=(10, 0))
         info_frame.pack_propagate(False)
 
         self.yara_rules_count_label = ctk.CTkLabel(info_frame,
@@ -5201,7 +5313,6 @@ File Size: {file_info['file_size']} bytes"""
         list_container.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
         # Create Treeview for efficient display of many rules
-        # Style configuration for dark theme
         style = ttk.Style()
         style.theme_use('default')
         _yara_font_size = 14 if self._is_large_screen else 11
@@ -5223,18 +5334,15 @@ File Size: {file_info['file_size']} bytes"""
         style.map('Yara.Treeview',
                  background=[('selected', self.colors["accent"])])
 
-        # Create treeview with scrollbar
         tree_frame = tk.Frame(list_container, bg=self.colors["surface_elevated"])
         tree_frame.pack(fill="both", expand=True, padx=2, pady=2)
 
-        # Scrollbars
         vsb = ttk.Scrollbar(tree_frame, orient="vertical")
         vsb.pack(side="right", fill="y")
 
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal")
         hsb.pack(side="bottom", fill="x")
 
-        # Treeview
         self.yara_rules_tree = ttk.Treeview(
             tree_frame,
             columns=("name", "size", "modified"),
@@ -5248,7 +5356,6 @@ File Size: {file_info['file_size']} bytes"""
         vsb.config(command=self.yara_rules_tree.yview)
         hsb.config(command=self.yara_rules_tree.xview)
 
-        # Configure columns with sorting
         self.yara_rules_tree.heading("name", text="Rule Filename ▼", anchor="w",
                                      command=lambda: self.sort_yara_tree("name"))
         self.yara_rules_tree.heading("size", text="Size (bytes)", anchor="center",
@@ -5262,21 +5369,16 @@ File Size: {file_info['file_size']} bytes"""
 
         self.yara_rules_tree.pack(fill="both", expand=True)
 
-        # Context menu for rule actions (Edit option added dynamically based on settings)
         self.yara_context_menu = tk.Menu(self.root, tearoff=0, bg=self.colors["navy"], fg="white",
                                          activebackground="#991b1b", activeforeground="white")
-
-        # Bind right-click to show context menu (built dynamically)
         self.yara_rules_tree.bind("<Button-3>", self.show_yara_context_menu)
-
-        # Bind double-click to view
         self.yara_rules_tree.bind("<Double-1>", lambda e: self.view_selected_yara_rule())
 
         # Action buttons below the table
-        action_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        action_frame.pack(fill="x", padx=20, pady=10)
+        bottom_action_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        bottom_action_frame.pack(fill="x", padx=20, pady=10)
 
-        btn_view = ctk.CTkButton(action_frame, text="View",
+        btn_view = ctk.CTkButton(bottom_action_frame, text="View",
                                 command=self.view_selected_yara_rule,
                                 fg_color=self.colors["navy"],
                                 hover_color=self.colors["dark_blue"],
@@ -5284,17 +5386,16 @@ File Size: {file_info['file_size']} bytes"""
                                 width=100)
         btn_view.pack(side="left", padx=5)
 
-        self.btn_edit_yara_rule = ctk.CTkButton(action_frame, text="Edit",
+        self.btn_edit_yara_rule = ctk.CTkButton(bottom_action_frame, text="Edit",
                                 command=self.edit_selected_yara_rule,
                                 fg_color=self.colors["navy"],
                                 hover_color=self.colors["dark_blue"],
                                 font=Fonts.label_large,
                                 width=100)
-        # Only show Edit button if rule creation is enabled
         if self.settings_manager.get("yara.enable_rule_creation", True):
             self.btn_edit_yara_rule.pack(side="left", padx=5)
 
-        btn_delete = ctk.CTkButton(action_frame, text="Delete",
+        btn_delete = ctk.CTkButton(bottom_action_frame, text="Delete",
                                   command=self.delete_selected_yara_rule,
                                   fg_color=self.colors["red"],
                                   hover_color=self.colors["red_dark"],
@@ -5305,6 +5406,156 @@ File Size: {file_info['file_size']} bytes"""
         # Initialize sort state
         self.yara_sort_column = "name"
         self.yara_sort_reverse = False
+
+        self.rules_subtabs["yara"] = frame
+
+    def _create_sigma_rules_subtab(self):
+        """Create the Sigma rules sub-tab content"""
+        frame = ctk.CTkFrame(self.rules_content, fg_color="transparent")
+
+        _action_font = Fonts.label_large if self._is_large_screen else Fonts.label
+
+        # Action buttons bar
+        action_bar = ctk.CTkFrame(frame, fg_color="transparent")
+        action_bar.pack(fill="x", padx=20, pady=(10, 0))
+
+        btn_refresh = ctk.CTkButton(action_bar, text="Refresh",
+                                    command=self.refresh_sigma_rules_list,
+                                    fg_color=self.colors["navy"],
+                                    hover_color=self.colors["dark_blue"],
+                                    font=_action_font, height=30)
+        btn_refresh.pack(side="left", padx=(0, 6))
+
+        btn_import_sigma = ctk.CTkButton(action_bar, text="Import File",
+                                         command=self.import_sigma_rule_file,
+                                         fg_color=self.colors["navy"],
+                                         hover_color=self.colors["dark_blue"],
+                                         font=_action_font, height=30)
+        btn_import_sigma.pack(side="left", padx=(0, 6))
+
+        btn_add_sigma = ctk.CTkButton(action_bar, text="+ Add Rule",
+                                      command=self.add_sigma_rule_dialog,
+                                      fg_color=self.colors["accent"],
+                                      hover_color=self.colors["accent_hover"],
+                                      font=_action_font, height=30)
+        btn_add_sigma.pack(side="left")
+
+        # Info bar
+        info_frame = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"], height=40)
+        info_frame.pack(fill="x", padx=0, pady=(10, 0))
+        info_frame.pack_propagate(False)
+
+        self.sigma_rules_count_label = ctk.CTkLabel(info_frame,
+                                                    text="Total Rules: 0",
+                                                    font=Fonts.label_large,
+                                                    text_color="white")
+        self.sigma_rules_count_label.pack(side="left", padx=20, pady=10)
+
+        sigma_path_label = ctk.CTkLabel(info_frame,
+                                        text=f"Location: {self.sigma_rules_path}",
+                                        font=Fonts.label,
+                                        text_color="#cccccc")
+        sigma_path_label.pack(side="left", padx=20, pady=10)
+
+        # Rules list container
+        list_container = ctk.CTkFrame(frame, fg_color=self.colors["navy"])
+        list_container.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+        # Sigma Treeview style
+        style = ttk.Style()
+        _sigma_font_size = 14 if self._is_large_screen else 11
+        _sigma_heading_size = 15 if self._is_large_screen else 12
+        _sigma_row_height = 32 if self._is_large_screen else 24
+
+        style.configure("Sigma.Treeview",
+                       background=self.colors["surface_elevated"],
+                       foreground="white",
+                       fieldbackground=self.colors["surface_elevated"],
+                       borderwidth=0,
+                       font=('Segoe UI', _sigma_font_size),
+                       rowheight=_sigma_row_height)
+        style.configure("Sigma.Treeview.Heading",
+                       background=self.colors["navy"],
+                       foreground="white",
+                       borderwidth=0,
+                       font=('Segoe UI', _sigma_heading_size, 'bold'))
+        style.map('Sigma.Treeview',
+                 background=[('selected', self.colors["accent"])])
+
+        tree_frame = tk.Frame(list_container, bg=self.colors["surface_elevated"])
+        tree_frame.pack(fill="both", expand=True, padx=2, pady=2)
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical")
+        vsb.pack(side="right", fill="y")
+
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal")
+        hsb.pack(side="bottom", fill="x")
+
+        self.sigma_rules_tree = ttk.Treeview(
+            tree_frame,
+            columns=("name", "size", "modified"),
+            show="headings",
+            style="Sigma.Treeview",
+            yscrollcommand=vsb.set,
+            xscrollcommand=hsb.set,
+            selectmode="browse"
+        )
+
+        vsb.config(command=self.sigma_rules_tree.yview)
+        hsb.config(command=self.sigma_rules_tree.xview)
+
+        self.sigma_rules_tree.heading("name", text="Rule Filename ▼", anchor="w",
+                                      command=lambda: self.sort_sigma_tree("name"))
+        self.sigma_rules_tree.heading("size", text="Size (bytes)", anchor="center",
+                                      command=lambda: self.sort_sigma_tree("size"))
+        self.sigma_rules_tree.heading("modified", text="Last Modified", anchor="center",
+                                      command=lambda: self.sort_sigma_tree("modified"))
+
+        self.sigma_rules_tree.column("name", width=300, anchor="w")
+        self.sigma_rules_tree.column("size", width=120, anchor="center")
+        self.sigma_rules_tree.column("modified", width=200, anchor="center")
+
+        self.sigma_rules_tree.pack(fill="both", expand=True)
+
+        # Context menu
+        self.sigma_context_menu = tk.Menu(self.root, tearoff=0, bg=self.colors["navy"], fg="white",
+                                          activebackground="#991b1b", activeforeground="white")
+        self.sigma_rules_tree.bind("<Button-3>", self.show_sigma_context_menu)
+        self.sigma_rules_tree.bind("<Double-1>", lambda e: self.view_selected_sigma_rule())
+
+        # Action buttons below the table
+        bottom_action_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        bottom_action_frame.pack(fill="x", padx=20, pady=10)
+
+        btn_view = ctk.CTkButton(bottom_action_frame, text="View",
+                                command=self.view_selected_sigma_rule,
+                                fg_color=self.colors["navy"],
+                                hover_color=self.colors["dark_blue"],
+                                font=Fonts.label_large,
+                                width=100)
+        btn_view.pack(side="left", padx=5)
+
+        btn_edit = ctk.CTkButton(bottom_action_frame, text="Edit",
+                                command=self.edit_selected_sigma_rule,
+                                fg_color=self.colors["navy"],
+                                hover_color=self.colors["dark_blue"],
+                                font=Fonts.label_large,
+                                width=100)
+        btn_edit.pack(side="left", padx=5)
+
+        btn_delete = ctk.CTkButton(bottom_action_frame, text="Delete",
+                                  command=self.delete_selected_sigma_rule,
+                                  fg_color=self.colors["red"],
+                                  hover_color=self.colors["red_dark"],
+                                  font=Fonts.label_large,
+                                  width=100)
+        btn_delete.pack(side="left", padx=5)
+
+        # Initialize sort state
+        self.sigma_sort_column = "name"
+        self.sigma_sort_reverse = False
+
+        self.rules_subtabs["sigma"] = frame
 
     def sort_yara_tree(self, column):
         """Sort treeview by column"""
@@ -5725,6 +5976,1185 @@ File Size: {file_info['file_size']} bytes"""
         else:
             messagebox.showerror("Error", message)
 
+    # ==================== SIGMA RULES METHODS ====================
+
+    def refresh_sigma_rules_list(self):
+        """Refresh the list of Sigma rules"""
+        for item in self.sigma_rules_tree.get_children():
+            self.sigma_rules_tree.delete(item)
+
+        rules = self.sigma_rule_manager.list_rules()
+
+        self.sigma_rules_count_label.configure(text=f"Total Rules: {len(rules)}")
+
+        if not rules:
+            self.sigma_rules_tree.insert("", "end", values=("No Sigma rules found", "", ""))
+            return
+
+        for rule in rules:
+            self.sigma_rules_tree.insert(
+                "",
+                "end",
+                values=(
+                    rule["name"],
+                    f"{rule['size']:,}",
+                    rule['modified'].strftime('%Y-%m-%d %H:%M:%S')
+                ),
+                tags=(rule["name"],)
+            )
+
+    def sort_sigma_tree(self, column):
+        """Sort sigma treeview by column"""
+        if self.sigma_sort_column == column:
+            self.sigma_sort_reverse = not self.sigma_sort_reverse
+        else:
+            self.sigma_sort_column = column
+            self.sigma_sort_reverse = False
+
+        items = [(self.sigma_rules_tree.set(item, column), item)
+                 for item in self.sigma_rules_tree.get_children("")]
+
+        if column == "size":
+            items.sort(key=lambda t: int(t[0].replace(",", "") or 0),
+                      reverse=self.sigma_sort_reverse)
+        else:
+            items.sort(key=lambda t: t[0].lower(), reverse=self.sigma_sort_reverse)
+
+        for index, (_, item) in enumerate(items):
+            self.sigma_rules_tree.move(item, "", index)
+
+        for col in ("name", "size", "modified"):
+            header_text = {"name": "Rule Filename", "size": "Size (bytes)",
+                          "modified": "Last Modified"}[col]
+            if col == column:
+                arrow = " ▼" if self.sigma_sort_reverse else " ▲"
+                header_text += arrow
+            self.sigma_rules_tree.heading(col, text=header_text)
+
+    def show_sigma_context_menu(self, event):
+        """Show context menu on right-click for sigma rules"""
+        item = self.sigma_rules_tree.identify_row(event.y)
+        if item:
+            self.sigma_rules_tree.selection_set(item)
+            self.sigma_context_menu.delete(0, tk.END)
+            self.sigma_context_menu.add_command(label="View Rule", command=self.view_selected_sigma_rule)
+            self.sigma_context_menu.add_command(label="Edit Rule", command=self.edit_selected_sigma_rule)
+            self.sigma_context_menu.add_separator()
+            self.sigma_context_menu.add_command(label="Delete Rule", command=self.delete_selected_sigma_rule)
+            self.sigma_context_menu.post(event.x_root, event.y_root)
+
+    def get_selected_sigma_rule(self):
+        """Get the currently selected sigma rule from the tree"""
+        selection = self.sigma_rules_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a rule first")
+            return None
+
+        item = selection[0]
+        values = self.sigma_rules_tree.item(item, "values")
+        if not values or values[0] == "No Sigma rules found":
+            return None
+
+        return {
+            "name": values[0],
+            "size": int(values[1].replace(",", "")),
+            "modified": None
+        }
+
+    def view_selected_sigma_rule(self):
+        """View the selected sigma rule"""
+        rule = self.get_selected_sigma_rule()
+        if rule:
+            self.view_sigma_rule(rule)
+
+    def edit_selected_sigma_rule(self):
+        """Edit the selected sigma rule"""
+        rule = self.get_selected_sigma_rule()
+        if rule:
+            self.edit_sigma_rule(rule)
+
+    def delete_selected_sigma_rule(self):
+        """Delete the selected sigma rule"""
+        rule = self.get_selected_sigma_rule()
+        if rule:
+            self.delete_sigma_rule(rule)
+
+    def view_sigma_rule(self, rule):
+        """View a Sigma rule in a read-only dialog"""
+        success, content = self.sigma_rule_manager.get_rule_content(rule["name"])
+        if not success:
+            messagebox.showerror("Error", content)
+            return
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"View Sigma Rule: {rule['name']}")
+        dialog.geometry("800x620")
+        dialog.configure(fg_color=self.colors["dark_blue"])
+        dialog.transient(self.root)
+
+        self._make_popup_header(dialog, rule["name"],
+                                "Read-only Sigma rule view",
+                                close_cmd=dialog.destroy,
+                                stripe_color=self.colors["border"])
+
+        content_frame = ctk.CTkFrame(dialog, fg_color=self.colors["surface_elevated"])
+        content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        content_text = ctk.CTkTextbox(content_frame, font=("Courier", 12),
+                                      fg_color=self.colors["surface_elevated"],
+                                      text_color=self.colors["text_primary"])
+        content_text.pack(fill="both", expand=True)
+        content_text.insert("1.0", content)
+        content_text.configure(state="disabled")
+
+        btn_close = ctk.CTkButton(dialog, text="Close",
+                                 command=dialog.destroy,
+                                 fg_color=self.colors["navy"],
+                                 hover_color=self.colors["dark_blue"],
+                                 height=32, width=100,
+                                 font=Fonts.label_large)
+        btn_close.pack(pady=15)
+
+    def edit_sigma_rule(self, rule):
+        """Edit an existing Sigma rule"""
+        success, content = self.sigma_rule_manager.get_rule_content(rule["name"])
+        if not success:
+            messagebox.showerror("Error", content)
+            return
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"Edit Sigma Rule: {rule['name']}")
+        dialog.geometry("800x640")
+        dialog.configure(fg_color=self.colors["dark_blue"])
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        self._make_popup_header(dialog, f"EDITING: {rule['name']}",
+                                "Validate before saving to apply changes",
+                                close_cmd=dialog.destroy,
+                                stripe_color=self.colors["accent"])
+
+        content_frame = ctk.CTkFrame(dialog, fg_color=self.colors["surface_elevated"])
+        content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        content_text = ctk.CTkTextbox(content_frame, font=("Courier", 12),
+                                      fg_color=self.colors["surface_elevated"],
+                                      text_color=self.colors["text_primary"])
+        content_text.pack(fill="both", expand=True)
+        content_text.insert("1.0", content)
+
+        status_label = ctk.CTkLabel(dialog, text="",
+                                   font=Fonts.label,
+                                   text_color=self.colors["amber"])
+        status_label.pack(pady=5)
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=15)
+
+        def save_changes():
+            new_content = content_text.get("1.0", "end-1c").strip()
+
+            is_valid, error_msg = self.sigma_rule_manager.validate_sigma_rule(new_content)
+            if not is_valid:
+                status_label.configure(text=f"Validation failed: {error_msg}",
+                                      text_color=self.colors["accent"])
+                return
+
+            create_backup = self.settings_manager.get("sigma.create_backups_on_update", True)
+            success, message = self.sigma_rule_manager.update_rule(rule["name"], new_content, create_backup=create_backup)
+            if success:
+                messagebox.showinfo("Success", message)
+                dialog.destroy()
+                self.refresh_sigma_rules_list()
+            else:
+                status_label.configure(text=f"Error: {message}",
+                                      text_color=self.colors["accent"])
+
+        btn_validate = ctk.CTkButton(btn_frame, text="Validate",
+                                    command=lambda: self.validate_sigma_rule_content(content_text, status_label),
+                                    fg_color=self.colors["navy"],
+                                    hover_color=self.colors["dark_blue"],
+                                    height=32, font=Fonts.label_large)
+        btn_validate.pack(side="left", padx=5)
+
+        btn_save = ctk.CTkButton(btn_frame, text="Save Changes",
+                                command=save_changes,
+                                fg_color=self.colors["accent"],
+                                hover_color=self.colors["accent_hover"],
+                                height=32, font=Fonts.label_large)
+        btn_save.pack(side="left", padx=5)
+
+        btn_cancel = ctk.CTkButton(btn_frame, text="Cancel",
+                                  command=dialog.destroy,
+                                  fg_color=self.colors["navy"],
+                                  hover_color=self.colors["dark_blue"],
+                                  height=32, font=Fonts.label_large)
+        btn_cancel.pack(side="left", padx=5)
+
+    def delete_sigma_rule(self, rule):
+        """Delete a Sigma rule"""
+        create_backup = self.settings_manager.get("sigma.create_backups_on_delete", True)
+
+        backup_msg = "\n\nA backup will be created automatically." if create_backup else ""
+        result = messagebox.askyesno(
+            "Confirm Delete",
+            f"Are you sure you want to delete '{rule['name']}'?{backup_msg}"
+        )
+
+        if not result:
+            return
+
+        success, message = self.sigma_rule_manager.delete_rule(rule["name"], create_backup=create_backup)
+        if success:
+            messagebox.showinfo("Success", message)
+            self.refresh_sigma_rules_list()
+        else:
+            messagebox.showerror("Error", message)
+
+    def add_sigma_rule_dialog(self):
+        """Show dialog to add a new Sigma rule"""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Add Sigma Rule")
+        dialog.geometry("800x620")
+        dialog.configure(fg_color=self.colors["dark_blue"])
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        self._make_popup_header(dialog, "CREATE NEW SIGMA RULE",
+                                "Define a Sigma detection rule in YAML format",
+                                close_cmd=dialog.destroy,
+                                stripe_color=self.colors["accent"])
+
+        # Rule name input
+        name_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        name_frame.pack(fill="x", padx=20, pady=10)
+
+        name_label = ctk.CTkLabel(name_frame, text="Rule Filename:",
+                                 font=Fonts.label_large)
+        name_label.pack(side="left", padx=10)
+
+        name_entry = ctk.CTkEntry(name_frame, placeholder_text="example.yml",
+                                 font=Fonts.label_large, width=300)
+        name_entry.pack(side="left", padx=10)
+
+        content_label = ctk.CTkLabel(dialog, text="Rule Content (YAML):",
+                                    font=Fonts.label_large)
+        content_label.pack(anchor="w", padx=30, pady=(10, 5))
+
+        content_frame = ctk.CTkFrame(dialog)
+        content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        content_text = ctk.CTkTextbox(content_frame, font=("Courier", 12))
+        content_text.pack(fill="both", expand=True)
+
+        example_sigma = """title: Example Sigma Rule
+status: experimental
+level: medium
+description: Detects suspicious activity
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        CommandLine|contains:
+            - 'suspicious_string'
+    condition: selection
+falsepositives:
+    - Unknown
+"""
+        content_text.insert("1.0", example_sigma)
+
+        status_label = ctk.CTkLabel(dialog, text="",
+                                   font=Fonts.label,
+                                   text_color=self.colors["amber"])
+        status_label.pack(pady=5)
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=15)
+
+        def validate_and_add():
+            rule_name = name_entry.get().strip()
+            rule_content = content_text.get("1.0", "end-1c").strip()
+
+            if not rule_name:
+                status_label.configure(text="Please enter a rule filename",
+                                      text_color=self.colors["accent"])
+                return
+
+            if not rule_content:
+                status_label.configure(text="Please enter rule content",
+                                      text_color=self.colors["accent"])
+                return
+
+            is_valid, error_msg = self.sigma_rule_manager.validate_sigma_rule(rule_content)
+            if not is_valid:
+                status_label.configure(text=f"Validation failed: {error_msg}",
+                                      text_color=self.colors["accent"])
+                return
+
+            success, message = self.sigma_rule_manager.add_rule_from_content(rule_name, rule_content)
+            if success:
+                messagebox.showinfo("Success", message)
+                dialog.destroy()
+                self.refresh_sigma_rules_list()
+            else:
+                status_label.configure(text=f"Error: {message}",
+                                      text_color=self.colors["accent"])
+
+        btn_validate = ctk.CTkButton(btn_frame, text="Validate",
+                                    command=lambda: self.validate_sigma_rule_content(content_text, status_label),
+                                    fg_color=self.colors["navy"],
+                                    hover_color=self.colors["dark_blue"],
+                                    height=32, font=Fonts.label_large)
+        btn_validate.pack(side="left", padx=5)
+
+        btn_add = ctk.CTkButton(btn_frame, text="Add Rule",
+                               command=validate_and_add,
+                               fg_color=self.colors["accent"],
+                               hover_color=self.colors["accent_hover"],
+                               height=32, font=Fonts.label_large)
+        btn_add.pack(side="left", padx=5)
+
+        btn_cancel = ctk.CTkButton(btn_frame, text="Cancel",
+                                  command=dialog.destroy,
+                                  fg_color=self.colors["navy"],
+                                  hover_color=self.colors["dark_blue"],
+                                  height=32, font=Fonts.label_large)
+        btn_cancel.pack(side="left", padx=5)
+
+    def validate_sigma_rule_content(self, text_widget, status_label):
+        """Validate Sigma rule content"""
+        rule_content = text_widget.get("1.0", "end-1c").strip()
+        is_valid, error_msg = self.sigma_rule_manager.validate_sigma_rule(rule_content)
+
+        if is_valid:
+            status_label.configure(text="✓ Rule syntax is valid",
+                                  text_color=self.colors["green"])
+        else:
+            status_label.configure(text=f"✗ {error_msg}",
+                                  text_color=self.colors["accent"])
+
+    def import_sigma_rule_file(self):
+        """Import a Sigma rule from a file"""
+        file_path = filedialog.askopenfilename(
+            title="Select Sigma Rule File",
+            filetypes=[("Sigma Rules", "*.yml *.yaml"), ("All Files", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        success, message = self.sigma_rule_manager.add_rule_from_file(file_path)
+        if success:
+            messagebox.showinfo("Success", message)
+            self.refresh_sigma_rules_list()
+        else:
+            messagebox.showerror("Error", message)
+
+    # ==================== CASES TAB ====================
+
+    def create_cases_tab(self):
+        """Create the Cases tab for browsing previous cases"""
+        frame = ctk.CTkFrame(self.content_area, fg_color=self.colors["dark_blue"])
+        self.tabs["cases"] = frame
+
+        # ── Tab header ─────────────────────────────────────────
+        btn_frame = self._make_tab_header(frame, "CASES",
+                                          "Previous Case Archive")
+
+        _action_font = Fonts.label_large if self._is_large_screen else Fonts.label
+        btn_refresh_cases = ctk.CTkButton(btn_frame, text="Refresh",
+                                          command=self.refresh_cases_list,
+                                          fg_color=self.colors["navy"],
+                                          hover_color=self.colors["dark_blue"],
+                                          font=_action_font, height=30)
+        btn_refresh_cases.pack(side="left")
+
+        # ── Filter bar ─────────────────────────────────────────
+        filter_bar = ctk.CTkFrame(frame, fg_color=self.colors["surface_elevated"], height=44)
+        filter_bar.pack(fill="x", padx=0, pady=0)
+        filter_bar.pack_propagate(False)
+
+        ctk.CTkLabel(filter_bar, text="Filter by Date:",
+                     font=Fonts.label_large,
+                     text_color=self.colors["text_secondary"]).pack(side="left", padx=(16, 8))
+
+        self.cases_date_var = ctk.StringVar(value="All Dates")
+        self.cases_date_filter = ctk.CTkOptionMenu(
+            filter_bar, values=["All Dates"],
+            variable=self.cases_date_var,
+            command=self._on_cases_date_filter_changed,
+            width=180, height=30,
+            font=Fonts.label,
+            fg_color=self.colors["navy"],
+            button_color=self.colors["border"],
+            button_hover_color=self.colors["accent"],
+            dropdown_fg_color=self.colors["navy"],
+            dropdown_hover_color=self.colors["accent"],
+            text_color="white",
+        )
+        self.cases_date_filter.pack(side="left", padx=4)
+
+        self.cases_count_label = ctk.CTkLabel(filter_bar, text="0 cases",
+                                              font=Fonts.label,
+                                              text_color=self.colors["text_secondary"])
+        self.cases_count_label.pack(side="left", padx=(16, 0))
+
+        # Main content: split into left (case list) and right (case detail)
+        content_pane = ctk.CTkFrame(frame, fg_color="transparent")
+        content_pane.pack(fill="both", expand=True, padx=0, pady=0)
+
+        # ── Left panel: Case browser ──────────────────────────
+        left_panel = ctk.CTkFrame(content_pane, fg_color=self.colors["navy"], width=360)
+        left_panel.pack(side="left", fill="both", padx=(16, 8), pady=(8, 16))
+        left_panel.pack_propagate(False)
+
+        # Cases Treeview
+        style = ttk.Style()
+        style.theme_use('default')
+        _cases_font_size = 14 if self._is_large_screen else 11
+        _cases_heading_size = 15 if self._is_large_screen else 12
+        _cases_row_height = 32 if self._is_large_screen else 24
+
+        style.configure("Cases.Treeview",
+                       background=self.colors["surface"],
+                       foreground=self.colors["text_primary"],
+                       fieldbackground=self.colors["surface"],
+                       borderwidth=0,
+                       relief="flat",
+                       font=('Segoe UI', _cases_font_size),
+                       rowheight=_cases_row_height)
+        style.configure("Cases.Treeview.Heading",
+                       background=self.colors["navy"],
+                       foreground="white",
+                       borderwidth=1,
+                       relief="flat",
+                       font=('Segoe UI', _cases_heading_size, 'bold'))
+        style.map('Cases.Treeview',
+                 background=[('selected', self.colors["accent"])],
+                 foreground=[('selected', 'white')])
+        style.map('Cases.Treeview.Heading',
+                 background=[('active', self.colors["surface_elevated"])])
+
+        tree_frame = tk.Frame(left_panel, bg=self.colors["surface"])
+        tree_frame.pack(fill="both", expand=True, padx=6, pady=6)
+
+        vsb = tk.Scrollbar(tree_frame, orient="vertical",
+                           bg=self.colors["surface"], troughcolor=self.colors["navy"])
+        vsb.pack(side="right", fill="y")
+
+        self.cases_tree = ttk.Treeview(
+            tree_frame,
+            columns=("case", "date"),
+            show="headings",
+            style="Cases.Treeview",
+            yscrollcommand=vsb.set,
+            selectmode="browse"
+        )
+        vsb.config(command=self.cases_tree.yview)
+
+        self.cases_tree.heading("case", text="Case", anchor="w")
+        self.cases_tree.heading("date", text="Date", anchor="center")
+        self.cases_tree.column("case", width=220, anchor="w")
+        self.cases_tree.column("date", width=100, anchor="center")
+        self.cases_tree.pack(fill="both", expand=True)
+
+        self.cases_tree.bind("<<TreeviewSelect>>", self._on_case_selected)
+
+        # Store case paths for lookup and full cached list for filtering
+        self._cases_path_map = {}
+        self._all_cases = []
+
+        # ── Right panel: Case detail viewer ───────────────────
+        right_panel = ctk.CTkFrame(content_pane, fg_color=self.colors["navy"])
+        right_panel.pack(side="right", fill="both", expand=True, padx=(8, 16), pady=(8, 16))
+
+        self.case_detail_scroll = ctk.CTkScrollableFrame(right_panel, fg_color="transparent",
+                                                          scrollbar_button_color=self.colors["border"])
+        self.case_detail_scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Placeholder label
+        self.case_detail_placeholder = ctk.CTkLabel(
+            self.case_detail_scroll, text="Select a case to view details",
+            font=Fonts.label_large, text_color=self.colors["text_dim"])
+        self.case_detail_placeholder.pack(pady=40)
+
+    def refresh_cases_list(self):
+        """Refresh the list of previous cases from the network folder (threaded)"""
+        import threading
+
+        network_path = self.settings_manager.get("network.network_case_folder_path", "")
+        if not network_path:
+            for item in self.cases_tree.get_children():
+                self.cases_tree.delete(item)
+            self.cases_count_label.configure(text="Network path not configured")
+            return
+
+        self.cases_count_label.configure(text="Loading cases...")
+
+        # Date folder pattern: M_DD_YYYY (e.g. 3_10_2026, 12_05_2025)
+        date_pattern = re.compile(r'^\d{1,2}_\d{2}_\d{4}$')
+
+        def _scan():
+            cases = []
+            try:
+                if not os.path.isdir(network_path):
+                    self.root.after(0, lambda: self._populate_cases_tree([], "Network path not accessible"))
+                    return
+
+                for date_folder in sorted(os.listdir(network_path), reverse=True):
+                    date_path = os.path.join(network_path, date_folder)
+                    # Only process directories matching date pattern
+                    if not os.path.isdir(date_path) or not date_pattern.match(date_folder):
+                        continue
+
+                    for case_folder in sorted(os.listdir(date_path)):
+                        case_path = os.path.join(date_path, case_folder)
+                        if not os.path.isdir(case_path) or case_folder.startswith('.'):
+                            continue
+
+                        # Validate: must be a real case folder (has metadata, files/, or notes)
+                        has_metadata = os.path.exists(os.path.join(case_path, "case_metadata.json"))
+                        has_files = os.path.isdir(os.path.join(case_path, "files"))
+                        has_notes = os.path.exists(os.path.join(case_path, "case_notes.txt"))
+                        if not (has_metadata or has_files or has_notes):
+                            continue
+
+                        cases.append({
+                            "name": case_folder,
+                            "date": date_folder,
+                            "path": case_path,
+                        })
+            except Exception as e:
+                self.root.after(0, lambda: self._populate_cases_tree([], f"Error: {e}"))
+                return
+
+            self.root.after(0, lambda: self._populate_cases_tree(cases))
+
+        threading.Thread(target=_scan, daemon=True).start()
+
+    def _populate_cases_tree(self, cases, error_msg=None):
+        """Populate the cases treeview and date filter dropdown (called on main thread)"""
+        self._all_cases = cases
+        self._cases_path_map.clear()
+
+        # Update date filter dropdown with unique dates from scan
+        if cases:
+            unique_dates = sorted(set(c["date"] for c in cases), reverse=True)
+            self.cases_date_filter.configure(values=["All Dates"] + unique_dates)
+            # Auto-select the most recent date on fresh load
+            current_filter = self.cases_date_filter.get()
+            valid_dates = set(c["date"] for c in cases)
+            if current_filter == "All Dates" or current_filter not in valid_dates:
+                self.cases_date_filter.set(unique_dates[0])
+        else:
+            self.cases_date_filter.configure(values=["All Dates"])
+            self.cases_date_filter.set("All Dates")
+
+        if error_msg:
+            for item in self.cases_tree.get_children():
+                self.cases_tree.delete(item)
+            self.cases_count_label.configure(text=error_msg)
+            return
+
+        self._apply_cases_filter()
+
+    def _on_cases_date_filter_changed(self, value):
+        """Handle date filter dropdown change"""
+        self._apply_cases_filter()
+
+    def _apply_cases_filter(self):
+        """Filter and repopulate cases treeview based on selected date"""
+        for item in self.cases_tree.get_children():
+            self.cases_tree.delete(item)
+        self._cases_path_map.clear()
+
+        date_filter = self.cases_date_filter.get()
+        if date_filter == "All Dates":
+            filtered = self._all_cases
+        else:
+            filtered = [c for c in self._all_cases if c["date"] == date_filter]
+
+        self.cases_count_label.configure(text=f"{len(filtered)} cases")
+
+        if not filtered:
+            self.cases_tree.insert("", "end", values=("No cases found", ""))
+            return
+
+        for case in filtered:
+            iid = self.cases_tree.insert("", "end",
+                                         values=(case["name"], case["date"]))
+            self._cases_path_map[iid] = case["path"]
+
+    def _on_case_selected(self, event):
+        """Handle case selection in the treeview"""
+        selection = self.cases_tree.selection()
+        if not selection:
+            return
+
+        iid = selection[0]
+        case_path = self._cases_path_map.get(iid)
+        if not case_path:
+            return
+
+        self._load_case_details(case_path)
+
+    def _load_case_details(self, case_path):
+        """Load and display details for a selected case — mirrors Current Case tab exactly"""
+        # Clear existing detail content
+        for widget in self.case_detail_scroll.winfo_children():
+            widget.destroy()
+
+        case_name = os.path.basename(case_path)
+
+        # ── Load metadata ──
+        metadata_path = os.path.join(case_path, "case_metadata.json")
+        metadata = None
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+            except Exception:
+                pass
+
+        # ══════════════════════════════════════════════════════════════
+        # 1) Case Details Card  (identical to Current Case)
+        # ══════════════════════════════════════════════════════════════
+        details_card = ctk.CTkFrame(self.case_detail_scroll, corner_radius=8,
+                                    fg_color=self.colors["surface_elevated"])
+        details_card.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(details_card, text="Case Details",
+                     font=Fonts.title_medium,
+                     text_color=self.colors["text_primary"]).pack(
+                         pady=10, padx=15, anchor="w")
+
+        info_frame = ctk.CTkFrame(details_card, fg_color="transparent")
+        info_frame.pack(fill="x", padx=15, pady=(0, 10))
+
+        if metadata:
+            left_details = [
+                ("Case Name:", case_name),
+                ("Report URL:", metadata.get("report_url", "N/A")),
+                ("Case ID:", metadata.get("id", "N/A")),
+                ("Status:", metadata.get("status", "N/A")),
+                ("Created:", metadata.get("created", "N/A")),
+                ("Threats:", str(metadata.get("total_threats", 0))),
+            ]
+        else:
+            left_details = [("Case Name:", case_name)]
+
+        for i, (label, value) in enumerate(left_details):
+            row = i // 2
+            col = i % 2
+            detail_frame = ctk.CTkFrame(info_frame, fg_color="transparent")
+            detail_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
+            ctk.CTkLabel(detail_frame, text=label,
+                        text_color="gray60", font=Fonts.helper).pack(anchor="w")
+            ctk.CTkLabel(detail_frame, text=str(value),
+                        font=Fonts.body_bold,
+                        text_color="white").pack(anchor="w")
+
+        # Collect data for each section
+        files_dir = os.path.join(case_path, "files")
+        files_list = []
+        if os.path.isdir(files_dir):
+            try:
+                files_list = [f for f in sorted(os.listdir(files_dir))
+                              if os.path.isfile(os.path.join(files_dir, f))]
+            except Exception:
+                pass
+
+        iocs = metadata.get("iocs", {}) if metadata else {}
+        has_iocs = any(bool(v) for v in iocs.values() if isinstance(v, (list, dict)))
+
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
+        screenshots = []
+        for search_dir in [case_path, os.path.join(case_path, "screenshots")]:
+            if os.path.isdir(search_dir):
+                try:
+                    for f in os.listdir(search_dir):
+                        if os.path.splitext(f)[1].lower() in image_exts:
+                            screenshots.append(os.path.join(search_dir, f))
+                except Exception:
+                    continue
+        screenshots.sort()
+
+        notes_content = ""
+        notes_path = os.path.join(case_path, "case_notes.txt")
+        if os.path.exists(notes_path):
+            try:
+                with open(notes_path, 'r', encoding='utf-8') as f:
+                    notes_content = f.read()
+            except Exception:
+                pass
+
+        # We need references to all section headers/containers for ordered packing
+        parent = self.case_detail_scroll
+
+        # ══════════════════════════════════════════════════════════════
+        # 2) Uploaded Files — header with Download All button
+        # ══════════════════════════════════════════════════════════════
+        files_header = ctk.CTkFrame(parent, corner_radius=10,
+                                    fg_color=self.colors["surface_elevated"],
+                                    cursor="hand2")
+        files_header.pack(fill="x", pady=(10, 5))
+
+        files_header_inner = ctk.CTkFrame(files_header, fg_color="transparent",
+                                          cursor="hand2")
+        files_header_inner.pack(fill="x", padx=15, pady=10)
+
+        files_indicator = ctk.CTkLabel(files_header_inner, text="▶",
+                                       font=Fonts.body_large,
+                                       text_color=self.colors["text_dim"],
+                                       cursor="hand2")
+        files_indicator.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(files_header_inner, text="Uploaded Files",
+                     font=Fonts.title_medium, text_color="white",
+                     cursor="hand2").pack(side="left")
+
+        if files_list:
+            btn_dl_all = ctk.CTkButton(
+                files_header_inner, text="Download All",
+                command=lambda fd=files_dir, fl=files_list: self._download_all_case_files(fd, fl),
+                height=30, width=120,
+                fg_color=self.colors["red"],
+                hover_color=self.colors["red_dark"],
+                font=Fonts.label)
+            btn_dl_all.pack(side="right")
+
+        files_container = ctk.CTkFrame(parent, corner_radius=10,
+                                       fg_color="transparent")
+        files_visible = [False]
+
+        # ══════════════════════════════════════════════════════════════
+        # 3) Indicators of Compromise (IOCs) — header
+        # ══════════════════════════════════════════════════════════════
+        iocs_header = ctk.CTkFrame(parent, corner_radius=10,
+                                   fg_color=self.colors["surface_elevated"],
+                                   cursor="hand2")
+        iocs_header.pack(fill="x", pady=(10, 5))
+
+        iocs_header_inner = ctk.CTkFrame(iocs_header, fg_color="transparent",
+                                         cursor="hand2")
+        iocs_header_inner.pack(fill="x", padx=15, pady=10)
+
+        iocs_indicator = ctk.CTkLabel(iocs_header_inner, text="▶",
+                                      font=Fonts.body_large,
+                                      text_color=self.colors["text_dim"],
+                                      cursor="hand2")
+        iocs_indicator.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(iocs_header_inner,
+                     text="Indicators of Compromise (IOCs)",
+                     font=Fonts.title_medium, text_color="white",
+                     cursor="hand2").pack(side="left")
+
+        iocs_container = ctk.CTkFrame(parent, corner_radius=10,
+                                      fg_color=self.colors["surface_elevated"])
+        iocs_visible = [False]
+
+        # ══════════════════════════════════════════════════════════════
+        # 4) Case Notes — header
+        # ══════════════════════════════════════════════════════════════
+        notes_header = ctk.CTkFrame(parent, corner_radius=10,
+                                    fg_color=self.colors["surface_elevated"],
+                                    cursor="hand2")
+        notes_header.pack(fill="x", pady=(10, 5))
+
+        notes_header_inner = ctk.CTkFrame(notes_header, fg_color="transparent",
+                                          cursor="hand2")
+        notes_header_inner.pack(fill="x", padx=15, pady=10)
+
+        notes_indicator = ctk.CTkLabel(notes_header_inner, text="▶",
+                                       font=Fonts.body_large,
+                                       text_color=self.colors["text_dim"],
+                                       cursor="hand2")
+        notes_indicator.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(notes_header_inner, text="Case Notes",
+                     font=Fonts.title_medium, text_color="white",
+                     cursor="hand2").pack(side="left")
+
+        notes_container = ctk.CTkFrame(parent, corner_radius=10,
+                                       fg_color=self.colors["surface_elevated"])
+        notes_visible = [False]
+
+        # ══════════════════════════════════════════════════════════════
+        # 5) Screenshots — header
+        # ══════════════════════════════════════════════════════════════
+        screenshots_header = ctk.CTkFrame(parent, corner_radius=10,
+                                          fg_color=self.colors["surface_elevated"],
+                                          cursor="hand2")
+        screenshots_header.pack(fill="x", pady=(10, 5))
+
+        screenshots_header_inner = ctk.CTkFrame(screenshots_header,
+                                                fg_color="transparent",
+                                                cursor="hand2")
+        screenshots_header_inner.pack(fill="x", padx=15, pady=10)
+
+        screenshots_indicator = ctk.CTkLabel(screenshots_header_inner, text="▶",
+                                             font=Fonts.body_large,
+                                             text_color=self.colors["text_dim"],
+                                             cursor="hand2")
+        screenshots_indicator.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(screenshots_header_inner, text="Screenshots",
+                     font=Fonts.title_medium, text_color="white",
+                     cursor="hand2").pack(side="left")
+
+        screenshots_container = ctk.CTkFrame(parent, corner_radius=10,
+                                             fg_color=self.colors["surface_elevated"])
+        screenshots_visible = [False]
+
+        # ── Toggle functions (identical pattern to Current Case) ─────
+
+        def toggle_files(event=None):
+            if event and hasattr(event.widget, 'cget'):
+                try:
+                    if "Download" in str(event.widget.cget('text')):
+                        return
+                except Exception:
+                    pass
+            if files_visible[0]:
+                files_container.pack_forget()
+                files_indicator.configure(text="▶")
+                files_visible[0] = False
+            else:
+                files_container.pack(fill="x", pady=(0, 10), before=iocs_header)
+                files_indicator.configure(text="▼")
+                files_visible[0] = True
+
+        def toggle_iocs(event=None):
+            if iocs_visible[0]:
+                iocs_container.pack_forget()
+                iocs_indicator.configure(text="▶")
+                iocs_visible[0] = False
+            else:
+                iocs_container.pack(fill="x", pady=(0, 10), before=notes_header)
+                iocs_indicator.configure(text="▼")
+                iocs_visible[0] = True
+
+        def toggle_notes(event=None):
+            if notes_visible[0]:
+                notes_container.pack_forget()
+                notes_indicator.configure(text="▶")
+                notes_visible[0] = False
+            else:
+                notes_container.pack(fill="both", expand=True, pady=(0, 10),
+                                     before=screenshots_header)
+                notes_indicator.configure(text="▼")
+                notes_visible[0] = True
+
+        def toggle_screenshots(event=None):
+            if screenshots_visible[0]:
+                screenshots_container.pack_forget()
+                screenshots_indicator.configure(text="▶")
+                screenshots_visible[0] = False
+            else:
+                screenshots_container.pack(fill="x", pady=(0, 10))
+                screenshots_indicator.configure(text="▼")
+                screenshots_visible[0] = True
+
+        # Bind click events (identical pattern to Current Case)
+        for w in (files_header, files_header_inner, files_indicator):
+            w.bind("<Button-1>", toggle_files)
+        for w in (iocs_header, iocs_header_inner, iocs_indicator):
+            w.bind("<Button-1>", toggle_iocs)
+        for w in (notes_header, notes_header_inner, notes_indicator):
+            w.bind("<Button-1>", toggle_notes)
+        for w in (screenshots_header, screenshots_header_inner, screenshots_indicator):
+            w.bind("<Button-1>", toggle_screenshots)
+
+        # ── Populate Files container ──────────────────────────────────
+        for filename in files_list:
+            file_path = os.path.join(files_dir, filename)
+
+            file_card = ctk.CTkFrame(files_container, corner_radius=8,
+                                     fg_color="#2a2a2a")
+            file_card.pack(fill="x", padx=10, pady=3)
+
+            card_inner = ctk.CTkFrame(file_card, fg_color="transparent")
+            card_inner.pack(fill="x", padx=12, pady=8)
+
+            ctk.CTkLabel(card_inner, text=filename,
+                        font=Fonts.title_medium,
+                        text_color="white").pack(side="left")
+
+            # Download button (filled red — matches Current Case action buttons)
+            btn_dl = ctk.CTkButton(
+                card_inner, text="Download",
+                command=lambda fp=file_path: self._download_case_file(fp),
+                fg_color=self.colors["red"],
+                hover_color=self.colors["red_dark"],
+                font=Fonts.helper, height=28, width=100)
+            btn_dl.pack(side="right", padx=(4, 0))
+
+            # View button (outlined — matches Current Case button style)
+            btn_view = ctk.CTkButton(
+                card_inner, text="View",
+                command=lambda fp=file_path: self._view_case_file(fp),
+                fg_color="transparent",
+                border_width=2,
+                border_color=self.colors["red"],
+                hover_color=self.colors["navy"],
+                font=Fonts.helper, height=28, width=90)
+            btn_view.pack(side="right", padx=4)
+
+        # Auto-expand files if present
+        if files_list:
+            toggle_files()
+
+        # ── Populate IOCs container ───────────────────────────────────
+        iocs_content = ctk.CTkFrame(iocs_container, fg_color="transparent")
+        iocs_content.pack(fill="both", expand=True, padx=15, pady=15)
+
+        urls, ips_list, domains = [], [], []
+        for ioc_type, ioc_values in iocs.items():
+            if not ioc_values:
+                continue
+            if isinstance(ioc_values, list):
+                vals = ioc_values
+            elif isinstance(ioc_values, dict):
+                vals = list(ioc_values.keys())
+            else:
+                continue
+            key = ioc_type.lower()
+            if "url" in key:
+                urls.extend(vals)
+            elif "ip" in key:
+                ips_list.extend(vals)
+            elif "domain" in key or "host" in key:
+                domains.extend(vals)
+            else:
+                domains.extend(vals)
+
+        def _make_ioc_box(parent_frame, label_text, values):
+            box = ctk.CTkFrame(parent_frame, fg_color=self.colors["surface"],
+                               corner_radius=5)
+            box.pack(fill="x", pady=(0, 10))
+            ctk.CTkLabel(box, text=label_text + ":",
+                        font=Fonts.body_bold,
+                        text_color="white", anchor="w").pack(
+                            anchor="w", padx=10, pady=(10, 5))
+            tb = ctk.CTkTextbox(box, height=80,
+                               fg_color=self.colors["navy"],
+                               corner_radius=5)
+            tb.pack(fill="x", padx=10, pady=(0, 10))
+            tb.insert("1.0", "\n".join(values) if values else "None recorded")
+            tb.configure(state="disabled")
+
+        _make_ioc_box(iocs_content, "URLs", urls)
+        _make_ioc_box(iocs_content, "IP Addresses", ips_list)
+        _make_ioc_box(iocs_content, "Domains", domains)
+
+        # Auto-expand IOCs if present
+        if has_iocs:
+            toggle_iocs()
+
+        # ── Populate Notes container ──────────────────────────────────
+        notes_textbox = tk.Text(
+            notes_container, wrap="word",
+            bg=self.colors["surface"], fg="#ffffff",
+            font=Fonts.text_input(),
+            relief="flat", padx=15, pady=15, height=8)
+        notes_textbox.pack(fill="both", expand=True, padx=2, pady=2)
+        notes_textbox.insert("1.0", notes_content if notes_content.strip() else "No notes recorded.")
+        notes_textbox.configure(state="disabled")
+
+        # Auto-expand notes if present
+        if notes_content.strip():
+            toggle_notes()
+
+        # ── Populate Screenshots container ────────────────────────────
+        ss_display = ctk.CTkScrollableFrame(screenshots_container,
+                                            fg_color="transparent", height=200)
+        ss_display.pack(fill="x", padx=10, pady=10)
+
+        if screenshots:
+            for img_path in screenshots:
+                try:
+                    img = Image.open(img_path)
+                    img_w, img_h = img.size
+                    max_h = 120
+                    ratio = max_h / img_h
+                    new_w = min(int(img_w * ratio), 200)
+                    thumb = img.resize((new_w, max_h), Image.LANCZOS)
+
+                    thumb_frame = ctk.CTkFrame(ss_display,
+                                               fg_color=self.colors["surface"],
+                                               corner_radius=8)
+                    thumb_frame.pack(side="left", padx=5, pady=5)
+
+                    ctk_img = ctk.CTkImage(light_image=thumb, dark_image=thumb,
+                                           size=(new_w, max_h))
+                    img_label = ctk.CTkLabel(thumb_frame, image=ctk_img, text="",
+                                             cursor="hand2")
+                    img_label.pack(padx=4, pady=(4, 2))
+                    img_label._ctk_img_ref = ctk_img
+                    img_label.bind("<Button-1>",
+                                  lambda e, ip=img_path: self._view_case_screenshot(ip))
+
+                    # Delete button placeholder → Download button for archived case
+                    btn_dl_ss = ctk.CTkButton(
+                        thumb_frame, text="Download",
+                        command=lambda ip=img_path: self._download_case_file(ip),
+                        fg_color=self.colors["red"],
+                        hover_color=self.colors["red_dark"],
+                        width=70, height=25, font=Fonts.body)
+                    btn_dl_ss.pack(pady=(0, 4))
+                except Exception:
+                    continue
+
+            # Auto-expand screenshots if present
+            toggle_screenshots()
+        else:
+            ctk.CTkLabel(ss_display,
+                        text="No screenshots attached.",
+                        font=Fonts.body,
+                        text_color="gray").pack(pady=20)
+
+    def _download_case_file(self, file_path):
+        """Download (copy) a case file to the Desktop for review"""
+        filename = os.path.basename(file_path)
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        if not os.path.isdir(desktop_path):
+            os.makedirs(desktop_path, exist_ok=True)
+
+        dest = os.path.join(desktop_path, filename)
+
+        # Avoid overwriting — append counter if needed
+        if os.path.exists(dest):
+            base, ext = os.path.splitext(filename)
+            counter = 1
+            while os.path.exists(dest):
+                dest = os.path.join(desktop_path, f"{base}_{counter}{ext}")
+                counter += 1
+
+        try:
+            shutil.copy2(file_path, dest)
+            messagebox.showinfo("Download Complete",
+                                f"File saved to:\n{dest}")
+        except Exception as e:
+            messagebox.showerror("Download Failed",
+                                 f"Could not copy file:\n{e}")
+
+    def _download_all_case_files(self, files_dir, files_list):
+        """Download all case files to the Desktop"""
+        desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
+        if not os.path.isdir(desktop_path):
+            os.makedirs(desktop_path, exist_ok=True)
+
+        copied = 0
+        for filename in files_list:
+            src = os.path.join(files_dir, filename)
+            dest = os.path.join(desktop_path, filename)
+            if os.path.exists(dest):
+                base, ext = os.path.splitext(filename)
+                counter = 1
+                while os.path.exists(dest):
+                    dest = os.path.join(desktop_path, f"{base}_{counter}{ext}")
+                    counter += 1
+            try:
+                shutil.copy2(src, dest)
+                copied += 1
+            except Exception:
+                continue
+
+        messagebox.showinfo("Download Complete",
+                            f"Downloaded {copied} of {len(files_list)} files to Desktop")
+
+    def _view_case_file(self, file_path):
+        """View a case file in a read-only dialog"""
+        filename = os.path.basename(file_path)
+
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read(500_000)  # Cap at 500KB for text view
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot read file: {e}")
+            return
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"View File: {filename}")
+        dialog.geometry("800x620")
+        dialog.configure(fg_color=self.colors["dark_blue"])
+        dialog.transient(self.root)
+
+        self._make_popup_header(dialog, filename,
+                                "Read-only file view",
+                                close_cmd=dialog.destroy,
+                                stripe_color=self.colors["border"])
+
+        content_frame = ctk.CTkFrame(dialog, fg_color=self.colors["surface_elevated"])
+        content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        content_text = ctk.CTkTextbox(content_frame, font=("Courier", 12),
+                                      fg_color=self.colors["surface_elevated"],
+                                      text_color=self.colors["text_primary"])
+        content_text.pack(fill="both", expand=True)
+        content_text.insert("1.0", content)
+        content_text.configure(state="disabled")
+
+        btn_close = ctk.CTkButton(dialog, text="Close",
+                                 command=dialog.destroy,
+                                 fg_color=self.colors["navy"],
+                                 hover_color=self.colors["dark_blue"],
+                                 height=32, width=100,
+                                 font=Fonts.label_large)
+        btn_close.pack(pady=15)
+
+    def _view_case_screenshot(self, image_path):
+        """View a screenshot in a popup dialog"""
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            messagebox.showerror("Error", "Pillow is required to view images")
+            return
+
+        try:
+            img = Image.open(image_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot open image: {e}")
+            return
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"Screenshot: {os.path.basename(image_path)}")
+        dialog.configure(fg_color=self.colors["dark_blue"])
+        dialog.transient(self.root)
+
+        # Scale image to fit within 900x700
+        max_w, max_h = 900, 700
+        img_w, img_h = img.size
+        if img_w > max_w or img_h > max_h:
+            ratio = min(max_w / img_w, max_h / img_h)
+            img = img.resize((int(img_w * ratio), int(img_h * ratio)), Image.LANCZOS)
+
+        dialog.geometry(f"{img.size[0] + 40}x{img.size[1] + 100}")
+
+        self._make_popup_header(dialog, os.path.basename(image_path),
+                                f"{img_w}x{img_h} pixels",
+                                close_cmd=dialog.destroy,
+                                stripe_color=self.colors["border"])
+
+        # Use CTkImage for display
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img,
+                               size=img.size)
+        img_label = ctk.CTkLabel(dialog, image=ctk_img, text="")
+        img_label.pack(padx=20, pady=10)
+        # Keep reference to prevent garbage collection
+        img_label._ctk_img_ref = ctk_img
+
+        btn_close = ctk.CTkButton(dialog, text="Close",
+                                 command=dialog.destroy,
+                                 fg_color=self.colors["navy"],
+                                 hover_color=self.colors["dark_blue"],
+                                 height=32, width=100,
+                                 font=Fonts.label_large)
+        btn_close.pack(pady=10)
+
     # ==================== SETTINGS TAB ====================
     def create_settings_tab(self):
         """Create the Settings tab"""
@@ -5789,6 +7219,8 @@ File Size: {file_info['file_size']} bytes"""
             ("network.network_case_folder_path", "Network Case Folder Path", "entry"),
             ("network.enable_network_yara_sync", "Enable Network YARA Sync", "switch"),
             ("network.network_yara_path", "Network YARA Path", "entry"),
+            ("sigma.enable_network_sigma_sync", "Enable Network Sigma Sync", "switch"),
+            ("sigma.network_sigma_path", "Network Sigma Path", "entry"),
         ])
 
         # Load current settings

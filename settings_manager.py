@@ -77,8 +77,8 @@ class SettingsManager:
             "enable_sigma_evaluation": True,
             "sigma_rules_path": "",  # Empty means auto-detect (sigma_rules/ next to YDAMN)
             "min_severity_level": "low",  # informational, low, medium, high, critical
-            "enable_network_sigma_sync": False,
-            "network_sigma_path": "",
+            "enable_network_sigma_sync": True,
+            "network_sigma_path": r"\\10.1.64.2\pdc\!Persistent_Folder\Sigma",
             "create_backups_on_delete": True,
             "create_backups_on_update": True,
         },
