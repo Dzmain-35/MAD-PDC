@@ -5535,7 +5535,10 @@ File Size: {file_info['file_size']} bytes"""
             ).pack(pady=40)
             return
 
-        for case in cases:
+        for idx, case in enumerate(cases, 1):
+            completed_by = case.get("completed_by", [])
+            is_completed = len(completed_by) > 0
+
             row = ctk.CTkFrame(self.assessment_case_list,
                                fg_color=self.colors["surface_elevated"],
                                corner_radius=6)
@@ -5544,14 +5547,27 @@ File Size: {file_info['file_size']} bytes"""
             info_frame = ctk.CTkFrame(row, fg_color="transparent")
             info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=8)
 
+            # Label as "Assessment N" with completion indicator
+            label = f"Assessment {idx}"
+            if is_completed:
+                label += "  [Completed]"
             ctk.CTkLabel(
-                info_frame, text=case["id"],
+                info_frame, text=label,
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                text_color=self.colors["text_primary"],
+                text_color="#4ade80" if is_completed else self.colors["text_primary"],
             ).pack(anchor="w")
 
             created_short = case["created"][:19].replace("T", "  ") if case["created"] else "—"
-            detail_text = f"{created_short}   |   {case['file_count']} file(s)   |   {case['total_threats']} threat(s)   |   {case['status']}"
+            detail_parts = [
+                f"Case: {case['id']}",
+                created_short,
+                f"{case['file_count']} file(s)",
+                f"{case['total_threats']} threat(s)",
+                case["status"],
+            ]
+            if completed_by:
+                detail_parts.append(f"Completed by: {', '.join(completed_by)}")
+            detail_text = "   |   ".join(detail_parts)
             ctk.CTkLabel(
                 info_frame, text=detail_text,
                 font=ctk.CTkFont(family="Segoe UI", size=10),

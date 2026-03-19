@@ -292,6 +292,22 @@ class AssessmentEngine:
             try:
                 with open(metadata_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
+                # Detect completion: look for any *_Answers.json file
+                completed_by = []
+                for fname in os.listdir(case_dir):
+                    if fname.endswith("_Answers.json"):
+                        # Extract analyst name (format: Name_CaseID_Answers.json)
+                        parts = fname[:-len("_Answers.json")]
+                        # The case ID may contain underscores, so split from
+                        # the known case_id suffix
+                        cid = meta.get("id", entry)
+                        if parts.endswith("_" + cid):
+                            analyst = parts[:-len("_" + cid)]
+                        else:
+                            analyst = parts
+                        if analyst:
+                            completed_by.append(analyst)
+
                 cases.append({
                     "id": meta.get("id", entry),
                     "created": meta.get("created", ""),
@@ -299,6 +315,7 @@ class AssessmentEngine:
                     "file_count": len(meta.get("files", [])),
                     "status": meta.get("status", "UNKNOWN"),
                     "case_dir": case_dir,
+                    "completed_by": completed_by,
                 })
             except (json.JSONDecodeError, OSError):
                 continue
